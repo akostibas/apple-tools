@@ -1,0 +1,18 @@
+import Foundation
+
+/// Shared chat.db fixtures for iMessage decode tests.
+enum IMessageTestFixtures {
+
+    /// A real `attributedBody` blob captured from chat.db on macOS 26 — a
+    /// message sent with native Messages formatting:
+    /// "This is regular text; **This is bold text;** *this is italics;* ***this is bold italics***"
+    /// Pins the actual IMCore typedstream layout and attribute keys, not a
+    /// synthetic approximation. Used by both the decoder tests and the read-tool
+    /// path test so every chat.db reader is checked against the same ground truth.
+    static let boldItalicBlobHex =
+        "040b73747265616d747970656481e803840140848484124e5341747472696275746564537472696e67008484084e534f626a656374008592848484084e53537472696e67019484012b4e5468697320697320726567756c617220746578743b205468697320697320626f6c6420746578743b2074686973206973206974616c6963733b207468697320697320626f6c64206974616c69637386840269490116928484840c4e5344696374696f6e617279009484016901928496961d5f5f6b494d4d657373616765506172744174747269627574654e616d658692848484084e534e756d626572008484074e5356616c7565009484012a8499990086869702139284989902928496961a5f5f6b494d54657874426f6c644174747269627574654e616d658692849b9c9d990186928496961d5f5f6b494d4d657373616765506172744174747269627574654e616d6586929a869703119284989902928496961c5f5f6b494d546578744974616c69634174747269627574654e616d658692a092a1929a86970414928498990392a1929a92a392a0929f92a08686"
+
+    /// The expected Markdown rendering of `boldItalicBlobHex`.
+    static let boldItalicMarkdown =
+        "This is regular text; **This is bold text;** *this is italics;* ***this is bold italics***"
+}

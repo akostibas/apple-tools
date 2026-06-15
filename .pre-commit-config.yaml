@@ -1,0 +1,30 @@
+# See https://pre-commit.com for more information
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v3.2.0
+    hooks:
+    -   id: trailing-whitespace
+    -   id: end-of-file-fixer
+    -   id: check-yaml
+    -   id: check-added-large-files
+-   repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+    -   id: shellcheck
+        args: ['-e', 'SC1091']
+-   repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+    -   id: gitleaks
+-   repo: local
+    hooks:
+    # Note: Swift *formatting* is intentionally not gated here. The library is
+    # vendored verbatim from an upstream macOS probe so it can stay in sync;
+    # reformatting it would fork from upstream. A `.swift-format` config is
+    # provided for manual use (`swift format`).
+    -   id: swift-test
+        name: swift-test
+        entry: swift test
+        language: system
+        types: [swift]
+        pass_filenames: false

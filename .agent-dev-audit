@@ -1,0 +1,11 @@
+last-checked: 2026-06-15
+
+## 2026-06-15 — project bootstrap
+Repo created by extracting the Apple tools from an internal macOS probe
+into a standalone Swift package + Claude skill. Dev loop is in place from day
+one: `bin/build` (release), `swift test` (282 tests, live Notes gated behind
+APPLE_TOOLS_NOTES_LIVE=1), and `apple-tools permissions` to front-load TCC grants.
+Isolation: pure-local CLI, no server; file output confined to a private 0700
+temp dir. No formal eval harness — these tools are deterministic wrappers over
+macOS APIs, covered by unit + (gated) live integration tests. Checked against
+agent-development.md as of this repo's first commit.

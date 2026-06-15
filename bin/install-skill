@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Build apple-tools, link the binary onto PATH, and install the Claude skill.
+# Self-aware: reports what it will do, refuses with actionable errors, and is
+# idempotent (re-running just refreshes the symlinks).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+if [[ ! -f Package.swift ]]; then
+    echo "error: Package.swift not found in $repo_root." >&2
+    exit 1
+fi
+
+# 1. Build the release binary.
+"$repo_root/bin/build"
+bin_src="$repo_root/.build/release/apple-tools"
+
+# 2. Pick a PATH dir to link the binary into.
+if [[ -d "$HOME/bin" ]] && case ":$PATH:" in *":$HOME/bin:"*) true;; *) false;; esac; then
+    bin_dir="$HOME/bin"
+elif [[ -d /usr/local/bin && -w /usr/local/bin ]]; then
+    bin_dir="/usr/local/bin"
+else
+    echo "error: no writable PATH dir found (~/bin or /usr/local/bin)." >&2
+    echo "       Create ~/bin and add it to PATH, then re-run." >&2
+    exit 1
+fi
+
+bin_link="$bin_dir/apple-tools"
+ln -sfn "$bin_src" "$bin_link"
+echo "Linked binary: $bin_link -> $bin_src"
+
+# 3. Install the skill into the Claude skills dir.
+skills_dir="$HOME/.claude/skills"
+mkdir -p "$skills_dir"
+skill_link="$skills_dir/apple-tools"
+if [[ -e "$skill_link" && ! -L "$skill_link" ]]; then
+    echo "error: $skill_link exists and is not a symlink — refusing to overwrite." >&2
+    echo "       Remove it manually if you want this script to manage it." >&2
+    exit 1
+fi
+ln -sfn "$repo_root/skills/apple-tools" "$skill_link"
+echo "Linked skill:  $skill_link -> $repo_root/skills/apple-tools"
+
+echo
+echo "Done. Next steps:"
+echo "  1. Run 'apple-tools permissions' to grant macOS access up front."
+echo "  2. The /apple-tools skill is available in new Claude Code sessions."

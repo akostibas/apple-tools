@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Build the apple-tools release binary. Prints the resulting path.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+if [[ ! -f Package.swift ]]; then
+    echo "error: Package.swift not found in $repo_root — run from the apple-tools repo." >&2
+    exit 1
+fi
+
+echo "Building apple-tools (release)..."
+swift build -c release
+
+bin_path="$repo_root/.build/release/apple-tools"
+if [[ ! -x "$bin_path" ]]; then
+    echo "error: build reported success but $bin_path is missing." >&2
+    exit 1
+fi
+
+echo "Built: $bin_path"
