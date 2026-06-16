@@ -277,13 +277,18 @@ enum EmailSearch {
         }
         defer { sqlite3_close(db) }
 
+        // `message_id_header` is stored WITH angle brackets (`<id@host>`), but
+        // Message-IDs reach us in both forms: `search` surfaces the bracketed
+        // header value, while `inbox`/AppleScript surface the bare `message id`
+        // — and LLMs routinely strip the brackets when echoing an ID back.
+        // Match bracket-insensitively so all three forms resolve.
         let sql = """
         SELECT m.ROWID, mb.url
         FROM messages m
         JOIN message_global_data g ON g.ROWID = m.global_message_id
         JOIN mailboxes mb ON mb.ROWID = m.mailbox
         WHERE m.deleted = 0
-          AND g.message_id_header = ?
+          AND trim(g.message_id_header, '<>') = ?
         LIMIT 1
         """
 
@@ -293,7 +298,8 @@ enum EmailSearch {
         }
         defer { sqlite3_finalize(stmt) }
         let SQLITE_TRANSIENT = unsafeBitCast(OpaquePointer(bitPattern: -1), to: sqlite3_destructor_type.self)
-        sqlite3_bind_text(stmt, 1, messageID, -1, SQLITE_TRANSIENT)
+        let bareID = messageID.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
+        sqlite3_bind_text(stmt, 1, bareID, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         let rowid = sqlite3_column_int64(stmt, 0)
@@ -365,7 +371,7 @@ enum EmailSearch {
 
 // MARK: - Word boundary matching
 
-private struct WordBoundary {
+struct WordBoundary {
     /// Match `term` at word boundaries in `text`. None-safe. Case-insensitive.
     func contains(_ term: String, in text: String) -> Bool {
         if text.isEmpty { return false }
@@ -377,11 +383,34 @@ private struct WordBoundary {
         return re.firstMatch(in: text, options: [], range: range) != nil
     }
 
-    /// For sender word-boundary matching: ignore the email domain, look only
-    /// at the local-part and at the display name. See docs/reference/macos-internals/mail-data.md.
+    /// For sender matching: ignore the email domain, look only at the
+    /// local-part and at the display name, with deliberately different
+    /// strictness for each:
+    ///
+    /// - **Display name** → word-START (prefix) match, so a `from` term that
+    ///   is a natural name prefix matches — "sam" matches "Samira Quinn".
+    /// - **Local-part** → full word boundary, so role addresses don't leak
+    ///   in — "mark" must NOT match "marketing@…" (the documented noise case).
+    ///
+    /// A bare local-part with no display name (e.g. "samiraquinn@…" and no
+    /// name) won't match a prefix like "sam"; that's the rare cost of keeping
+    /// addresses noise-free. See docs/reference/macos-internals/mail-data.md.
     func senderMatches(_ term: String, address: String, name: String?) -> Bool {
         return contains(term, in: localPart(of: address))
-            || contains(term, in: name ?? "")
+            || hasPrefixWord(term, in: name ?? "")
+    }
+
+    /// Match `term` at the start of a word in `text` (trailing boundary not
+    /// required). Case-insensitive, none-safe. "sam" matches "Samira" but
+    /// not "flotsam".
+    private func hasPrefixWord(_ term: String, in text: String) -> Bool {
+        if text.isEmpty { return false }
+        let escaped = NSRegularExpression.escapedPattern(for: term)
+        guard let re = try? NSRegularExpression(pattern: "\\b\(escaped)", options: [.caseInsensitive]) else {
+            return false
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return re.firstMatch(in: text, options: [], range: range) != nil
     }
 
     private func localPart(of address: String) -> String {

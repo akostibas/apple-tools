@@ -14,7 +14,7 @@ public struct EmailTool: ProbeTool {
                 "id": PropertySchema(type_: "string", description: "Message ID (for read, fetch_attachment)"),
                 "filename": PropertySchema(type_: "string", description: "Attachment filename to select when a message has multiple attachments (for fetch_attachment, optional)"),
                 "query": PropertySchema(type_: "string", description: "Whitespace-separated tokens, all must match across subject, body preview, or sender — full message body is not searched (for search)"),
-                "from": PropertySchema(type_: "string", description: "Sender name or email to filter by — matches word-bounded in display name or email local-part, not domain (for search)"),
+                "from": PropertySchema(type_: "string", description: "Sender name or email to filter by — matches a name prefix in the display name (so 'sam' finds 'Samira'), or a whole word in the email local-part; domain is ignored (for search)"),
                 "to": PropertySchema(type_: "string", description: "Recipient email address (for draft, or recipient filter for search)"),
                 "after": PropertySchema(type_: "string", description: "ISO 8601 date lower bound, e.g. '2025-01-01' or '2025-01-01T00:00:00' (for search)"),
                 "before": PropertySchema(type_: "string", description: "ISO 8601 date upper bound (for search)"),

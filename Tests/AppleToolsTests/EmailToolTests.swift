@@ -242,4 +242,63 @@ final class EmailToolTests: XCTestCase {
             XCTFail("expected noCriteria, got \(e)")
         }
     }
+
+    // MARK: - Sender prefix matching
+
+    func testSenderMatchesNamePrefix() {
+        // "sam" must match display name "Samira Quinn" — a full word
+        // boundary previously rejected this, returning 0 results for
+        // `from: "sam"` on mail from Samira.
+        let wb = WordBoundary()
+        XCTAssertTrue(wb.senderMatches("sam", address: "samiraquinn@example.com", name: "Samira Quinn"))
+    }
+
+    func testSenderLocalPartIsWholeWordNotPrefix() {
+        // Local-part keeps full-word matching: a prefix with no display name
+        // does NOT match. This is the deliberate cost of keeping role
+        // addresses (marketing@…) out of name searches.
+        let wb = WordBoundary()
+        XCTAssertFalse(wb.senderMatches("saman", address: "samiraquinn@example.com", name: nil))
+    }
+
+    func testSenderLocalPartFullWordMatches() {
+        // A full word in the local-part still matches (e.g. mark@…).
+        let wb = WordBoundary()
+        XCTAssertTrue(wb.senderMatches("mark", address: "mark@example.com", name: nil))
+    }
+
+    func testSenderRoleAddressDoesNotLeak() {
+        // The documented anti-noise case: "mark" must NOT match marketing@….
+        let wb = WordBoundary()
+        XCTAssertFalse(wb.senderMatches("mark", address: "marketing@engage.canva.com", name: "Canva"))
+    }
+
+    func testSenderNamePrefixStillMatchesRolePrefix() {
+        // …but a real person named Mark matches via the display name.
+        let wb = WordBoundary()
+        XCTAssertTrue(wb.senderMatches("mark", address: "mferlatte@example.com", name: "Mark Ferlatte"))
+    }
+
+    func testSenderMatchesSecondWordPrefix() {
+        // Prefix of a later word in a multi-word display name.
+        let wb = WordBoundary()
+        XCTAssertTrue(wb.senderMatches("qui", address: "samiraquinn@example.com", name: "Samira Quinn"))
+    }
+
+    func testSenderDoesNotMatchMidWord() {
+        // Word-START boundary, not bare substring: "antha" is mid-word.
+        let wb = WordBoundary()
+        XCTAssertFalse(wb.senderMatches("antha", address: "samiraquinn@example.com", name: "Samira Quinn"))
+    }
+
+    func testSenderMatchIgnoresDomain() {
+        // Domain is never considered — "yahoo" must not match.
+        let wb = WordBoundary()
+        XCTAssertFalse(wb.senderMatches("yahoo", address: "samiraquinn@example.com", name: "Samira Quinn"))
+    }
+
+    func testSenderFullWordStillMatches() {
+        let wb = WordBoundary()
+        XCTAssertTrue(wb.senderMatches("samira", address: "samiraquinn@example.com", name: "Samira Quinn"))
+    }
 }
