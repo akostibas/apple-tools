@@ -11,7 +11,7 @@ server/networking layer removed and the file handling pointed at the local disk.
 ## Quick start
 
 ```bash
-bin/install-skill          # build the release binary, link it onto PATH, install the skill
+make install               # build the release binary, link it onto PATH, install the skill
 apple-tools permissions    # grant macOS access (Calendar, Contacts, Photos, Full Disk Access, …)
 apple-tools list           # see the tools
 apple-tools calendar list --start 2026-06-15T00:00:00Z --end 2026-06-16T00:00:00Z
@@ -60,6 +60,6 @@ host as well as this CLI.
 ## Develop
 
 ```bash
-bin/build       # release build
-swift test      # unit tests (live Notes tests gated behind APPLE_TOOLS_NOTES_LIVE=1)
+make build      # release build
+make test       # unit tests (live Notes tests gated behind APPLE_TOOLS_NOTES_LIVE=1)
 ```
