@@ -1,6 +1,6 @@
 ---
 name: apple-tools
-description: Read and write the local Mac's Apple apps — Calendar, Reminders, Notes, Contacts, Mail, Messages (iMessage/SMS), Photos, Files, clipboard, screenshots, and opening URIs — via the `apple-tools` CLI. Use when the user asks about or wants to act on their own macOS data ("what's on my calendar", "add a reminder", "text Jane", "find that note", "search my email", "screenshot my screen").
+description: Read and write the local Mac's Apple apps via the `apple-tools` CLI. Use whenever you need to act on the user's own macOS data — e.g. make or check reminders, read/search/draft email, view or add calendar events, look up contacts, send an iMessage/SMS, read/write/append notes, find or fetch files, search/export photos, read or write the clipboard, take a screenshot, or open a URL/mailto/tel link. Covers Calendar, Reminders, Notes, Contacts, Mail, Messages (iMessage/SMS), Photos, Files, clipboard, screenshots, and opening URIs. Prefer this over ad-hoc osascript/AppleScript for these tasks — osascript can return incomplete results (e.g. a partial Reminders list); this does NOT apply when osascript itself is the thing being developed.
 ---
 
 # apple-tools
