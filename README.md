@@ -43,19 +43,30 @@ images, attachment fetches) write to a local output dir and return the absolute
 ```
 Sources/
   AppleToolsObjC/   # ObjC shim (safe NSUnarchiver for iMessage attributedBody)
-  AppleToolsLib/    # tools, integrations, FileSink seam, CLI arg mapper
+  AppleToolsLib/    # tools, integrations, ToolHost seam, CLI arg mapper
   apple-tools/      # the CLI executable (thin; delegates to the lib)
 Tests/AppleToolsTests/
 skills/apple-tools/  # the Claude skill (SKILL.md)
 ```
 
-The one seam that decouples the tools from any backend is **`FileSink`**
-(`Sources/AppleToolsLib/FileSink.swift`): tools that produce a file call
-`fileSink.deliver(filename:data:)` and get back an opaque reference. This CLI
-injects `LocalFileSink` (writes to disk, returns a path); a server-backed host
-could inject an uploader that returns a file-id instead. This is what makes
-`AppleToolsLib` publishable as a shared package reusable by a server-backed
-host as well as this CLI.
+`AppleToolsLib` is a published `.library` product: this CLI is one consumer,
+and a server-backed host (Shannon's `probe-macos`) is another. Both depend on
+the same tool implementations and inject their own backend through a small
+**`ToolHost`** (`Sources/AppleToolsLib/ToolHost.swift`):
+
+- **`fileSink`** — where file-producing tools deliver output.
+  `deliver(filename:data:)` returns a keyed `FileReference {key, value}`, so the
+  host controls both halves of the result: this CLI injects `LocalFileSink`
+  (`{"path": "/abs/path"}`); a server host injects an uploader
+  (`{"file_id": "…"}`).
+- **`confirmer`** — how sensitive actions (screenshot, open-URI) are gated.
+  `AllowAllConfirmer` (the CLI default, for non-interactive agent use),
+  `AppleScriptConfirmer` (a blocking Allow/Deny dialog), or a host's own.
+- **`appName`** — the identity shown in those confirmation dialogs.
+
+Pure read-only tools (Calendar, Contacts, Reminders, Notes) need no host.
+`Log.subsystem` is host-overridable so each host's logs land under its own
+OSLog subsystem.
 
 ## Develop
 
