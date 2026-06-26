@@ -6,7 +6,7 @@ final class PhotosToolTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        tool = PhotosTool(fileSink: LocalFileSink())
+        tool = PhotosTool(host: .test())
     }
 
     // MARK: - Tool definition

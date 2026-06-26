@@ -32,7 +32,7 @@ public struct EmailTool: ProbeTool {
         )
     )
 
-    public let fileSink: FileSink
+    public let host: ToolHost
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
         "inbox":            .read,
@@ -42,8 +42,8 @@ public struct EmailTool: ProbeTool {
         "draft":            .readWrite,
     ])
 
-    public init(fileSink: FileSink) {
-        self.fileSink = fileSink
+    public init(host: ToolHost) {
+        self.host = host
     }
 
     public func handle(params: [String: AnyCodable]?) -> (result: String, isError: Bool) {
@@ -413,11 +413,11 @@ public struct EmailTool: ProbeTool {
             uploadFilename = name
         }
 
-        let result = fileSink.deliver(filename: uploadFilename, data: uploadData)
+        let result = host.fileSink.deliver(filename: uploadFilename, data: uploadData)
         switch result {
-        case .success(let path):
+        case .success(let ref):
             var response: [String: Any] = [
-                "path": path,
+                ref.key: ref.value,
                 "filename": uploadFilename,
                 "id": id,
             ]

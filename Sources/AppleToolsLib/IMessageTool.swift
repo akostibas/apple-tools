@@ -33,7 +33,7 @@ public struct IMessageTool: ProbeTool {
         )
     )
 
-    public let fileSink: FileSink
+    public let host: ToolHost
 
     /// Optional callback for sending async notifications (e.g. delivery failure).
     /// Set after init once the ProbeClient is ready.
@@ -47,8 +47,8 @@ public struct IMessageTool: ProbeTool {
         "send":             .readWrite,
     ])
 
-    public init(fileSink: FileSink) {
-        self.fileSink = fileSink
+    public init(host: ToolHost) {
+        self.host = host
     }
 
     public func handle(params: [String: AnyCodable]?) -> (result: String, isError: Bool) {
@@ -500,10 +500,10 @@ public struct IMessageTool: ProbeTool {
             return (IMessageIntegration.jsonEncode(response), false)
         }
 
-        switch IMessageIntegration.fetchAndUpload(attachment: selected, fileSink: fileSink) {
+        switch IMessageIntegration.fetchAndUpload(attachment: selected, fileSink: host.fileSink) {
         case .success(let uploaded):
             var response: [String: Any] = [
-                "path": uploaded.path,
+                uploaded.ref.key: uploaded.ref.value,
                 "filename": uploaded.filename,
                 "message_id": messageID,
             ]

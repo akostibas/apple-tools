@@ -16,7 +16,11 @@ public struct OpenURITool: ProbeTool {
 
     public let accessPolicy: ToolAccessPolicy = .whole(.readWrite)
 
-    public init() {}
+    public let host: ToolHost
+
+    public init(host: ToolHost) {
+        self.host = host
+    }
 
     public func handle(params: [String: AnyCodable]?) -> (result: String, isError: Bool) {
         guard let uriString = params?["uri"]?.value as? String, !uriString.isEmpty else {
@@ -27,9 +31,9 @@ public struct OpenURITool: ProbeTool {
             return ("invalid URI: \(uriString)", true)
         }
 
-        guard UserConfirmation.requestConfirmation(
-            title: "apple-tools: Open URI",
-            message: "Allow apple-tools to open:\n\(uriString)"
+        guard host.confirmer.confirm(
+            title: "\(host.appName): Open URI",
+            message: "Allow \(host.appName) to open:\n\(uriString)"
         ) else {
             return ("User denied the request to open: \(uriString)", true)
         }

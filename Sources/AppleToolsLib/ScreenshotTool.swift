@@ -4,7 +4,7 @@ import Foundation
 public struct ScreenshotTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "screenshot",
-        description: "Capture the Mac screen. Prompts the user for confirmation before capturing. Returns the local path to the saved screenshot.",
+        description: "Capture the Mac screen. Prompts the user for confirmation before capturing. Returns a reference to the saved screenshot.",
         parameters: ParameterSchema(
             type_: "object",
             properties: [:],
@@ -12,12 +12,12 @@ public struct ScreenshotTool: ProbeTool {
         )
     )
 
-    public let fileSink: FileSink
+    public let host: ToolHost
 
     public let accessPolicy: ToolAccessPolicy = .whole(.read)
 
-    public init(fileSink: FileSink) {
-        self.fileSink = fileSink
+    public init(host: ToolHost) {
+        self.host = host
     }
 
     public func handle(params: [String: AnyCodable]?) -> (result: String, isError: Bool) {
@@ -28,7 +28,7 @@ public struct ScreenshotTool: ProbeTool {
 
         // Capture to a temp file.
         let timestamp = ISO8601DateFormatter().string(from: Date())
-        let tmpPath = NSTemporaryDirectory() + "apple-tools-screenshot-\(timestamp).png"
+        let tmpPath = NSTemporaryDirectory() + "\(host.appName)-screenshot-\(timestamp).png"
         defer { try? FileManager.default.removeItem(atPath: tmpPath) }
 
         let process = Process()
@@ -56,12 +56,12 @@ public struct ScreenshotTool: ProbeTool {
         }
         let filename = "screenshot-\(timestamp).jpg"
 
-        // Write to the local output dir.
-        let result = fileSink.deliver(filename: filename, data: data)
+        // Hand off to the host's file sink.
+        let result = host.fileSink.deliver(filename: filename, data: data)
         switch result {
-        case .success(let path):
+        case .success(let ref):
             let response: [String: Any] = [
-                "path": path,
+                ref.key: ref.value,
                 "filename": filename,
             ]
             return (jsonEncode(response), false)
@@ -73,9 +73,9 @@ public struct ScreenshotTool: ProbeTool {
     // MARK: - Confirmation
 
     private func requestConfirmation() -> Bool {
-        return UserConfirmation.requestConfirmation(
-            title: "apple-tools: Screenshot",
-            message: "Allow apple-tools to take a screenshot of your screen?"
+        return host.confirmer.confirm(
+            title: "\(host.appName): Screenshot",
+            message: "Allow \(host.appName) to take a screenshot of your screen?"
         )
     }
 

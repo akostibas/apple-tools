@@ -1,16 +1,32 @@
 import Foundation
 
+/// A reference to a delivered file, as it should appear in a tool's JSON
+/// result. `key` is the JSON field name the tool emits and `value` is the
+/// reference itself — this lets each host control both halves of the contract
+/// without the shared tools hardcoding either. The local CLI emits
+/// `{"path": "/abs/path"}`; a server-backed host emits `{"file_id": "abc"}`.
+public struct FileReference {
+    public let key: String
+    public let value: String
+
+    public init(key: String, value: String) {
+        self.key = key
+        self.value = value
+    }
+}
+
 /// Abstraction over "where does a file a tool produces go?".
 ///
 /// In this standalone CLI the answer is "a local directory" (`LocalFileSink`),
-/// and `deliver` returns the absolute path Claude can then Read. The same
+/// and `deliver` returns a `path` reference Claude can then Read. The same
 /// protocol lets a server-backed host (e.g. a server-backed probe) inject an
-/// uploader whose `deliver` returns a remote file-id instead — which is why
-/// the tools depend on `FileSink` rather than any concrete storage.
+/// uploader whose `deliver` returns a `file_id` reference instead — which is
+/// why the tools depend on `FileSink` rather than any concrete storage.
 public protocol FileSink {
-    /// Persist `data` under `filename` and return an opaque reference to it
-    /// (a local absolute path here; a file-id in a server-backed sink).
-    func deliver(filename: String, data: Data) -> Result<String, FileSinkError>
+    /// Persist `data` under `filename` and return a `FileReference` carrying
+    /// both the JSON key and value the tool should emit (a `path` here; a
+    /// `file_id` in a server-backed sink).
+    func deliver(filename: String, data: Data) -> Result<FileReference, FileSinkError>
 }
 
 public enum FileSinkError: Error, CustomStringConvertible {
@@ -37,7 +53,7 @@ public struct LocalFileSink: FileSink {
         }
     }
 
-    public func deliver(filename: String, data: Data) -> Result<String, FileSinkError> {
+    public func deliver(filename: String, data: Data) -> Result<FileReference, FileSinkError> {
         let fm = FileManager.default
         do {
             // 0700 so the dir (and thus the files we drop in it) is owner-only,
@@ -61,7 +77,7 @@ public struct LocalFileSink: FileSink {
         } catch {
             return .failure(.message("failed to write \(dest): \(error.localizedDescription)"))
         }
-        return .success(dest)
+        return .success(FileReference(key: "path", value: dest))
     }
 
     private func uniquePath(in dir: String, filename: String) -> String {

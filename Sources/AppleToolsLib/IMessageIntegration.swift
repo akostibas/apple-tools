@@ -47,7 +47,7 @@ public enum IMessageIntegration {
 
     /// Result of exporting an attachment to the local output dir.
     public struct UploadedAttachment {
-        public let path: String
+        public let ref: FileReference
         public let filename: String
         public let mimeType: String
     }
@@ -395,9 +395,9 @@ public enum IMessageIntegration {
 
         let result = fileSink.deliver(filename: uploadFilename, data: uploadData)
         switch result {
-        case .success(let path):
+        case .success(let ref):
             return .success(UploadedAttachment(
-                path: path,
+                ref: ref,
                 filename: uploadFilename,
                 mimeType: resolvedMIME
             ))

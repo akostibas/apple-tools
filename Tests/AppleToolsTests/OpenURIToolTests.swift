@@ -6,7 +6,7 @@ final class OpenURIToolTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        tool = OpenURITool()
+        tool = OpenURITool(host: .test())
     }
 
     // MARK: - Tool definition

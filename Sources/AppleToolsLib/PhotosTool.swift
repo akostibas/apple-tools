@@ -21,15 +21,15 @@ public struct PhotosTool: ProbeTool {
         )
     )
 
-    public let fileSink: FileSink
+    public let host: ToolHost
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
         "search": .read,
         "fetch":  .read,
     ])
 
-    public init(fileSink: FileSink) {
-        self.fileSink = fileSink
+    public init(host: ToolHost) {
+        self.host = host
     }
 
     public func handle(params: [String: AnyCodable]?) -> (result: String, isError: Bool) {
@@ -249,11 +249,11 @@ public struct PhotosTool: ProbeTool {
             return ("failed to export photo", true)
         }
 
-        let result = fileSink.deliver(filename: export.filename, data: data)
+        let result = host.fileSink.deliver(filename: export.filename, data: data)
         switch result {
-        case .success(let path):
+        case .success(let ref):
             var response: [String: Any] = [
-                "path": path,
+                ref.key: ref.value,
                 "filename": export.filename,
             ]
             if !fullResolution {

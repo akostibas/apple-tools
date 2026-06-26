@@ -6,7 +6,7 @@ import XCTest
 /// read-only *enforcement* lived in ProbeClient, which this package drops.
 final class AccessPolicyCoverageTests: XCTestCase {
 
-    private func tools() -> [ProbeTool] { allAppleTools(fileSink: LocalFileSink()) }
+    private func tools() -> [ProbeTool] { allAppleTools(host: .test()) }
 
     func testEveryPerActionToolClassifiesItsActions() {
         for tool in tools() {

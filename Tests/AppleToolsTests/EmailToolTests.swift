@@ -6,7 +6,7 @@ final class EmailToolTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        tool = EmailTool(fileSink: LocalFileSink())
+        tool = EmailTool(host: .test())
     }
 
     // MARK: - Tool definition

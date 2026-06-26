@@ -7,7 +7,7 @@ final class FilesToolTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        tool = FilesTool(fileSink: LocalFileSink())
+        tool = FilesTool(host: .test())
 
         // Create a temp directory structure under ~/Documents for testing.
         // We use a unique subdirectory to avoid interfering with real files.

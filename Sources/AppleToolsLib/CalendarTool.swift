@@ -4,7 +4,7 @@ import Foundation
 public struct CalendarTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "calendar",
-        description: "Access Apple Calendar events. Use 'calendars' to list calendars, 'list' to view events in a date range, 'create' to add an event, 'search' to find events by keyword. Each returned event includes 'is_organizer' and 'my_status' (accepted/declined/tentative/pending) when the current user is the organizer or an attendee — use these to answer questions about invites, RSVPs, and meetings the user is running. Note: 'create' does not send invites;.",
+        description: "Access Apple Calendar events. Use 'calendars' to list calendars, 'list' to view events in a date range, 'create' to add an event, 'search' to find events by keyword. Each returned event includes 'is_organizer' and 'my_status' (accepted/declined/tentative/pending) when the current user is the organizer or an attendee — use these to answer questions about invites, RSVPs, and meetings the user is running. Note: 'create' does not send invites.",
         parameters: ParameterSchema(
             type_: "object",
             properties: [

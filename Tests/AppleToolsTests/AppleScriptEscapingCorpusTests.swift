@@ -218,7 +218,7 @@ private func emailCreateDraftIntegration() -> AppleScriptEscapingCorpusTests.App
 
 private func userConfirmationIntegration() -> AppleScriptEscapingCorpusTests.AppleScriptIntegration {
     return .init(
-        name: "UserConfirmation.requestConfirmation(message)",
+        name: "UserConfirmation.presentDialog(message)",
         envKey: "APPLE_TOOLS_CONFIRM_MESSAGE",
         execute: { payload in
             var captured: (script: String, env: [String: String]) = ("", [:])
@@ -235,7 +235,7 @@ private func userConfirmationIntegration() -> AppleScriptEscapingCorpusTests.App
                 captured = (script, env)
                 return ("button returned:Deny", true)
             }
-            _ = UserConfirmation.requestConfirmation(title: "fixed-title", message: payload)
+            _ = UserConfirmation.presentDialog(title: "fixed-title", message: payload)
             return captured
         }
     )

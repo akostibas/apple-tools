@@ -12,7 +12,12 @@ import os
 /// giving us a forensic trail without any per-machine `log config` setup.
 /// See for the incident that motivated this.
 public enum Log {
-    static let logger = Logger(subsystem: "com.apple-tools", category: "probe")
+    /// OSLog subsystem. Hosts may override at startup (e.g. the probe sets
+    /// `"com.shannon.probe"`) so logs land under their own identity. Defaults
+    /// to the library's own subsystem.
+    public static var subsystem = "com.apple-tools"
+
+    static var logger: Logger { Logger(subsystem: subsystem, category: "tools") }
 
     /// Set to true via --verbose to echo log messages to stderr.
     public static var verbose = false

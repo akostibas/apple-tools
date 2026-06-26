@@ -131,13 +131,17 @@ var argv = Array(CommandLine.arguments.dropFirst())
 // Extract global options anywhere in the argument list.
 var outputDir: String?
 var quiet = ProcessInfo.processInfo.environment["APPLE_TOOLS_QUIET"] == "1"
+// Confirmation dialogs are off by default so the CLI runs non-interactively
+// under an agent (the agent's own per-invocation approval is the gate).
+// `--confirm` (or APPLE_TOOLS_CONFIRM=1) opts into a blocking Allow/Deny dialog.
+var confirm = ["1", "true", "yes"].contains(ProcessInfo.processInfo.environment["APPLE_TOOLS_CONFIRM"] ?? "")
 var globalArgs: [String] = []
 do {
     var i = 0
     while i < argv.count {
         switch argv[i] {
         case "--confirm":
-            setenv("APPLE_TOOLS_CONFIRM", "1", 1)
+            confirm = true
             i += 1
         case "--quiet":
             quiet = true
@@ -154,7 +158,12 @@ do {
 }
 argv = globalArgs
 
-let tools = allAppleTools(fileSink: LocalFileSink(outputDir: outputDir))
+let host = ToolHost(
+    fileSink: LocalFileSink(outputDir: outputDir),
+    confirmer: confirm ? AppleScriptConfirmer() : AllowAllConfirmer(),
+    appName: "apple-tools"
+)
+let tools = allAppleTools(host: host)
 
 guard let first = argv.first else {
     printTopUsage()

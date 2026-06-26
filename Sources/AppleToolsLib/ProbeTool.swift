@@ -41,23 +41,23 @@ extension ProbeTool {
     }
 }
 
-/// All registered Apple tools. `fileSink` decides where file-producing tools
-/// (photos, screenshot, clipboard image, attachment export, file read) write
-/// their output — locally, that's a directory and the reference is a path.
-public func allAppleTools(fileSink: FileSink) -> [ProbeTool] {
+/// All registered Apple tools. `host` supplies the file sink (where
+/// file-producing tools deliver output), the confirmer (how sensitive actions
+/// are gated), and the user-facing app name. Pure read-only tools ignore it.
+public func allAppleTools(host: ToolHost) -> [ProbeTool] {
     return [
         EchoTool(),
-        FilesTool(fileSink: fileSink),
+        FilesTool(host: host),
         CalendarTool(),
-        ClipboardTool(fileSink: fileSink),
+        ClipboardTool(host: host),
         RemindersTool(),
-        PhotosTool(fileSink: fileSink),
+        PhotosTool(host: host),
         ContactsTool(),
-        ScreenshotTool(fileSink: fileSink),
+        ScreenshotTool(host: host),
         NotesTool(),
-        EmailTool(fileSink: fileSink),
-        IMessageTool(fileSink: fileSink),
-        OpenURITool(),
+        EmailTool(host: host),
+        IMessageTool(host: host),
+        OpenURITool(host: host),
     ]
 }
 

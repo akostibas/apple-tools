@@ -6,7 +6,7 @@ final class ScreenshotToolTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        tool = ScreenshotTool(fileSink: LocalFileSink())
+        tool = ScreenshotTool(host: .test())
     }
 
     // MARK: - Tool definition

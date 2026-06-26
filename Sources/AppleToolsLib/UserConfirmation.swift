@@ -14,21 +14,11 @@ public enum UserConfirmation {
         return (result.stdout, result.outcome == .success)
     }
 
-    /// Show a dialog with Allow/Deny buttons. Returns true if the user clicks Allow.
-    /// Times out after `timeout` seconds (default 30), which counts as denial.
-    /// Opt-in gate. Confirmation dialogs are OFF by default so the CLI runs
-    /// non-interactively under an agent (the gate there is the agent's own
-    /// per-invocation approval). Set `APPLE_TOOLS_CONFIRM=1` (the `--confirm`
-    /// flag sets it) to require an interactive Allow/Deny dialog for sensitive
-    /// actions like screenshots and opening URIs.
-    public static var isEnabled: Bool {
-        let v = ProcessInfo.processInfo.environment["APPLE_TOOLS_CONFIRM"]
-        return v == "1" || v == "true" || v == "yes"
-    }
-
-    public static func requestConfirmation(title: String, message: String, timeout: Int = 30) -> Bool {
-        // Opt-in: when disabled, proceed without a (blocking) GUI dialog.
-        guard isEnabled else { return true }
+    /// Show a dialog with Allow/Deny buttons. Returns true if the user clicks
+    /// Allow. Times out after `timeout` seconds (default 30), counting as
+    /// denial. Whether to call this at all is the host's policy — see
+    /// `Confirmer` / `AppleScriptConfirmer` / `AllowAllConfirmer`.
+    public static func presentDialog(title: String, message: String, timeout: Int = 30) -> Bool {
         // Payload (title + message) flows through env, not the script source.
         // `do shell script "printenv X"` returns the value as UTF-8 (var name
         // is a compile-time literal, so no shell-injection surface)..

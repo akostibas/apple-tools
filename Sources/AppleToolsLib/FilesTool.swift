@@ -19,7 +19,7 @@ public struct FilesTool: ProbeTool {
     )
 
     // The probe config is injected so we can derive the upload URL and API key.
-    public let fileSink: FileSink
+    public let host: ToolHost
 
     private let documentsDir = NSHomeDirectory() + "/Documents"
 
@@ -30,8 +30,8 @@ public struct FilesTool: ProbeTool {
         "fetch":  .read,
     ])
 
-    public init(fileSink: FileSink) {
-        self.fileSink = fileSink
+    public init(host: ToolHost) {
+        self.host = host
     }
 
     public func handle(params: [String: AnyCodable]?) -> (result: String, isError: Bool) {
@@ -274,11 +274,11 @@ public struct FilesTool: ProbeTool {
 
         let filename = (resolved as NSString).lastPathComponent
 
-        let result = fileSink.deliver(filename: filename, data: fileData)
+        let result = host.fileSink.deliver(filename: filename, data: fileData)
         switch result {
-        case .success(let path):
+        case .success(let ref):
             let response: [String: String] = [
-                "path": path,
+                ref.key: ref.value,
                 "filename": filename,
             ]
             guard let json = try? JSONSerialization.data(withJSONObject: response),

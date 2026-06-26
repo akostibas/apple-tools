@@ -11,7 +11,7 @@ final class IMessageToolTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        tool = IMessageTool(fileSink: LocalFileSink())
+        tool = IMessageTool(host: .test())
     }
 
     func testToolAdvertisesAttachmentsProperty() {

@@ -16,15 +16,15 @@ public struct ClipboardTool: ProbeTool {
         )
     )
 
-    public let fileSink: FileSink
+    public let host: ToolHost
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
         "read":  .read,
         "write": .readWrite,
     ])
 
-    public init(fileSink: FileSink) {
-        self.fileSink = fileSink
+    public init(host: ToolHost) {
+        self.host = host
     }
 
     public func handle(params: [String: AnyCodable]?) -> (result: String, isError: Bool) {
@@ -76,12 +76,12 @@ public struct ClipboardTool: ProbeTool {
         // Check for image data (screenshots, copied images).
         if let imageData = imageDataFromPasteboard(pasteboard) {
             let filename = "clipboard-\(ISO8601DateFormatter().string(from: Date())).png"
-            let result = fileSink.deliver(filename: filename, data: imageData)
+            let result = host.fileSink.deliver(filename: filename, data: imageData)
             switch result {
-            case .success(let path):
+            case .success(let ref):
                 let response: [String: Any] = [
                     "type": "image",
-                    "path": path,
+                    ref.key: ref.value,
                     "filename": filename,
                 ]
                 return (jsonEncode(response), false)
