@@ -182,8 +182,8 @@ public struct CalendarTool: ProbeTool {
             "id": event.eventIdentifier ?? "",
             "title": event.title ?? "",
             "calendar": event.calendar.title,
-            "start": ISO8601DateFormatter().string(from: event.startDate),
-            "end": ISO8601DateFormatter().string(from: event.endDate),
+            "start": DateFormatting.iso(event.startDate),
+            "end": DateFormatting.iso(event.endDate),
         ]
         return (jsonString(response) ?? "{}", false)
     }
@@ -241,8 +241,6 @@ public struct CalendarTool: ProbeTool {
 
     /// Extract an EventKit-free `CalendarEventRecord` from an EKEvent.
     private func record(from event: EKEvent) -> CalendarEventRecord {
-        let fmt = ISO8601DateFormatter()
-
         let isOrganizer = event.organizer?.isCurrentUser ?? false
         let myStatus: String?
         if isOrganizer {
@@ -258,8 +256,8 @@ public struct CalendarTool: ProbeTool {
             externalID: event.calendarItemExternalIdentifier,
             title: event.title ?? "",
             calendar: event.calendar.title,
-            start: fmt.string(from: event.startDate),
-            end: fmt.string(from: event.endDate),
+            start: DateFormatting.iso(event.startDate),
+            end: DateFormatting.iso(event.endDate),
             allDay: event.isAllDay,
             location: event.location,
             notes: event.notes,

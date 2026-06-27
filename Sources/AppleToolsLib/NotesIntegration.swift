@@ -163,6 +163,7 @@ public enum NotesIntegration {
         let script = """
         set theQuery to do shell script "printenv APPLE_TOOLS_NOTES_QUERY"
         \(folderBinding)
+        \(DateFormatting.appleScriptComponentsHandler)
         tell application "Notes"
             set matchingNotes to \(folderClause)
             set totalCount to count of matchingNotes
@@ -175,7 +176,7 @@ public enum NotesIntegration {
                 set n to item i of matchingNotes
                 set nName to name of n
                 set nID to id of n
-                set nDate to modification date of n
+                set nDate to my atDateComponents(modification date of n)
                 set nPlain to plaintext of n
                 -- Skip first line (title) and leading whitespace for snippet
                 set firstLF to offset of linefeed in nPlain
@@ -217,7 +218,7 @@ public enum NotesIntegration {
             notes.append(NoteSummary(
                 id: parts[0],
                 title: parts[1],
-                modified: parts[2],
+                modified: DateFormatting.isoFromAppleScriptComponents(parts[2]),
                 snippet: parts[3...].joined(separator: "\t")
             ))
         }
@@ -241,6 +242,7 @@ public enum NotesIntegration {
 
         let script = """
         set theKey to do shell script "printenv APPLE_TOOLS_NOTES_ID_OR_TITLE"
+        \(DateFormatting.appleScriptComponentsHandler)
         tell application "Notes"
             set theNote to \(whereClause)
             set nID to id of theNote
@@ -252,8 +254,8 @@ public enum NotesIntegration {
                     exit repeat
                 end if
             end repeat
-            set nDate to modification date of theNote
-            set nCreated to creation date of theNote
+            set nDate to my atDateComponents(modification date of theNote)
+            set nCreated to my atDateComponents(creation date of theNote)
             set nHTML to body of theNote
             return nID & "\\t" & nName & "\\t" & nFolder & "\\t" & nDate & "\\t" & nCreated & "\\t" & nHTML
         end tell
@@ -283,8 +285,8 @@ public enum NotesIntegration {
             id: parts[0],
             title: noteTitle,
             folder: parts[2],
-            modified: parts[3],
-            created: parts[4],
+            modified: DateFormatting.isoFromAppleScriptComponents(parts[3]),
+            created: DateFormatting.isoFromAppleScriptComponents(parts[4]),
             content: markdown
         )
     }

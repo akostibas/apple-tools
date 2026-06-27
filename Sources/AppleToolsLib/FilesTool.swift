@@ -107,8 +107,7 @@ public struct FilesTool: ProbeTool {
                     entry["size"] = size
                 }
                 if let modified = attrs[.modificationDate] as? Date {
-                    let fmt = ISO8601DateFormatter()
-                    entry["modified"] = fmt.string(from: modified)
+                    entry["modified"] = DateFormatting.iso(modified)
                 }
             }
             results.append(entry)
@@ -170,7 +169,6 @@ public struct FilesTool: ProbeTool {
         let page = Array(sorted.dropFirst(offset).prefix(limit))
 
         var results: [[String: Any]] = []
-        let dateFmt = ISO8601DateFormatter()
         for name in page {
             let entryPath = (resolved as NSString).appendingPathComponent(name)
             var entry: [String: Any] = ["name": name]
@@ -184,7 +182,7 @@ public struct FilesTool: ProbeTool {
                     entry["size"] = size
                 }
                 if let modified = attrs[.modificationDate] as? Date {
-                    entry["modified"] = dateFmt.string(from: modified)
+                    entry["modified"] = DateFormatting.iso(modified)
                 }
             }
             results.append(entry)
@@ -230,12 +228,11 @@ public struct FilesTool: ProbeTool {
             if let size = attrs[.size] as? Int {
                 response["size"] = size
             }
-            let dateFmt = ISO8601DateFormatter()
             if let created = attrs[.creationDate] as? Date {
-                response["created"] = dateFmt.string(from: created)
+                response["created"] = DateFormatting.iso(created)
             }
             if let modified = attrs[.modificationDate] as? Date {
-                response["modified"] = dateFmt.string(from: modified)
+                response["modified"] = DateFormatting.iso(modified)
             }
         }
 
