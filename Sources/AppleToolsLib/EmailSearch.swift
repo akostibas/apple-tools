@@ -6,12 +6,14 @@ import SQLite3
 enum EmailSearch {
     struct Criteria {
         var query: String?       // free text: subject / snippet / sender
-        var from: String?        // sender filter
+        var from: String?        // sender filter (wide text net)
+        var fromEmail: String?   // sender filter (EXACT full address, incl. domain)
         var to: String?          // recipient filter
         var after: Date?
         var before: Date?
         var limit: Int = 20
         var excludeSelf: Bool = true
+        var excludeBulk: Bool = false  // drop likely-automated/bulk senders
     }
 
     struct Hit {
@@ -80,8 +82,9 @@ enum EmailSearch {
         let queryTokens: [String] = criteria.query.map(EmailSearch.tokenize) ?? []
         let hasQuery = !queryTokens.isEmpty
         let hasFrom = (criteria.from?.isEmpty == false)
+        let hasFromEmail = (criteria.fromEmail?.isEmpty == false)
         let hasTo = (criteria.to?.isEmpty == false)
-        if !hasQuery && !hasFrom && !hasTo && criteria.after == nil && criteria.before == nil {
+        if !hasQuery && !hasFrom && !hasFromEmail && !hasTo && criteria.after == nil && criteria.before == nil {
             throw SearchError.noCriteria
         }
 
@@ -124,6 +127,12 @@ enum EmailSearch {
             let pat = "%\(f)%"
             paramValues.append(contentsOf: [pat, pat])
         }
+        // --from-email: EXACT full-address match (incl. domain). The scalpel
+        // to --from's wide text net — postmaster@a.com ≠ postmaster@b.com.
+        if let fe = criteria.fromEmail, !fe.isEmpty {
+            wheres.append("a.address = ? COLLATE NOCASE")
+            paramValues.append(fe)
+        }
         if let t = criteria.to, !t.isEmpty {
             wheres.append("""
             EXISTS (
@@ -149,6 +158,7 @@ enum EmailSearch {
         let postFilters = !queryTokens.isEmpty
             || (criteria.from != nil && !criteria.from!.isEmpty)
             || criteria.excludeSelf
+            || criteria.excludeBulk
         let fetchLimit = postFilters ? max(criteria.limit * 10, criteria.limit) : criteria.limit
         paramValues.append(Int64(fetchLimit))
 
@@ -214,6 +224,14 @@ enum EmailSearch {
                 continue
             }
 
+            // --exclude-spam / --humans-only: drop likely automated/bulk
+            // senders. Applied before the limit break so the caller still
+            // gets up to `limit` human results.
+            if criteria.excludeBulk
+                && BulkSenderClassifier.isLikelyBulk(address: senderAddr, name: senderName) {
+                continue
+            }
+
             // Word-boundary post-filter on sender for -f
             if let f = criteria.from, !f.isEmpty {
                 if !term.senderMatches(f, address: senderAddr, name: senderName) {
@@ -250,6 +268,40 @@ enum EmailSearch {
         }
 
         return hits
+    }
+
+    // MARK: - Distinct-sender rollup
+
+    /// One distinct sender address in a result set, with its span.
+    struct SenderSummary {
+        let address: String   // original-cased address
+        let count: Int
+        let first: Date
+        let last: Date
+    }
+
+    /// Group `hits` by distinct sender address (case-insensitive). Sorted by
+    /// count desc, then most-recent desc, so the dominant sender leads.
+    /// Returns an empty array when there are 0 or 1 distinct addresses — the
+    /// caller uses that to decide whether a rollup is worth showing.
+    static func senderRollup(_ hits: [Hit]) -> [SenderSummary] {
+        struct Agg { var address: String; var count: Int; var first: Date; var last: Date }
+        var byAddr: [String: Agg] = [:]
+        for h in hits {
+            let key = h.senderAddress.lowercased()
+            if var agg = byAddr[key] {
+                agg.count += 1
+                if h.date < agg.first { agg.first = h.date }
+                if h.date > agg.last { agg.last = h.date }
+                byAddr[key] = agg
+            } else {
+                byAddr[key] = Agg(address: h.senderAddress, count: 1, first: h.date, last: h.date)
+            }
+        }
+        guard byAddr.count > 1 else { return [] }
+        return byAddr.values
+            .map { SenderSummary(address: $0.address, count: $0.count, first: $0.first, last: $0.last) }
+            .sorted { $0.count != $1.count ? $0.count > $1.count : $0.last > $1.last }
     }
 
     // MARK: - Message-ID → on-disk location
