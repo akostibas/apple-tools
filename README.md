@@ -45,6 +45,16 @@ names. The rules:
   portable default — a library consumer that knows the user's actual location
   can set `DateFormatting.outputTimeZone` once at startup to render every
   timestamp in that zone instead (no per-call argument).
+- **Phone numbers** are emitted in canonical **E.164** (`+15551234567`) wherever
+  a value is known to be a phone number. Every tool routes through one helper
+  (`PhoneFormatting`), so the format can't drift between tools. Contacts phone
+  values are canonicalized in place; Messages adds an E.164 `phone_e164` field
+  *beside* the raw handle (the raw `chat_id` is never rewritten). A value that
+  isn't confidently a phone number — an email, a marketing short code, or
+  anything libphonenumber rejects — is left exactly as-is, never coerced. A bare
+  national number (no `+`) is interpreted using the system region by default; a
+  library consumer that knows the user's region can set
+  `PhoneFormatting.defaultRegion` once at startup (mirrors `outputTimeZone`).
 - **Identifiers**: the opaque primary id of a record is `id` (events,
   reminders, contacts, notes, photos, email messages). Raw routing handles keep
   their qualified names (`chat_id`, participant `identifier`) — these are

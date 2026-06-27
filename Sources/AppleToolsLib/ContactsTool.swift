@@ -158,7 +158,7 @@ public struct ContactsTool: ProbeTool {
         }
 
         if let phone = contact.phoneNumbers.first {
-            entry["phone"] = phone.value.stringValue
+            entry["phone"] = PhoneFormatting.normalized(phone.value.stringValue)
         }
 
         return entry
@@ -185,7 +185,7 @@ public struct ContactsTool: ProbeTool {
 
         if !contact.phoneNumbers.isEmpty {
             entry["phones"] = contact.phoneNumbers.map { lv -> [String: String] in
-                var d: [String: String] = ["value": lv.value.stringValue]
+                var d: [String: String] = ["value": PhoneFormatting.normalized(lv.value.stringValue)]
                 if let label = lv.label {
                     d["label"] = CNLabeledValue<NSString>.localizedString(forLabel: label)
                 }
