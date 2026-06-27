@@ -213,9 +213,9 @@ public struct EmailTool: ProbeTool {
         let senders: [[String: Any]] = summaries.map { s in
             [
                 "address": s.address,
-                "count": s.count,
-                "first": iso.string(from: s.first),
-                "last": iso.string(from: s.last),
+                "message_count": s.count,
+                "first_date": iso.string(from: s.first),
+                "last_date": iso.string(from: s.last),
             ]
         }
 

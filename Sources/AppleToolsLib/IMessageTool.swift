@@ -9,7 +9,7 @@ public typealias NotifyCallback = (_ message: String, _ agent: String?) -> Void
 public struct IMessageTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "imessage",
-        description: "iMessage and SMS. Actions: 'recent' (list conversations with recent activity), 'stats' (rank conversations by message volume with sent/received split over an optional --since window), 'send' (send a message; supports file attachments by absolute path), 'read' (messages from a conversation), 'search' (find messages by text content), 'fetch_attachment' (retrieve an attachment file from a message). Phone numbers and emails are auto-resolved to Contacts names on output (added as 'contact_name' / 'from_name' alongside the raw handle when a match exists). Likely-spam detection: 'recent', 'read', and 'stats' entries carry 'is_likely_spam' and 'is_shortcode' booleans so callers don't have to know the magic suffix. A sender is flagged when its chat id carries the (undocumented) SMS-filtering suffix '(smsfp)' (filtered promotional) or '(smsft)' (filtered transactional), OR it is a 5-6 digit marketing short code — UNLESS it resolves to a Contacts name (a real person is never flagged). The raw chat_id (suffix included) is preserved. Use --exclude-spam (alias --humans-only) on 'recent'/'stats' to drop flagged senders; off by default (never silently dropped).",
+        description: "iMessage and SMS. Actions: 'recent' (list conversations with recent activity), 'stats' (rank conversations by message volume with sent/received split over an optional --since window), 'send' (send a message; supports file attachments by absolute path), 'read' (messages from a conversation), 'search' (find messages by text content), 'fetch_attachment' (retrieve an attachment file from a message). Phone numbers and emails are auto-resolved to Contacts names on output (added as 'contact_name' alongside the raw handle when a match exists; 'last_message_from_name' resolves the last-message sender). Likely-spam detection: 'recent', 'read', and 'stats' entries carry 'is_likely_spam' and 'is_shortcode' booleans so callers don't have to know the magic suffix. A sender is flagged when its chat id carries the (undocumented) SMS-filtering suffix '(smsfp)' (filtered promotional) or '(smsft)' (filtered transactional), OR it is a 5-6 digit marketing short code — UNLESS it resolves to a Contacts name (a real person is never flagged). The raw chat_id (suffix included) is preserved. Use --exclude-spam (alias --humans-only) on 'recent'/'stats' to drop flagged senders; off by default (never silently dropped).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
@@ -344,14 +344,14 @@ public struct IMessageTool: ProbeTool {
         }
     }
 
-    /// Annotate message dicts with `from_name` for resolved inbound senders.
+    /// Annotate message dicts with `contact_name` for resolved inbound senders.
     /// Pure; raw `from` handle is preserved.
     func annotateMessages(_ msgs: [[String: Any]], names: [String: String]) -> [[String: Any]] {
         return msgs.map { m in
             var msg = m
             if let from = m["from"] as? String, from != "me", from != "unknown" {
                 let name = names[from]
-                if let n = name { msg["from_name"] = n }
+                if let n = name { msg["contact_name"] = n }
                 // Flag inbound shortcode/SMS-filtered senders. The `from` handle
                 // carries the same (smsfp)/(smsft) suffix as the chat id, so the
                 // classifier sees it directly. Contact match short-circuits.
@@ -663,7 +663,7 @@ public struct IMessageTool: ProbeTool {
             "received": Int(row[6]) ?? 0,
         ]
         if row.count > 7, !row[7].isEmpty {
-            entry["last_activity"] = IMessageIntegration.appleNanosToISO(row[7])
+            entry["last_message_date"] = IMessageIntegration.appleNanosToISO(row[7])
         }
 
         if isGroup {

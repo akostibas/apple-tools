@@ -120,7 +120,7 @@ final class IMessageToolTests: XCTestCase {
         XCTAssertEqual(entry["message_count"] as? Int, 150)
         XCTAssertEqual(entry["sent"] as? Int, 60)
         XCTAssertEqual(entry["received"] as? Int, 90)
-        XCTAssertNotNil(entry["last_activity"] as? String)
+        XCTAssertNotNil(entry["last_message_date"] as? String)
         XCTAssertNil(entry["participants"], "1:1 chat should not have participants")
     }
 
@@ -185,17 +185,17 @@ final class IMessageToolTests: XCTestCase {
         XCTAssertFalse(ids.contains("unknown"))
     }
 
-    /// read/search messages gain from_name for resolved inbound senders.
-    func testMessagesAnnotateFromName() {
+    /// read/search messages gain contact_name for resolved inbound senders.
+    func testMessagesAnnotateContactName() {
         let msgs: [[String: Any]] = [
             ["message_id": 1, "from": "+15551234567", "text": "hi"],
             ["message_id": 2, "from": "me", "text": "yo"],
         ]
         let names = ["+15551234567": "Jane Doe"]
         let annotated = tool.annotateMessages(msgs, names: names)
-        XCTAssertEqual(annotated[0]["from_name"] as? String, "Jane Doe")
+        XCTAssertEqual(annotated[0]["contact_name"] as? String, "Jane Doe")
         XCTAssertEqual(annotated[0]["from"] as? String, "+15551234567", "raw handle preserved")
-        XCTAssertNil(annotated[1]["from_name"], "outgoing message gets no from_name")
+        XCTAssertNil(annotated[1]["contact_name"], "outgoing message gets no contact_name")
     }
 
     /// The injected resolver is actually invoked by the recent path's annotation
