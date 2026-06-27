@@ -1,0 +1,79 @@
+#!/bin/bash
+# Cut an apple-tools release: bump Version.swift, commit, tag vX.Y.Z, push.
+#
+# Why this exists: AppleToolsLib is consumed as a SwiftPM dependency, which
+# resolves on git TAGS, not commits. Merging to main is invisible to library
+# consumers (e.g. Shannon's probe-macos) until a version tag is pushed. This
+# script keeps the tag and Version.swift in lockstep so they can't drift.
+#
+# Usage:
+#   bin/release 0.2.0          # preview only — prints the plan, changes nothing
+#   bin/release 0.2.0 --push   # bump + commit + tag + push (main and the tag)
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION_FILE="$REPO_ROOT/Sources/AppleToolsLib/Version.swift"
+COAUTHOR="Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+
+die() { printf 'release: %s\n' "$1" >&2; exit 1; }
+
+# --- args -------------------------------------------------------------------
+VERSION="${1:-}"
+DO_PUSH="no"
+[ "${2:-}" = "--push" ] && DO_PUSH="yes"
+
+[ -n "$VERSION" ] || die "usage: bin/release X.Y.Z [--push]"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "version must be X.Y.Z (got '$VERSION')"
+TAG="v$VERSION"
+
+cd "$REPO_ROOT"
+
+# --- report current state, then check preconditions -------------------------
+CUR_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+CUR_VERSION="$(sed -n 's/.*versionString = "apple-tools\/\([0-9.]*\)".*/\1/p' "$VERSION_FILE")"
+echo "Releasing apple-tools"
+echo "  branch:        $CUR_BRANCH"
+echo "  current:       ${CUR_VERSION:-<unknown>}"
+echo "  new version:   $VERSION  (tag $TAG)"
+echo "  mode:          $([ "$DO_PUSH" = yes ] && echo 'PUSH (commit, tag, push)' || echo 'preview only')"
+echo
+
+[ "$CUR_BRANCH" = "main" ] || die "must release from main, on '$CUR_BRANCH'. Merge to main first."
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  die "working tree is dirty. Commit or stash before releasing."
+fi
+git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && \
+  die "tag $TAG already exists. Pick a higher version."
+[ -n "$CUR_VERSION" ] || die "couldn't parse current version from $VERSION_FILE"
+# refuse to go backwards or sideways
+LOWEST="$(printf '%s\n%s\n' "$CUR_VERSION" "$VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)"
+[ "$VERSION" != "$CUR_VERSION" ] || die "version $VERSION is already current."
+[ "$LOWEST" = "$CUR_VERSION" ] || die "version $VERSION is lower than current $CUR_VERSION."
+
+if [ "$DO_PUSH" != "yes" ]; then
+  echo "Preview only. Re-run with --push to:"
+  echo "  1. bump $VERSION_FILE  ->  apple-tools/$VERSION"
+  echo "  2. commit  'chore(release): $TAG'"
+  echo "  3. tag     $TAG"
+  echo "  4. push    origin main $TAG"
+  echo
+  echo "Then consumers run:  swift package update apple-tools"
+  exit 0
+fi
+
+# --- execute ----------------------------------------------------------------
+# keep main current so we don't tag a stale tree
+git fetch origin main --quiet
+git merge-base --is-ancestor origin/main HEAD || \
+  die "local main is behind origin/main. Pull/rebase first."
+
+sed -i '' "s|apple-tools/$CUR_VERSION|apple-tools/$VERSION|" "$VERSION_FILE"
+git add "$VERSION_FILE"
+git commit -m "chore(release): $TAG
+
+$COAUTHOR"
+git tag -a "$TAG" -m "apple-tools $TAG"
+git push origin main "$TAG"
+
+echo
+echo "Released $TAG. Consumers update with:  swift package update apple-tools"
