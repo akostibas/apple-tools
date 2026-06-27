@@ -3,7 +3,7 @@ import Foundation
 public struct NotesTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "notes",
-        description: "Access Apple Notes. Actions: 'folders' (list folders), 'search' (find notes by keyword with pagination), 'read' (get note content by ID or title), 'create' (new note in a folder), 'append' (add content to an existing note). Content is Markdown: headings (#, ##), **bold**, *italic*, ~~strike~~, `mono`, and -/1. lists round-trip. Apple Notes can't store links or checkboxes via this API, so [text](url) becomes 'text (url)' and '- [ ]' becomes a plain bullet on write; checkbox state on read may lag (read from the on-disk store).",
+        description: "Access Apple Notes. Actions: 'folders' (list folders), 'search' (find notes by keyword with pagination; matches titles by default, pass full_text=true to also search note bodies), 'read' (get note content by ID or title), 'create' (new note in a folder), 'append' (add content to an existing note). Content is Markdown: headings (#, ##), **bold**, *italic*, ~~strike~~, `mono`, and -/1. lists round-trip. Apple Notes can't store links or checkboxes via this API, so [text](url) becomes 'text (url)' and '- [ ]' becomes a plain bullet on write; checkbox state on read may lag (read from the on-disk store).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
@@ -16,6 +16,7 @@ public struct NotesTool: ProbeTool {
                 "text": PropertySchema(type_: "string", description: "Markdown to append (required for append)"),
                 "offset": PropertySchema(type_: "integer", description: "Pagination offset, 0-based (for search, default 0)"),
                 "limit": PropertySchema(type_: "integer", description: "Max results to return (for search, default 20, max 50)"),
+                "full_text": PropertySchema(type_: "boolean", description: "Search note bodies, not just titles (for search, default false). Reads the on-disk store; results may lag a just-edited note by Notes' sync cadence."),
             ],
             required: ["action"]
         )
@@ -46,7 +47,8 @@ public struct NotesTool: ProbeTool {
             let folder = params?["folder"]?.value as? String
             let offset = intParam(params, key: "offset") ?? 0
             let limit = clamp(intParam(params, key: "limit") ?? 20, min: 1, max: 50)
-            return search(query: query, folder: folder, offset: offset, limit: limit)
+            let fullText = boolParam(params, key: "full_text") ?? false
+            return search(query: query, folder: folder, offset: offset, limit: limit, fullText: fullText)
         case "read":
             let id = params?["id"]?.value as? String
             let title = params?["title"]?.value as? String
@@ -118,11 +120,11 @@ public struct NotesTool: ProbeTool {
 
     // MARK: - Search
 
-    private func search(query: String, folder: String?, offset: Int, limit: Int) -> (String, Bool) {
+    private func search(query: String, folder: String?, offset: Int, limit: Int, fullText: Bool) -> (String, Bool) {
         let total: Int
         let notes: [NotesIntegration.NoteSummary]
         do {
-            (total, notes) = try NotesIntegration.searchNotes(query: query, folder: folder, offset: offset, limit: limit)
+            (total, notes) = try NotesIntegration.searchNotes(query: query, folder: folder, offset: offset, limit: limit, fullText: fullText)
         } catch let error as NotesIntegration.NotesError {
             return (error.description, true)
         } catch {
@@ -222,6 +224,14 @@ public struct NotesTool: ProbeTool {
         if let i = val as? Int { return i }
         if let d = val as? Double { return Int(d) }
         if let s = val as? String { return Int(s) }
+        return nil
+    }
+
+    private func boolParam(_ params: [String: AnyCodable]?, key: String) -> Bool? {
+        guard let val = params?[key]?.value else { return nil }
+        if let b = val as? Bool { return b }
+        if let i = val as? Int { return i != 0 }
+        if let s = val as? String { return ["1", "true", "yes"].contains(s.lowercased()) }
         return nil
     }
 
