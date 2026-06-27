@@ -84,4 +84,33 @@ final class CLIArgumentMapperTests: XCTestCase {
         XCTAssertEqual(p["since"]?.value as? String, "2026-01-01T00:00:00Z")
         XCTAssertEqual(p["limit"]?.value as? Int, 5)
     }
+
+    // MARK: - Email search flags (from-email scalpel + spam filter)
+
+    func testEmailFromEmailFlagMapsExactValue() throws {
+        // --from-email maps to the from_email param against the real email schema,
+        // preserving the FULL address (the scalpel keeps the domain).
+        let email = EmailTool(host: .test())
+        let p = try CLIArgumentMapper.buildParams(
+            tokens: ["--from-email", "pinbot@pinterest.com"],
+            schema: email.definition.parameters, action: "search")
+        XCTAssertEqual(p["from_email"]?.value as? String, "pinbot@pinterest.com")
+        XCTAssertEqual(p["action"]?.value as? String, "search")
+    }
+
+    func testEmailExcludeSpamBareFlagIsTrue() throws {
+        let email = EmailTool(host: .test())
+        let p = try CLIArgumentMapper.buildParams(
+            tokens: ["--exclude-spam"],
+            schema: email.definition.parameters, action: "search")
+        XCTAssertEqual(p["exclude_spam"]?.value as? Bool, true)
+    }
+
+    func testEmailHumansOnlyBareFlagIsTrue() throws {
+        let email = EmailTool(host: .test())
+        let p = try CLIArgumentMapper.buildParams(
+            tokens: ["--humans-only"],
+            schema: email.definition.parameters, action: "search")
+        XCTAssertEqual(p["humans_only"]?.value as? Bool, true)
+    }
 }

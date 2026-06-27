@@ -301,4 +301,122 @@ final class EmailToolTests: XCTestCase {
         let wb = WordBoundary()
         XCTAssertTrue(wb.senderMatches("samira", address: "samiraquinn@example.com", name: "Samira Quinn"))
     }
+
+    // MARK: - Schema: from_email / spam filter
+
+    func testSchemaAdvertisesFromEmail() {
+        XCTAssertNotNil(tool.definition.parameters?.properties?["from_email"],
+                        "search should advertise an exact from_email scalpel")
+    }
+
+    func testSchemaAdvertisesSpamFilter() {
+        XCTAssertNotNil(tool.definition.parameters?.properties?["exclude_spam"])
+        XCTAssertEqual(tool.definition.parameters?.properties?["exclude_spam"]?.type_, "boolean")
+    }
+
+    // MARK: - from_email is a recognized criterion
+
+    func testFromEmailCountsAsCriterion() {
+        // from_email alone must satisfy the "at least one criterion" guard —
+        // it should reach the DB (and fail on a missing DB path), not noCriteria.
+        var criteria = EmailSearch.Criteria()
+        criteria.fromEmail = "pinbot@pinterest.com"
+        XCTAssertThrowsError(try EmailSearch.run(criteria, dbPath: "/nonexistent/Envelope Index")) { err in
+            guard let e = err as? EmailSearch.SearchError else {
+                return XCTFail("expected SearchError, got \(err)")
+            }
+            if case .dbMissing = e { return }
+            XCTFail("expected dbMissing (criterion accepted), got \(e)")
+        }
+    }
+
+    // MARK: - BulkSenderClassifier
+
+    func testClassifierFlagsPostmaster() {
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(address: "postmaster@matrixmail.ntreismls.com"))
+    }
+
+    func testClassifierFlagsBot() {
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(address: "pinbot@pinterest.com", name: "Pinterest"))
+    }
+
+    func testClassifierFlagsNoReplyVariants() {
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(address: "noreply@github.com"))
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(address: "no-reply@github.com"))
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(address: "do-not-reply@example.com"))
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(address: "bounce-123@mail.example.com"))
+    }
+
+    func testClassifierClearsHumanSender() {
+        // A real person on an apex domain must NOT be flagged.
+        XCTAssertFalse(BulkSenderClassifier.isLikelyBulk(
+            address: "leonel.miranda@ucsc.cl", name: "Leonel Miranda"))
+        XCTAssertFalse(BulkSenderClassifier.isLikelyBulk(
+            address: "samiraquinn@gmail.com", name: "Samira Quinn"))
+    }
+
+    func testClassifierDoesNotFlagGmailApex() {
+        // Regression: `mail.` substring must not flag `gmail.com`.
+        XCTAssertFalse(BulkSenderClassifier.isLikelyBulk(address: "alice@gmail.com", name: "Alice"))
+    }
+
+    func testClassifierFlagsMarketingSubdomain() {
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(address: "hello@email.brand.com"))
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(address: "team@engage.canva.com"))
+    }
+
+    // MARK: - Distinct-sender rollup grouping
+
+    private func makeHit(_ address: String, _ name: String?, _ iso8601: String) -> EmailSearch.Hit {
+        let f = ISO8601DateFormatter()
+        let d = f.date(from: iso8601) ?? Date(timeIntervalSince1970: 0)
+        return EmailSearch.Hit(
+            messageID: "id-\(address)-\(iso8601)", rowID: 1, date: d,
+            senderAddress: address, senderName: name, subject: "s",
+            mailboxURL: "", snippet: nil, aiSummary: nil)
+    }
+
+    func testRollupEmptyForSingleDistinctAddress() {
+        let hits = [
+            makeHit("sandy@a.com", "Sandy", "2025-01-01T00:00:00Z"),
+            makeHit("sandy@a.com", "Sandy", "2025-02-01T00:00:00Z"),
+        ]
+        XCTAssertTrue(EmailSearch.senderRollup(hits).isEmpty,
+                      "one distinct address → no rollup (no clutter)")
+    }
+
+    func testRollupGroupsAndSortsByCount() {
+        let hits = [
+            makeHit("leonel@ucsc.cl", "Sandy Ford", "2025-05-03T00:00:00Z"),
+            makeHit("pinbot@pinterest.com", "Sandy Ford", "2014-10-01T00:00:00Z"),
+            makeHit("pinbot@pinterest.com", "Sandy Ford", "2014-11-01T00:00:00Z"),
+            makeHit("postmaster@x.com", "Sandy Ford", "2015-06-01T00:00:00Z"),
+        ]
+        let r = EmailSearch.senderRollup(hits)
+        XCTAssertEqual(r.count, 3, "three distinct addresses")
+        XCTAssertEqual(r.first?.address, "pinbot@pinterest.com", "dominant sender leads")
+        XCTAssertEqual(r.first?.count, 2)
+        // Span of the dominant sender spans its two dates.
+        let f = ISO8601DateFormatter()
+        XCTAssertEqual(r.first?.first, f.date(from: "2014-10-01T00:00:00Z"))
+        XCTAssertEqual(r.first?.last, f.date(from: "2014-11-01T00:00:00Z"))
+    }
+
+    func testRollupIsCaseInsensitiveOnAddress() {
+        let hits = [
+            makeHit("Foo@Bar.com", "Foo", "2025-01-01T00:00:00Z"),
+            makeHit("foo@bar.com", "Foo", "2025-01-02T00:00:00Z"),
+        ]
+        XCTAssertTrue(EmailSearch.senderRollup(hits).isEmpty,
+                      "case-variant addresses collapse to one distinct sender")
+    }
+
+    func testClassifierHeadersStrengthenSignal() {
+        // Even an innocuous local-part is bulk when List-Unsubscribe is present.
+        let h = BulkSenderClassifier.Headers(listUnsubscribe: "<mailto:unsub@list.com>")
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(
+            address: "hello@somebrand.com", name: "Some Brand", headers: h))
+        let p = BulkSenderClassifier.Headers(precedence: "bulk")
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(address: "hello@somebrand.com", headers: p))
+    }
 }
