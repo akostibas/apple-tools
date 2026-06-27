@@ -31,6 +31,31 @@ schema), and the driver maps `action` → subcommand and each property → a
 `--flag`, coercing values to the declared type. There is no per-tool argument
 parsing — adding a tool to the library adds it to the CLI automatically.
 
+## Output schema conventions
+
+Every tool emits JSON. Field names are kept consistent across tools so an agent
+can read calendar + email + imessage + photos together without re-learning
+names. The rules:
+
+- **Timestamps** are always ISO-8601 strings, named for the moment they capture:
+  `created`, `modified`, `date` (the item's own time), `start`/`end` (spans),
+  `due_date`, `first_date`/`last_date` (rollup span), `last_message_date`.
+- **Identifiers**: the opaque primary id of a record is `id` (events,
+  reminders, contacts, notes, photos, email messages). Raw routing handles keep
+  their qualified names (`chat_id`, participant `identifier`) — these are
+  addresses, not record ids, and are never renamed to `id`.
+- **Resolved names live beside their raw id, never replace it.** A handle/address
+  field (`from`, `chat_id`, participant `identifier`) is preserved as-is, and the
+  Contacts-resolved display name is added as `contact_name` (or
+  `last_message_from_name` for the last-message sender). Calendar/Contacts
+  primary names use `name`.
+- **Counts** use `*_count` (`message_count`, `unread_count`, `attachment_count`).
+  The response-level number of returned items is `count`; `total` is the full
+  count available behind pagination.
+- **Booleans** use `is_`/`has_` (`is_organizer`, `is_likely_spam`,
+  `is_shortcode`). A few domain-standard flags predate the convention and keep
+  their plain adjective names (`all_day`, `read`, `completed`, `favorite`).
+
 ## Files
 
 File-producing actions (`photos fetch`, `screenshot`, `files fetch`, clipboard
