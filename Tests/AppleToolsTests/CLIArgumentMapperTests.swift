@@ -69,4 +69,19 @@ final class CLIArgumentMapperTests: XCTestCase {
             XCTAssertEqual(error as? CLIArgumentMapper.MappingError, .unexpectedArgument("oops"))
         }
     }
+
+    /// The new `imessage stats` interface (#3) rides the generic dispatch: the
+    /// real tool schema must map `stats --since … --limit …` with no per-tool
+    /// argument code, coercing limit to Int.
+    func testImessageStatsActionMapsAgainstToolSchema() throws {
+        let imsg = IMessageTool(host: .test())
+        let p = try CLIArgumentMapper.buildParams(
+            tokens: ["--since", "2026-01-01T00:00:00Z", "--limit", "5"],
+            schema: imsg.definition.parameters,
+            action: "stats"
+        )
+        XCTAssertEqual(p["action"]?.value as? String, "stats")
+        XCTAssertEqual(p["since"]?.value as? String, "2026-01-01T00:00:00Z")
+        XCTAssertEqual(p["limit"]?.value as? Int, 5)
+    }
 }
