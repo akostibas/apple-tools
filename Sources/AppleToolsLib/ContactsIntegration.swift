@@ -133,6 +133,96 @@ public enum ContactsIntegration {
         return (try? store.unifiedContacts(matching: predicate, keysToFetch: keys)) ?? []
     }
 
+    // MARK: - Batched name resolution
+
+    /// Resolve a batch of message handles (E.164 phone numbers or emails) to
+    /// contact display names in a single pass over the address book.
+    ///
+    /// Used to annotate iMessage output with `contact_name` by default. Returns
+    /// a map of `identifier → display name` containing only identifiers that
+    /// matched a contact; unmatched identifiers are simply absent so callers can
+    /// fall back to the raw handle.
+    ///
+    /// Best-effort: if Contacts access is denied or enumeration fails, returns an
+    /// empty map rather than throwing, so output degrades to raw handles.
+    ///
+    /// Phone matching is country-code tolerant: numbers are compared by their
+    /// trailing 10 digits (the US national number) when long enough, so a stored
+    /// `(555) 123-4567` matches an E.164 `+15551234567`.
+    public static func resolveNames(forIdentifiers identifiers: [String]) -> [String: String] {
+        let cleaned = identifiers
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return [:] }
+        guard requestAccess() else { return [:] }
+
+        let keys: [CNKeyDescriptor] = [
+            CNContactGivenNameKey as CNKeyDescriptor,
+            CNContactMiddleNameKey as CNKeyDescriptor,
+            CNContactFamilyNameKey as CNKeyDescriptor,
+            CNContactNicknameKey as CNKeyDescriptor,
+            CNContactOrganizationNameKey as CNKeyDescriptor,
+            CNContactEmailAddressesKey as CNKeyDescriptor,
+            CNContactPhoneNumbersKey as CNKeyDescriptor,
+        ]
+
+        var emailMap: [String: String] = [:]   // lowercased email → name
+        var phoneMap: [String: String] = [:]   // phoneKey(digits) → name
+
+        let request = CNContactFetchRequest(keysToFetch: keys)
+        request.sortOrder = .givenName
+        do {
+            try store.enumerateContacts(with: request) { contact, _ in
+                let name = resolvedName(for: contact)
+                guard !name.isEmpty else { return }
+                for email in contact.emailAddresses {
+                    let key = (email.value as String).lowercased()
+                    if !key.isEmpty, emailMap[key] == nil { emailMap[key] = name }
+                }
+                for phone in contact.phoneNumbers {
+                    let digits = phone.value.stringValue
+                        .components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+                    guard !digits.isEmpty else { continue }
+                    let key = phoneKey(digits)
+                    if phoneMap[key] == nil { phoneMap[key] = name }
+                }
+            }
+        } catch {
+            return [:]
+        }
+
+        var result: [String: String] = [:]
+        for id in cleaned {
+            if id.contains("@") {
+                if let name = emailMap[id.lowercased()] { result[id] = name }
+            } else {
+                let digits = id.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+                guard !digits.isEmpty else { continue }
+                if let name = phoneMap[phoneKey(digits)] { result[id] = name }
+            }
+        }
+        return result
+    }
+
+    /// Normalize a digit string to a comparison key: the trailing 10 digits for
+    /// long numbers (drops country code), the full string for short codes.
+    static func phoneKey(_ digits: String) -> String {
+        return digits.count > 10 ? String(digits.suffix(10)) : digits
+    }
+
+    /// Build a human display name for a contact, preferring full name, then
+    /// nickname, then organization.
+    static func resolvedName(for contact: CNContact) -> String {
+        var parts: [String] = []
+        if !contact.givenName.isEmpty { parts.append(contact.givenName) }
+        if !contact.middleName.isEmpty { parts.append(contact.middleName) }
+        if !contact.familyName.isEmpty { parts.append(contact.familyName) }
+        let full = parts.joined(separator: " ")
+        if !full.isEmpty { return full }
+        if !contact.nickname.isEmpty { return contact.nickname }
+        return contact.organizationName
+    }
+
     // MARK: - Get
 
     /// Fetch a single contact by identifier. Throws ContactsError on framework

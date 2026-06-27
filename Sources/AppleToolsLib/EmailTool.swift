@@ -14,7 +14,10 @@ public struct EmailTool: ProbeTool {
                 "id": PropertySchema(type_: "string", description: "Message ID (for read, fetch_attachment)"),
                 "filename": PropertySchema(type_: "string", description: "Attachment filename to select when a message has multiple attachments (for fetch_attachment, optional)"),
                 "query": PropertySchema(type_: "string", description: "Whitespace-separated tokens, all must match across subject, body preview, or sender — full message body is not searched (for search)"),
-                "from": PropertySchema(type_: "string", description: "Sender name or email to filter by — matches a name prefix in the display name (so 'sam' finds 'Samira'), or a whole word in the email local-part; domain is ignored (for search)"),
+                "from": PropertySchema(type_: "string", description: "Sender name or email to filter by — a WIDE TEXT NET: matches a name prefix in the display name (so 'sam' finds 'Samira'), or a whole word in the email local-part; domain is ignored (so a full address like 'a@b.com' returns 0 — use from_email for that). When one query matches >1 distinct address, the response prepends a 'senders' rollup + hint (for search)"),
+                "from_email": PropertySchema(type_: "string", description: "EXACT full sender address incl. domain, e.g. 'pinbot@pinterest.com' — the scalpel to 'from'. postmaster@a.com ≠ postmaster@b.com (for search)"),
+                "exclude_spam": PropertySchema(type_: "boolean", description: "Drop likely automated/bulk senders (postmaster@, noreply@, bots, marketing). Default false (for search)"),
+                "humans_only": PropertySchema(type_: "boolean", description: "Alias for exclude_spam — keep only human senders (for search)"),
                 "to": PropertySchema(type_: "string", description: "Recipient email address (for draft, or recipient filter for search)"),
                 "after": PropertySchema(type_: "string", description: "ISO 8601 date lower bound, e.g. '2025-01-01' or '2025-01-01T00:00:00' (for search)"),
                 "before": PropertySchema(type_: "string", description: "ISO 8601 date upper bound (for search)"),
@@ -125,10 +128,16 @@ public struct EmailTool: ProbeTool {
         var criteria = EmailSearch.Criteria()
         criteria.query = (params?["query"]?.value as? String).flatMap { $0.isEmpty ? nil : $0 }
         criteria.from = (params?["from"]?.value as? String).flatMap { $0.isEmpty ? nil : $0 }
+        criteria.fromEmail = (params?["from_email"]?.value as? String).flatMap { $0.isEmpty ? nil : $0 }
         criteria.to = (params?["to"]?.value as? String).flatMap { $0.isEmpty ? nil : $0 }
         criteria.limit = clamp(intParam(params, key: "limit") ?? 20, min: 1, max: 50)
         if let v = params?["exclude_self"]?.value as? Bool {
             criteria.excludeSelf = v
+        }
+        // --exclude-spam / --humans-only (either flag opts in).
+        if (params?["exclude_spam"]?.value as? Bool) == true
+            || (params?["humans_only"]?.value as? Bool) == true {
+            criteria.excludeBulk = true
         }
 
         if let s = params?["after"]?.value as? String, !s.isEmpty {
@@ -163,17 +172,59 @@ public struct EmailTool: ProbeTool {
                 "subject": h.subject,
                 "date": isoOut.string(from: h.date),
                 "mailbox": prettifyMailboxURL(h.mailboxURL),
+                // Classified from address + display name (no MIME headers in
+                // the search path). See BulkSenderClassifier.
+                "is_likely_spam": BulkSenderClassifier.isLikelyBulk(
+                    address: h.senderAddress, name: h.senderName),
             ]
             if let snip = h.snippet, !snip.isEmpty { entry["snippet"] = snip }
             if let ai = h.aiSummary, !ai.isEmpty { entry["ai_summary"] = ai }
             return entry
         }
 
-        let response: [String: Any] = [
+        var response: [String: Any] = [
             "count": messages.count,
             "messages": messages,
         ]
+
+        // Distinct-sender rollup: only when a wide-net `from` query landed on
+        // >1 distinct address. Surfaces the spread an agent would otherwise
+        // have to scrape, plus a hint pointing at a REAL address for the
+        // `from_email` scalpel. Skipped for from_email (already exact).
+        if criteria.fromEmail == nil, let fromQuery = criteria.from,
+           let rollup = senderRollup(hits: hits, fromQuery: fromQuery, iso: isoOut) {
+            response["senders"] = rollup.senders
+            response["hint"] = rollup.hint
+        }
+
         return (jsonEncode(response), false)
+    }
+
+    /// Build the JSON rollup + hint from a result set. Returns nil when the
+    /// query matched 0 or 1 distinct address (no rollup needed — no clutter).
+    /// Counts/dates are computed over the RETURNED hits (capped at `limit`),
+    /// so raise `--limit` to widen the picture.
+    private func senderRollup(
+        hits: [EmailSearch.Hit], fromQuery: String, iso: ISO8601DateFormatter
+    ) -> (senders: [[String: Any]], hint: String)? {
+        let summaries = EmailSearch.senderRollup(hits)
+        guard !summaries.isEmpty else { return nil }
+
+        let senders: [[String: Any]] = summaries.map { s in
+            [
+                "address": s.address,
+                "message_count": s.count,
+                "first_date": iso.string(from: s.first),
+                "last_date": iso.string(from: s.last),
+            ]
+        }
+
+        // Concrete hint: point at the dominant (most-messages) real address.
+        let dominant = summaries.first!.address
+        let total = summaries.reduce(0) { $0 + $1.count }
+        let hint = "\"\(fromQuery)\" matched \(total) messages across \(summaries.count) sender addresses; "
+            + "use --from-email <addr> to filter to one (e.g. --from-email \(dominant))"
+        return (senders, hint)
     }
 
     /// Accept ISO 8601 in a few common shapes: date-only, date + time (optional 'T'/space),

@@ -29,6 +29,56 @@ final class PhotosToolTests: XCTestCase {
         XCTAssertNotNil(props?["limit"])
         XCTAssertNotNil(props?["id"])
         XCTAssertNotNil(props?["full_resolution"])
+        XCTAssertNotNil(props?["person"])
+        XCTAssertNotNil(props?["match"])
+    }
+
+    // MARK: - Person name normalization / matching (pure logic)
+
+    func testNormalizePersonNameTrimsAndLowercases() {
+        XCTAssertEqual(PhotosIntegration.normalizePersonName("  Sandy   Ford "), "sandy ford")
+        XCTAssertEqual(PhotosIntegration.normalizePersonName("SANDY\tFORD"), "sandy ford")
+    }
+
+    func testMatchPeoplePrefersExactOverSubstring() {
+        let people = [
+            PhotosIntegration.NamedPerson(pk: 1, fullName: "Sandy Ford", displayName: "Sandy"),
+            PhotosIntegration.NamedPerson(pk: 2, fullName: "Sandra Fordham", displayName: nil),
+        ]
+        // Exact full-name match wins; the substring candidate is excluded.
+        let matched = PhotosIntegration.matchPeople(people, query: "sandy ford")
+        XCTAssertEqual(matched.map { $0.pk }, [1])
+    }
+
+    func testMatchPeopleExactDisplayName() {
+        let people = [
+            PhotosIntegration.NamedPerson(pk: 1, fullName: "Sandy Ford", displayName: "Sandy"),
+            PhotosIntegration.NamedPerson(pk: 2, fullName: "John Cole Kostibas", displayName: "John"),
+        ]
+        let matched = PhotosIntegration.matchPeople(people, query: "Sandy")
+        XCTAssertEqual(matched.map { $0.pk }, [1])
+    }
+
+    func testMatchPeopleSubstringMatchesMultiple() {
+        let people = [
+            PhotosIntegration.NamedPerson(pk: 1, fullName: "John Kostibas", displayName: "John"),
+            PhotosIntegration.NamedPerson(pk: 2, fullName: "John Cole Kostibas", displayName: nil),
+            PhotosIntegration.NamedPerson(pk: 3, fullName: "Sandy Ford", displayName: nil),
+        ]
+        // No exact match for "kostibas" -> substring matches both Kostibases.
+        let matched = PhotosIntegration.matchPeople(people, query: "kostibas")
+        XCTAssertEqual(Set(matched.map { $0.pk }), [1, 2])
+    }
+
+    func testMatchPeopleEmptyQueryReturnsNothing() {
+        let people = [PhotosIntegration.NamedPerson(pk: 1, fullName: "Sandy Ford", displayName: nil)]
+        XCTAssertTrue(PhotosIntegration.matchPeople(people, query: "   ").isEmpty)
+    }
+
+    func testNamedPersonLabelFallsBackToDisplayName() {
+        XCTAssertEqual(PhotosIntegration.NamedPerson(pk: 1, fullName: nil, displayName: "Tim").label, "Tim")
+        XCTAssertEqual(PhotosIntegration.NamedPerson(pk: 1, fullName: "", displayName: "Tim").label, "Tim")
+        XCTAssertEqual(PhotosIntegration.NamedPerson(pk: 1, fullName: "Tim Smith", displayName: "Tim").label, "Tim Smith")
     }
 
     // MARK: - Parameter validation

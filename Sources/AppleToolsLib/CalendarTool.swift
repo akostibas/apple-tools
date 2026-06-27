@@ -4,7 +4,7 @@ import Foundation
 public struct CalendarTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "calendar",
-        description: "Access Apple Calendar events. Use 'calendars' to list calendars, 'list' to view events in a date range, 'create' to add an event, 'search' to find events by keyword. Each returned event includes 'is_organizer' and 'my_status' (accepted/declined/tentative/pending) when the current user is the organizer or an attendee — use these to answer questions about invites, RSVPs, and meetings the user is running. Note: 'create' does not send invites.",
+        description: "Access Apple Calendar events. Use 'calendars' to list calendars, 'list' to view events in a date range, 'create' to add an event, 'search' to find events by keyword. Each returned event includes 'is_organizer', 'my_status' (accepted/declined/tentative/pending — the current user's RSVP), and an 'attendees' array of {name, email, status} (plus 'organizer') — use these to answer questions about invites, RSVPs, and meetings the user is running. For 'list'/'search', pass dedupe_by_id=true to collapse the same shared event that appears on multiple calendars into one row carrying a 'calendars' array (the singular 'calendar' field is replaced by 'calendars' only in de-duped output). Note: 'create' does not send invites.",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
@@ -16,6 +16,7 @@ public struct CalendarTool: ProbeTool {
                 "location": PropertySchema(type_: "string", description: "Event location (for create)"),
                 "notes": PropertySchema(type_: "string", description: "Event notes (for create)"),
                 "query": PropertySchema(type_: "string", description: "Search keyword (required for search)"),
+                "dedupe_by_id": PropertySchema(type_: "boolean", description: "For list/search: collapse the same event appearing on multiple calendars into one row with a 'calendars' array (opt-in; default false)"),
             ],
             required: ["action"]
         )
@@ -46,7 +47,8 @@ public struct CalendarTool: ProbeTool {
             let calendarName = params?["calendar_name"]?.value as? String
             let start = params?["start"]?.value as? String
             let end = params?["end"]?.value as? String
-            return listEvents(calendarName: calendarName, start: start, end: end)
+            let dedupe = (params?["dedupe_by_id"]?.value as? Bool) ?? false
+            return listEvents(calendarName: calendarName, start: start, end: end, dedupe: dedupe)
         case "create":
             guard let title = params?["title"]?.value as? String, !title.isEmpty else {
                 return ("missing required parameter: title", true)
@@ -68,7 +70,8 @@ public struct CalendarTool: ProbeTool {
             let calendarName = params?["calendar_name"]?.value as? String
             let start = params?["start"]?.value as? String
             let end = params?["end"]?.value as? String
-            return searchEvents(query: query, calendarName: calendarName, start: start, end: end)
+            let dedupe = (params?["dedupe_by_id"]?.value as? Bool) ?? false
+            return searchEvents(query: query, calendarName: calendarName, start: start, end: end, dedupe: dedupe)
         default:
             return ("unknown action: \(action) (use calendars, list, create, or search)", true)
         }
@@ -102,7 +105,7 @@ public struct CalendarTool: ProbeTool {
 
     // MARK: - List events
 
-    private func listEvents(calendarName: String?, start: String?, end: String?) -> (String, Bool) {
+    private func listEvents(calendarName: String?, start: String?, end: String?, dedupe: Bool = false) -> (String, Bool) {
         let startDate: Date
         if let startStr = start {
             guard let d = CalendarIntegration.parseDate(startStr) else {
@@ -133,7 +136,7 @@ public struct CalendarTool: ProbeTool {
         }
 
         let events = CalendarIntegration.events(from: startDate, to: endDate, in: calendars)
-        let results = events.map { eventToDict($0) }
+        let results = formatEvents(events, dedupe: dedupe)
         let response: [String: Any] = [
             "count": results.count,
             "events": results,
@@ -187,7 +190,7 @@ public struct CalendarTool: ProbeTool {
 
     // MARK: - Search
 
-    private func searchEvents(query: String, calendarName: String?, start: String?, end: String?) -> (String, Bool) {
+    private func searchEvents(query: String, calendarName: String?, start: String?, end: String?, dedupe: Bool = false) -> (String, Bool) {
         let startDate: Date
         if let startStr = start {
             guard let d = CalendarIntegration.parseDate(startStr) else {
@@ -217,7 +220,7 @@ public struct CalendarTool: ProbeTool {
         }
 
         let matching = CalendarIntegration.searchEvents(query: query, from: startDate, to: endDate, in: calendars)
-        let results = matching.map { eventToDict($0) }
+        let results = formatEvents(matching, dedupe: dedupe)
         let response: [String: Any] = [
             "count": results.count,
             "events": results,
@@ -227,66 +230,54 @@ public struct CalendarTool: ProbeTool {
 
     // MARK: - LLM payload formatting
 
-    private func eventToDict(_ event: EKEvent) -> [String: Any] {
-        let fmt = ISO8601DateFormatter()
-        var entry: [String: Any] = [
-            "id": event.eventIdentifier ?? "",
-            "title": event.title ?? "",
-            "calendar": event.calendar.title,
-            "start": fmt.string(from: event.startDate),
-            "end": fmt.string(from: event.endDate),
-            "all_day": event.isAllDay,
-        ]
-
-        if let location = event.location, !location.isEmpty {
-            entry["location"] = location
+    /// Map EKEvents to JSON dicts, optionally collapsing same-event duplicates.
+    private func formatEvents(_ events: [EKEvent], dedupe: Bool) -> [[String: Any]] {
+        let records = events.map { record(from: $0) }
+        if dedupe {
+            return CalendarEventFormatter.dedupeByID(records)
         }
-
-        if let notes = event.notes, !notes.isEmpty {
-            entry["notes"] = notes
-        }
-
-        if let url = event.url {
-            entry["url"] = url.absoluteString
-        }
-
-        if let attendees = event.attendees, !attendees.isEmpty {
-            entry["attendees"] = attendees.map { attendeeToDict($0) }
-        }
-
-        if let organizer = event.organizer {
-            entry["organizer"] = attendeeToDict(organizer)
-        }
-
-        let isOrganizer = event.organizer?.isCurrentUser ?? false
-        entry["is_organizer"] = isOrganizer
-        if isOrganizer {
-            entry["my_status"] = "accepted"
-        } else if let me = event.attendees?.first(where: { $0.isCurrentUser }) {
-            entry["my_status"] = participantStatusLabel(me.participantStatus)
-        }
-
-        return entry
+        return records.map { CalendarEventFormatter.eventDict($0) }
     }
 
-    private func attendeeToDict(_ participant: EKParticipant) -> [String: Any] {
-        var entry: [String: Any] = [
-            "status": participantStatusLabel(participant.participantStatus),
-        ]
+    /// Extract an EventKit-free `CalendarEventRecord` from an EKEvent.
+    private func record(from event: EKEvent) -> CalendarEventRecord {
+        let fmt = ISO8601DateFormatter()
 
-        if let name = participant.name, !name.isEmpty {
-            entry["name"] = name
+        let isOrganizer = event.organizer?.isCurrentUser ?? false
+        let myStatus: String?
+        if isOrganizer {
+            myStatus = "accepted"
+        } else if let me = event.attendees?.first(where: { $0.isCurrentUser }) {
+            myStatus = participantStatusLabel(me.participantStatus)
+        } else {
+            myStatus = nil
         }
 
-        if let email = emailFromParticipant(participant) {
-            entry["email"] = email
-        }
+        return CalendarEventRecord(
+            id: event.eventIdentifier ?? "",
+            externalID: event.calendarItemExternalIdentifier,
+            title: event.title ?? "",
+            calendar: event.calendar.title,
+            start: fmt.string(from: event.startDate),
+            end: fmt.string(from: event.endDate),
+            allDay: event.isAllDay,
+            location: event.location,
+            notes: event.notes,
+            url: event.url?.absoluteString,
+            attendees: (event.attendees ?? []).map { attendee(from: $0) },
+            organizer: event.organizer.map { attendee(from: $0) },
+            isOrganizer: isOrganizer,
+            myStatus: myStatus
+        )
+    }
 
-        if participant.participantRole == .chair {
-            entry["is_organizer"] = true
-        }
-
-        return entry
+    private func attendee(from participant: EKParticipant) -> CalendarAttendee {
+        return CalendarAttendee(
+            name: participant.name,
+            email: emailFromParticipant(participant),
+            status: participantStatusLabel(participant.participantStatus),
+            isOrganizer: participant.participantRole == .chair
+        )
     }
 
     private func emailFromParticipant(_ participant: EKParticipant) -> String? {
