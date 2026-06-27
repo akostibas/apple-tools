@@ -1,3 +1,4 @@
+import EventKit
 import XCTest
 @testable import AppleToolsLib
 
@@ -23,7 +24,24 @@ final class RemindersToolTests: XCTestCase {
         ])
         XCTAssertTrue(isError)
         XCTAssertTrue(result.contains("unknown action"))
-        XCTAssertTrue(result.contains("lists, search, get, create, or complete"))
+        XCTAssertTrue(result.contains("lists, search, get, create, create-list, or complete"))
+    }
+
+    func testCreateListMissingName() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("create-list"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("missing required parameter: name"))
+    }
+
+    func testCreateListEmptyName() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("create-list"),
+            "name": AnyCodable(""),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("missing required parameter: name"))
     }
 
     func testCreateMissingTitle() {
@@ -112,6 +130,8 @@ final class RemindersToolTests: XCTestCase {
         XCTAssertNotNil(props?["id"])
         XCTAssertNotNil(props?["query"])
         XCTAssertNotNil(props?["show_completed"])
+        XCTAssertNotNil(props?["name"])
+        XCTAssertNotNil(props?["account"])
     }
 
     // MARK: - EventKit integration tests
@@ -403,6 +423,63 @@ final class RemindersToolTests: XCTestCase {
         let json = parseJSON(searchResult)
         XCTAssertNotNil(json["count"])
         XCTAssertNotNil(json["reminders"])
+    }
+
+    // MARK: - create-list integration
+
+    func testCreateListAndRejectDuplicate() throws {
+        let listName = "apple-tools list test \(UUID().uuidString.prefix(8))"
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("create-list"),
+            "name": AnyCodable(listName),
+        ])
+
+        if isError && result.contains("access denied") {
+            throw XCTSkip("Reminders access not granted")
+        }
+        XCTAssertFalse(isError, result)
+
+        let json = parseJSON(result)
+        let id = json["id"] as! String
+        XCTAssertEqual(json["name"] as? String, listName)
+        XCTAssertFalse(id.isEmpty)
+        XCTAssertNotNil(json["account"])
+        addTeardownBlock { Self.deleteList(id: id) }
+
+        // The new list shows up in `lists`.
+        let (listsResult, _) = tool.handle(params: ["action": AnyCodable("lists")])
+        XCTAssertTrue(listsResult.contains(listName))
+
+        // A second create with the same name is rejected even though EventKit
+        // would otherwise allow a duplicate.
+        let (dupResult, dupError) = tool.handle(params: [
+            "action": AnyCodable("create-list"),
+            "name": AnyCodable(listName.uppercased()),
+        ])
+        XCTAssertTrue(dupError)
+        XCTAssertTrue(dupResult.contains("already exists"))
+    }
+
+    func testCreateListUnknownAccount() throws {
+        let listName = "apple-tools acct test \(UUID().uuidString.prefix(8))"
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("create-list"),
+            "name": AnyCodable(listName),
+            "account": AnyCodable("No Such Account \(UUID().uuidString)"),
+        ])
+
+        if isError && result.contains("access denied") {
+            throw XCTSkip("Reminders access not granted")
+        }
+        XCTAssertTrue(isError, result)
+        XCTAssertTrue(result.contains("no account"))
+    }
+
+    /// Remove a reminder list created during a test, by calendar identifier.
+    private static func deleteList(id: String) {
+        let store = EKEventStore()
+        guard let cal = store.calendars(for: .reminder).first(where: { $0.calendarIdentifier == id }) else { return }
+        try? store.removeCalendar(cal, commit: true)
     }
 
     // MARK: - Helpers

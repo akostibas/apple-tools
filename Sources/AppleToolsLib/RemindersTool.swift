@@ -6,13 +6,15 @@ public struct RemindersTool: ProbeTool {
 
     public let definition = ToolDefinition(
         name: "reminders",
-        description: "Manage Apple Reminders. Use 'lists' to see available lists, 'search' to find reminders (by keyword, list, or date range), 'get' to view a single reminder's full details, 'create' to add one, 'complete' to mark done.",
+        description: "Manage Apple Reminders. Use 'lists' to see available lists, 'search' to find reminders (by keyword, list, or date range), 'get' to view a single reminder's full details, 'create' to add one, 'create-list' to add a new list, 'complete' to mark done.",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "lists, search, get, create, or complete"),
+                "action": PropertySchema(type_: "string", description: "lists, search, get, create, create-list, or complete"),
                 "list_name": PropertySchema(type_: "string", description: "Filter by reminder list name (for search, create)"),
                 "title": PropertySchema(type_: "string", description: "Reminder title (required for create)"),
+                "name": PropertySchema(type_: "string", description: "New list name (required for create-list)"),
+                "account": PropertySchema(type_: "string", description: "Account/source to hold the new list, e.g. iCloud (optional for create-list)"),
                 "due_date": PropertySchema(type_: "string", description: "ISO 8601 date, e.g. 2026-04-15T09:00:00Z (for create, search)"),
                 "due_date_end": PropertySchema(type_: "string", description: "End of date range filter, ISO 8601 (for search)"),
                 "notes": PropertySchema(type_: "string", description: "Reminder notes (for create)"),
@@ -25,11 +27,12 @@ public struct RemindersTool: ProbeTool {
     )
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
-        "lists":    .read,
-        "search":   .read,
-        "get":      .read,
-        "create":   .readWrite,
-        "complete": .readWrite,
+        "lists":       .read,
+        "search":      .read,
+        "get":         .read,
+        "create":      .readWrite,
+        "create-list": .readWrite,
+        "complete":    .readWrite,
     ])
 
     public init() {}
@@ -71,6 +74,13 @@ public struct RemindersTool: ProbeTool {
             let dueDate = params?["due_date"]?.value as? String
             let notes = params?["notes"]?.value as? String
             return createReminder(title: title, listName: listName, dueDate: dueDate, notes: notes)
+        case "create-list":
+            guard let name = params?["name"]?.value as? String, !name.isEmpty else {
+                return ("missing required parameter: name", true)
+            }
+            guard RemindersIntegration.requestAccess() else { return accessDenied }
+            let account = params?["account"]?.value as? String
+            return createList(name: name, account: account)
         case "complete":
             guard let id = params?["id"]?.value as? String, !id.isEmpty else {
                 return ("missing required parameter: id", true)
@@ -78,7 +88,7 @@ public struct RemindersTool: ProbeTool {
             guard RemindersIntegration.requestAccess() else { return accessDenied }
             return completeReminder(id: id)
         default:
-            return ("unknown action: \(action) (use lists, search, get, create, or complete)", true)
+            return ("unknown action: \(action) (use lists, search, get, create, create-list, or complete)", true)
         }
     }
 
@@ -246,6 +256,26 @@ public struct RemindersTool: ProbeTool {
             "id": reminder.calendarItemExternalIdentifier ?? "",
             "title": reminder.title ?? "",
             "list": reminder.calendar.title,
+        ]
+        return (jsonString(response) ?? "{}", false)
+    }
+
+    // MARK: - Create list
+
+    private func createList(name: String, account: String?) -> (String, Bool) {
+        let list: EKCalendar
+        do {
+            list = try RemindersIntegration.createList(name: name, account: account)
+        } catch let error as RemindersIntegration.RemindersError {
+            return (error.description, true)
+        } catch {
+            return ("failed to create reminder list: \(error.localizedDescription)", true)
+        }
+
+        let response: [String: Any] = [
+            "id": list.calendarIdentifier,
+            "name": list.title,
+            "account": list.source.title,
         ]
         return (jsonString(response) ?? "{}", false)
     }

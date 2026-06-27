@@ -57,7 +57,8 @@ Allow/Deny dialog; off by default.)
 
 - **calendar** — `calendars` (list calendars), `list` (events in a range),
   `search` (by keyword), `create` (add event; does not send invites).
-- **reminders** — `lists`, `search`, `get`, `create`, `complete`.
+- **reminders** — `lists`, `search`, `get`, `create`, `create-list` (new list,
+  optional `--account`; rejects duplicate names), `complete`.
 - **notes** — `folders`, `search`, `read`, `create`, `append`. Content is
   Markdown (headings, bold/italic/strike/mono, lists round-trip).
 - **contacts** — `search` (name/email/phone/group), `get` (by ID).
@@ -80,6 +81,7 @@ Run `apple-tools <tool> --help` for the exact parameters of any tool.
 ```
 apple-tools calendar list --start 2026-06-15T00:00:00Z --end 2026-06-16T00:00:00Z
 apple-tools reminders create --list "Today" --title "Call plumber" --due 2026-06-16T17:00:00Z
+apple-tools reminders create-list --name "Shannon" --account iCloud
 apple-tools contacts search --query "Jane"
 apple-tools notes read --title "Trip plan"
 apple-tools email search --query "invoice" --limit 10

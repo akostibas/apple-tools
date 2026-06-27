@@ -22,6 +22,10 @@ public enum RemindersIntegration {
         case invalidDate(String)
         case saveFailed(String)
         case completeFailed(String)
+        case duplicateList(String)
+        case accountNotFound(String, available: [String])
+        case noWritableSource
+        case saveListFailed(String)
 
         public var description: String {
             switch self {
@@ -37,6 +41,15 @@ public enum RemindersIntegration {
                 return "failed to save reminder: \(reason)"
             case .completeFailed(let reason):
                 return "failed to complete reminder: \(reason)"
+            case .duplicateList(let name):
+                return "a reminder list named '\(name)' already exists"
+            case .accountNotFound(let name, let available):
+                let list = available.isEmpty ? "none" : available.joined(separator: ", ")
+                return "no account (source) found matching '\(name)'. Available accounts: \(list)"
+            case .noWritableSource:
+                return "no account available to hold a new reminder list"
+            case .saveListFailed(let reason):
+                return "failed to create reminder list: \(reason)"
             }
         }
     }
@@ -82,6 +95,59 @@ public enum RemindersIntegration {
     public static func resolveLists(name: String) -> [EKCalendar]? {
         let matching = store.calendars(for: .reminder).filter { $0.title.lowercased() == name.lowercased() }
         return matching.isEmpty ? nil : matching
+    }
+
+    /// Sources (accounts) that can hold reminder lists — i.e. that already
+    /// expose at least one reminder calendar, or are the local ("On My Mac")
+    /// source. We deliberately do not include every CalDAV source: many are
+    /// event-only (Holidays, subscribed calendars) and can't hold reminders.
+    /// Titles are what the user sees as "accounts" (e.g. "iCloud", "On My Mac").
+    public static func reminderSources() -> [EKSource] {
+        store.sources.filter { source in
+            !source.calendars(for: .reminder).isEmpty || source.sourceType == .local
+        }
+    }
+
+    // MARK: - List creation
+
+    /// Create a new reminder list. Rejects a duplicate name (case-insensitive)
+    /// even though EventKit would otherwise allow it. When `account` is given,
+    /// the list is created under the matching source; otherwise it inherits the
+    /// source of the default list for new reminders, falling back to the first
+    /// writable source.
+    public static func createList(name: String, account: String?) throws -> EKCalendar {
+        if resolveLists(name: name) != nil {
+            throw RemindersError.duplicateList(name)
+        }
+
+        let sources = reminderSources()
+        let source: EKSource
+        if let account = account {
+            guard let matched = sources.first(where: { $0.title.lowercased() == account.lowercased() }) else {
+                // Dedupe titles (e.g. two sources both named "iCloud") for a clean hint.
+                var seen = Set<String>()
+                let available = sources.map { $0.title }.filter { seen.insert($0).inserted }
+                throw RemindersError.accountNotFound(account, available: available)
+            }
+            source = matched
+        } else if let defaultSource = store.defaultCalendarForNewReminders()?.source {
+            source = defaultSource
+        } else if let first = sources.first {
+            source = first
+        } else {
+            throw RemindersError.noWritableSource
+        }
+
+        let calendar = EKCalendar(for: .reminder, eventStore: store)
+        calendar.title = name
+        calendar.source = source
+
+        do {
+            try store.saveCalendar(calendar, commit: true)
+        } catch {
+            throw RemindersError.saveListFailed(error.localizedDescription)
+        }
+        return calendar
     }
 
     // MARK: - Fetch
