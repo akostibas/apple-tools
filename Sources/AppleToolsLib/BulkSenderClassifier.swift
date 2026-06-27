@@ -127,4 +127,71 @@ public enum BulkSenderClassifier {
 
         return score
     }
+
+    // MARK: - iMessage / SMS lane (issue #9)
+    //
+    // The phone analogue of a bulk email sender is a marketing SHORT CODE or a
+    // sender the system's SMS filtering has bucketed as promotional /
+    // transactional. Messages records the latter by appending an UNDOCUMENTED
+    // suffix to the chat identifier (and handle id):
+    //   `(smsfp)` — SMS Filtered Promotional
+    //   `(smsft)` — SMS Filtered Transactional
+    // These are not in any Apple doc, so without this helper a caller would
+    // have to know the magic suffix to filter noise. Exposing it here keeps a
+    // single shared "likely automated/bulk sender" classification across the
+    // email and iMessage tools.
+
+    /// SMS-filtering suffixes Messages appends to a chat/handle identifier when
+    /// the system has bucketed the sender as filtered promotional/transactional.
+    /// Their mere presence is a strong bulk/automated signal.
+    public static let smsFilterSuffixes: [String] = ["(smsfp)", "(smsft)"]
+
+    /// True if the identifier carries a trailing SMS-filtering suffix.
+    public static func hasSMSFilterSuffix(_ identifier: String) -> Bool {
+        let lower = identifier.lowercased()
+        return smsFilterSuffixes.contains { lower.hasSuffix($0) }
+    }
+
+    /// Return the bare handle with any trailing SMS-filtering suffix removed.
+    /// The raw identifier is preserved by callers; this is only for shape
+    /// analysis / contact matching.
+    public static func stripSMSFilterSuffix(_ identifier: String) -> String {
+        var s = identifier
+        let lower = s.lowercased()
+        for suffix in smsFilterSuffixes where lower.hasSuffix(suffix) {
+            s = String(s.dropLast(suffix.count))
+            break
+        }
+        return s.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// True if a phone-style identifier is a marketing/automation SHORT CODE:
+    /// a bare 5-6 digit number with no `+` country prefix and no `@` (so real
+    /// 10/11-digit phone numbers and email handles are never flagged). Any
+    /// trailing SMS-filtering suffix is stripped before the check.
+    public static func isShortcode(_ identifier: String) -> Bool {
+        let bare = stripSMSFilterSuffix(identifier)
+        guard !bare.isEmpty, !bare.contains("@"), !bare.hasPrefix("+") else { return false }
+        // Must be ALL digits (a shortcode has no separators/letters).
+        guard bare.allSatisfy({ $0.isNumber }) else { return false }
+        return (5...6).contains(bare.count)
+    }
+
+    /// Unified "likely automated/bulk sender" check for an iMessage/SMS handle.
+    /// The phone-side mirror of `isLikelyBulk(address:)`. Signals (any one trips it):
+    ///   - a `(smsfp)`/`(smsft)` SMS-filtering suffix on the identifier,
+    ///   - a 5-6 digit short-code number shape,
+    ///   - email-handle bulk markers (e.g. no-reply SMS gateways) via `score`.
+    /// A handle that cleanly resolves to a Contacts name is a real person and is
+    /// NEVER flagged — `hasContactName` short-circuits to `false`.
+    public static func isLikelyBulkMessage(chatID: String, hasContactName: Bool = false) -> Bool {
+        if hasContactName { return false }
+        if hasSMSFilterSuffix(chatID) { return true }
+        let bare = stripSMSFilterSuffix(chatID)
+        if isShortcode(bare) { return true }
+        // Reuse the email heuristic for letter-bearing handles (e.g. an SMS
+        // gateway address like `noreply@txt.example.com`). Pure phone numbers
+        // score 0 here, so this never false-flags a normal number.
+        return score(address: bare) > 0
+    }
 }

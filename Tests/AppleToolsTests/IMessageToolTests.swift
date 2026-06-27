@@ -212,4 +212,107 @@ final class IMessageToolTests: XCTestCase {
         XCTAssertEqual(captured, ["+15551234567"])
         XCTAssertEqual(annotated[0]["contact_name"] as? String, "Jane Doe")
     }
+
+    // MARK: - Spam / shortcode flagging (#9)
+
+    /// BulkSenderClassifier shortcode shape: 5-6 bare digits are short codes;
+    /// full numbers (with +), emails, and the magic suffix are handled too.
+    func testClassifierShortcodeShape() {
+        XCTAssertTrue(BulkSenderClassifier.isShortcode("262966"))
+        XCTAssertTrue(BulkSenderClassifier.isShortcode("88202"))
+        XCTAssertTrue(BulkSenderClassifier.isShortcode("24563(smsfp)"), "suffix is stripped before shape check")
+        XCTAssertFalse(BulkSenderClassifier.isShortcode("+15551234567"), "full number is not a shortcode")
+        XCTAssertFalse(BulkSenderClassifier.isShortcode("1234"), "4 digits too short")
+        XCTAssertFalse(BulkSenderClassifier.isShortcode("alerts@txt.bank.com"), "email handle is not a shortcode")
+    }
+
+    /// SMS-filtering suffix on a full phone number flags spam but is NOT a
+    /// shortcode (number shape is a real number).
+    func testClassifierSuffixedFullNumberIsSpamNotShortcode() {
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulkMessage(chatID: "+12025994437(smsfp)"))
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulkMessage(chatID: "+12014623963(smsft)"))
+        XCTAssertFalse(BulkSenderClassifier.isShortcode("+12025994437(smsfp)"))
+    }
+
+    /// A real contact short-circuits the flag even if the handle would
+    /// otherwise look automated.
+    func testClassifierContactNameShortCircuits() {
+        XCTAssertFalse(BulkSenderClassifier.isLikelyBulkMessage(chatID: "262966", hasContactName: true),
+                       "a resolved contact is a real person, never spam")
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulkMessage(chatID: "262966", hasContactName: false))
+    }
+
+    /// A normal 1:1 number with no suffix and no contact match is NOT flagged.
+    func testClassifierPlainNumberNotFlagged() {
+        XCTAssertFalse(BulkSenderClassifier.isLikelyBulkMessage(chatID: "+15551234567"))
+    }
+
+    /// recent annotation: a resolved contact is is_likely_spam=false; an
+    /// unresolved shortcode is is_likely_spam=true and is_shortcode=true.
+    /// Crucially this runs even when the resolver returns NO names.
+    func testRecentFlagsShortcodeAndClearsContact() {
+        let convs: [[String: Any]] = [
+            ["chat_id": "+15551234567", "chat_name": "+15551234567"],   // real contact
+            ["chat_id": "262966", "chat_name": "262966"],               // shortcode
+            ["chat_id": "+12025994437(smsfp)", "chat_name": "+12025994437(smsfp)"], // suffixed
+        ]
+        let names = ["+15551234567": "Jane Doe"]
+        let a = tool.annotateConversations(convs, names: names)
+        XCTAssertEqual(a[0]["is_likely_spam"] as? Bool, false)
+        XCTAssertEqual(a[0]["is_shortcode"] as? Bool, false)
+        XCTAssertEqual(a[1]["is_likely_spam"] as? Bool, true)
+        XCTAssertEqual(a[1]["is_shortcode"] as? Bool, true)
+        XCTAssertEqual(a[2]["is_likely_spam"] as? Bool, true)
+        XCTAssertEqual(a[2]["is_shortcode"] as? Bool, false, "full suffixed number is spam but not a shortcode")
+        XCTAssertEqual(a[2]["chat_id"] as? String, "+12025994437(smsfp)", "raw chat_id incl. suffix preserved")
+    }
+
+    /// Flags are computed even with an empty name map (spam-only result sets).
+    func testFlagsComputedWithEmptyNames() {
+        let convs: [[String: Any]] = [["chat_id": "262966", "chat_name": "262966"]]
+        let a = tool.annotateConversations(convs, names: [:])
+        XCTAssertEqual(a[0]["is_likely_spam"] as? Bool, true)
+    }
+
+    /// Groups never get the spam flags (not bulk short-code senders).
+    func testGroupChatsNotFlagged() {
+        let convs: [[String: Any]] = [
+            ["chat_id": "chat123", "chat_name": "Trip", "participants": ["+15551234567"]],
+        ]
+        let a = tool.annotateConversations(convs, names: [:])
+        XCTAssertNil(a[0]["is_likely_spam"])
+        XCTAssertNil(a[0]["is_shortcode"])
+    }
+
+    /// stats entries get the same flags as recent.
+    func testStatsFlagsShortcode() {
+        let chats: [[String: Any]] = [
+            ["chat_id": "262966", "chat_name": "262966", "message_count": 5, "sent": 0, "received": 5],
+            ["chat_id": "+15551234567", "chat_name": "+15551234567", "message_count": 9, "sent": 4, "received": 5],
+        ]
+        let a = tool.annotateStats(chats, names: ["+15551234567": "Jane Doe"])
+        XCTAssertEqual(a[0]["is_likely_spam"] as? Bool, true)
+        XCTAssertEqual(a[1]["is_likely_spam"] as? Bool, false)
+    }
+
+    /// read/search messages get per-inbound-message spam flags from the `from`
+    /// handle (which carries the same suffix as the chat id).
+    func testMessagesFlagInboundShortcode() {
+        let msgs: [[String: Any]] = [
+            ["message_id": 1, "from": "24563(smsfp)", "text": "VOTE NOW"],
+            ["message_id": 2, "from": "+15551234567", "text": "hi"],
+            ["message_id": 3, "from": "me", "text": "yo"],
+        ]
+        let a = tool.annotateMessages(msgs, names: ["+15551234567": "Jane Doe"])
+        XCTAssertEqual(a[0]["is_likely_spam"] as? Bool, true)
+        XCTAssertEqual(a[0]["is_shortcode"] as? Bool, true)
+        XCTAssertEqual(a[1]["is_likely_spam"] as? Bool, false)
+        XCTAssertNil(a[2]["is_likely_spam"], "outgoing message gets no spam flag")
+    }
+
+    /// Schema advertises the opt-in spam filter flags, mirroring EmailTool.
+    func testSchemaAdvertisesSpamFlags() {
+        XCTAssertEqual(tool.definition.parameters?.properties?["exclude_spam"]?.type_, "boolean")
+        XCTAssertEqual(tool.definition.parameters?.properties?["humans_only"]?.type_, "boolean")
+    }
 }
