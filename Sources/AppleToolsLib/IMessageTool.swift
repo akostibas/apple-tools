@@ -9,7 +9,7 @@ public typealias NotifyCallback = (_ message: String, _ agent: String?) -> Void
 public struct IMessageTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "imessage",
-        description: "iMessage and SMS. Actions: 'recent' (list conversations with recent activity), 'stats' (rank conversations by message volume with sent/received split over an optional --since window), 'send' (send a message; supports file attachments by absolute path), 'read' (messages from a conversation), 'search' (find messages by text content), 'fetch_attachment' (retrieve an attachment file from a message). Phone numbers and emails are auto-resolved to Contacts names on output (added as 'contact_name' alongside the raw handle when a match exists; 'last_message_from_name' resolves the last-message sender). Likely-spam detection: 'recent', 'read', and 'stats' entries carry 'is_likely_spam' and 'is_shortcode' booleans so callers don't have to know the magic suffix. A sender is flagged when its chat id carries the (undocumented) SMS-filtering suffix '(smsfp)' (filtered promotional) or '(smsft)' (filtered transactional), OR it is a 5-6 digit marketing short code — UNLESS it resolves to a Contacts name (a real person is never flagged). The raw chat_id (suffix included) is preserved. Use --exclude-spam (alias --humans-only) on 'recent'/'stats' to drop flagged senders; off by default (never silently dropped).",
+        description: "iMessage and SMS. Actions: 'recent' (list conversations with recent activity), 'stats' (rank conversations by message volume with sent/received split over an optional --since window), 'send' (send a message; supports file attachments by absolute path), 'read' (messages from a conversation), 'search' (find messages by text content), 'fetch_attachment' (retrieve an attachment file from a message). Phone numbers and emails are auto-resolved to Contacts names on output (added as 'contact_name' alongside the raw handle when a match exists; 'last_message_from_name' resolves the last-message sender). When a handle is a phone number, a canonical E.164 form is added as 'phone_e164' alongside the raw handle (the raw chat_id is never rewritten); emails and short codes get no such field. Likely-spam detection: 'recent', 'read', and 'stats' entries carry 'is_likely_spam' and 'is_shortcode' booleans so callers don't have to know the magic suffix. A sender is flagged when its chat id carries the (undocumented) SMS-filtering suffix '(smsfp)' (filtered promotional) or '(smsft)' (filtered transactional), OR it is a 5-6 digit marketing short code — UNLESS it resolves to a Contacts name (a real person is never flagged). The raw chat_id (suffix included) is preserved. Use --exclude-spam (alias --humans-only) on 'recent'/'stats' to drop flagged senders; off by default (never silently dropped).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
@@ -326,6 +326,12 @@ public struct IMessageTool: ProbeTool {
             if !isGroup, let chatID = c["chat_id"] as? String {
                 let name = names[chatID]
                 if let name = name { c["contact_name"] = name }
+                // Additive: canonical E.164 beside the raw chat_id when the
+                // handle is a phone number. The raw chat_id is left exactly
+                // as-is (incl. any (smsfp)/(smsft) suffix); the parser strips
+                // such trailing junk for phone_e164. Emails/shortcodes get no
+                // field. See #12.
+                if let e164 = PhoneFormatting.e164(chatID) { c["phone_e164"] = e164 }
                 c["is_likely_spam"] = BulkSenderClassifier.isLikelyBulkMessage(
                     chatID: chatID, hasContactName: name != nil)
                 c["is_shortcode"] = BulkSenderClassifier.isShortcode(chatID)
@@ -334,6 +340,7 @@ public struct IMessageTool: ProbeTool {
                 c["participants"] = parts.map { id -> [String: Any] in
                     var p: [String: Any] = ["identifier": id]
                     if let n = names[id] { p["contact_name"] = n }
+                    if let e164 = PhoneFormatting.e164(id) { p["phone_e164"] = e164 }
                     return p
                 }
             }
@@ -352,6 +359,8 @@ public struct IMessageTool: ProbeTool {
             if let from = m["from"] as? String, from != "me", from != "unknown" {
                 let name = names[from]
                 if let n = name { msg["contact_name"] = n }
+                // Additive E.164 beside the raw `from` handle (see #12).
+                if let e164 = PhoneFormatting.e164(from) { msg["phone_e164"] = e164 }
                 // Flag inbound shortcode/SMS-filtered senders. The `from` handle
                 // carries the same (smsfp)/(smsft) suffix as the chat id, so the
                 // classifier sees it directly. Contact match short-circuits.
@@ -364,6 +373,7 @@ public struct IMessageTool: ProbeTool {
                 msg["participants"] = parts.map { id -> [String: Any] in
                     var p: [String: Any] = ["identifier": id]
                     if let n = names[id] { p["contact_name"] = n }
+                    if let e164 = PhoneFormatting.e164(id) { p["phone_e164"] = e164 }
                     return p
                 }
             }
@@ -706,6 +716,12 @@ public struct IMessageTool: ProbeTool {
             if !isGroup, let chatID = c["chat_id"] as? String {
                 let name = names[chatID]
                 if let name = name { c["contact_name"] = name }
+                // Additive: canonical E.164 beside the raw chat_id when the
+                // handle is a phone number. The raw chat_id is left exactly
+                // as-is (incl. any (smsfp)/(smsft) suffix); the parser strips
+                // such trailing junk for phone_e164. Emails/shortcodes get no
+                // field. See #12.
+                if let e164 = PhoneFormatting.e164(chatID) { c["phone_e164"] = e164 }
                 c["is_likely_spam"] = BulkSenderClassifier.isLikelyBulkMessage(
                     chatID: chatID, hasContactName: name != nil)
                 c["is_shortcode"] = BulkSenderClassifier.isShortcode(chatID)
@@ -714,6 +730,7 @@ public struct IMessageTool: ProbeTool {
                 c["participants"] = parts.map { id -> [String: Any] in
                     var p: [String: Any] = ["identifier": id]
                     if let n = names[id] { p["contact_name"] = n }
+                    if let e164 = PhoneFormatting.e164(id) { p["phone_e164"] = e164 }
                     return p
                 }
             }

@@ -12,6 +12,16 @@ let package = Package(
         .library(name: "AppleToolsLib", targets: ["AppleToolsLib"]),
         .executable(name: "apple-tools", targets: ["apple-tools"]),
     ],
+    dependencies: [
+        // Phone-number parsing / E.164 canonicalization (see ADR-0001).
+        // Tracks the maintained line at the canonical org. The project split on
+        // 2026-05-25: the original repo (marmelroy/PhoneNumberKit) shipped a
+        // final 4.3.0 and is now deprecated/unmaintained, while development
+        // continues at PhoneNumberKit/PhoneNumberKit from 5.0. We take 5.x —
+        // an abandoned "previous major" gets no security patches, so maintained
+        // beats merely-older here. The 5.x API is source-identical to 4.x.
+        .package(url: "https://github.com/PhoneNumberKit/PhoneNumberKit", from: "5.0.0"),
+    ],
     targets: [
         .target(
             name: "AppleToolsObjC",
@@ -19,7 +29,10 @@ let package = Package(
         ),
         .target(
             name: "AppleToolsLib",
-            dependencies: ["AppleToolsObjC"],
+            dependencies: [
+                "AppleToolsObjC",
+                .product(name: "PhoneNumberKit", package: "PhoneNumberKit"),
+            ],
             path: "Sources/AppleToolsLib"
         ),
         .executableTarget(
