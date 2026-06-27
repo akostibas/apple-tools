@@ -9,11 +9,11 @@ public typealias NotifyCallback = (_ message: String, _ agent: String?) -> Void
 public struct IMessageTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "imessage",
-        description: "iMessage and SMS. Actions: 'recent' (list conversations with recent activity), 'send' (send a message; supports file attachments by absolute path), 'read' (messages from a conversation), 'search' (find messages by text content), 'fetch_attachment' (retrieve an attachment file from a message).",
+        description: "iMessage and SMS. Actions: 'recent' (list conversations with recent activity), 'stats' (rank conversations by message volume with sent/received split over an optional --since window), 'send' (send a message; supports file attachments by absolute path), 'read' (messages from a conversation), 'search' (find messages by text content), 'fetch_attachment' (retrieve an attachment file from a message). Phone numbers and emails are auto-resolved to Contacts names on output (added as 'contact_name' / 'from_name' alongside the raw handle when a match exists).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "recent, send, read, search, or fetch_attachment"),
+                "action": PropertySchema(type_: "string", description: "recent, stats, send, read, search, or fetch_attachment"),
                 "to": PropertySchema(type_: "string", description: "Recipient phone number, email, or chat_id for group chats (for send)"),
                 "text": PropertySchema(type_: "string", description: "Message text to send (for send)"),
                 "attachments": PropertySchema(
@@ -23,9 +23,9 @@ public struct IMessageTool: ProbeTool {
                 ),
                 "chat": PropertySchema(type_: "string", description: "Phone number, email, group name, or chat_id (for read; optional filter for search)"),
                 "query": PropertySchema(type_: "string", description: "Text to search for (for search)"),
-                "limit": PropertySchema(type_: "integer", description: "Max results (default 5 for recent, 10 for read, 20 for search)"),
+                "limit": PropertySchema(type_: "integer", description: "Max results (default 5 for recent, 10 for read and stats, 20 for search)"),
                 "before": PropertySchema(type_: "string", description: "ISO 8601 timestamp — return messages/conversations before this time (for read, search)"),
-                "since": PropertySchema(type_: "string", description: "ISO 8601 timestamp — only include activity after this time (for recent, search)"),
+                "since": PropertySchema(type_: "string", description: "ISO 8601 timestamp — only include activity/messages after this time (for recent, stats, search)"),
                 "message_id": PropertySchema(type_: "integer", description: "Message ROWID from read/search results (for fetch_attachment)"),
                 "filename": PropertySchema(type_: "string", description: "Attachment filename to select when a message has multiple attachments (for fetch_attachment, optional)"),
             ],
@@ -39,8 +39,15 @@ public struct IMessageTool: ProbeTool {
     /// Set after init once the ProbeClient is ready.
     public var notify: NotifyCallback?
 
+    /// Resolver from message handles (phone/email) to Contacts display names.
+    /// Defaults to a batched Contacts lookup; injectable so output-annotation
+    /// logic can be unit-tested against fixture data without the live address
+    /// book. Best-effort: an empty map leaves raw handles untouched.
+    public var nameResolver: ([String]) -> [String: String] = ContactsIntegration.resolveNames(forIdentifiers:)
+
     public let accessPolicy: ToolAccessPolicy = .perAction([
         "recent":           .read,
+        "stats":            .read,
         "read":             .read,
         "search":           .read,
         "fetch_attachment": .read,
@@ -61,6 +68,10 @@ public struct IMessageTool: ProbeTool {
             let limit = params?["limit"]?.value as? Int ?? 5
             let since = params?["since"]?.value as? String
             return recent(limit: limit, since: since)
+        case "stats":
+            let limit = params?["limit"]?.value as? Int ?? 10
+            let since = params?["since"]?.value as? String
+            return stats(limit: limit, since: since)
         case "send":
             guard let to = params?["to"]?.value as? String, !to.isEmpty else {
                 return ("missing required parameter: to", true)
@@ -93,7 +104,7 @@ public struct IMessageTool: ProbeTool {
             let filename = params?["filename"]?.value as? String
             return fetchAttachment(messageID: messageID, filename: filename)
         default:
-            return ("unknown action: \(action) (use recent, send, read, search, or fetch_attachment)", true)
+            return ("unknown action: \(action) (use recent, stats, send, read, search, or fetch_attachment)", true)
         }
     }
 
@@ -244,15 +255,98 @@ public struct IMessageTool: ProbeTool {
         let (rows, err) = IMessageIntegration.queryChatDB(sql)
         if let err = err { return (err, true) }
 
-        let conversations = rows.map { row -> [String: Any] in
+        let rawConversations = rows.map { row -> [String: Any] in
             recentConversationFromRow(row)
         }
+
+        // Auto-resolve phone numbers / emails to Contacts names on output.
+        let names = nameResolver(identifiers(inConversations: rawConversations))
+        let conversations = annotateConversations(rawConversations, names: names)
 
         let response: [String: Any] = [
             "count": conversations.count,
             "conversations": conversations,
         ]
         return (IMessageIntegration.jsonEncode(response), false)
+    }
+
+    /// Collect the message handles (phone/email) appearing in recent-conversation
+    /// dicts so they can be resolved to contact names in one batch.
+    func identifiers(inConversations convs: [[String: Any]]) -> [String] {
+        var ids = Set<String>()
+        for c in convs {
+            // 1:1 chats carry the raw handle as chat_id and have no participants.
+            if c["participants"] == nil, let chatID = c["chat_id"] as? String {
+                ids.insert(chatID)
+            }
+            if let parts = c["participants"] as? [String] {
+                parts.forEach { ids.insert($0) }
+            }
+            if let from = c["last_message_from"] as? String, from != "me", from != "unknown" {
+                ids.insert(from)
+            }
+        }
+        return Array(ids)
+    }
+
+    /// Annotate recent-conversation dicts with `contact_name` (1:1 chats),
+    /// participant objects carrying `contact_name` (groups), and
+    /// `last_message_from_name`. Pure: the caller supplies the resolved map, and
+    /// the raw handles are always preserved alongside the names.
+    func annotateConversations(_ convs: [[String: Any]], names: [String: String]) -> [[String: Any]] {
+        guard !names.isEmpty else { return convs }
+        return convs.map { conv in
+            var c = conv
+            if c["participants"] == nil, let chatID = c["chat_id"] as? String, let name = names[chatID] {
+                c["contact_name"] = name
+            }
+            if let parts = c["participants"] as? [String] {
+                c["participants"] = parts.map { id -> [String: Any] in
+                    var p: [String: Any] = ["identifier": id]
+                    if let n = names[id] { p["contact_name"] = n }
+                    return p
+                }
+            }
+            if let from = c["last_message_from"] as? String, from != "me", let n = names[from] {
+                c["last_message_from_name"] = n
+            }
+            return c
+        }
+    }
+
+    /// Annotate message dicts with `from_name` for resolved inbound senders.
+    /// Pure; raw `from` handle is preserved.
+    func annotateMessages(_ msgs: [[String: Any]], names: [String: String]) -> [[String: Any]] {
+        guard !names.isEmpty else { return msgs }
+        return msgs.map { m in
+            var msg = m
+            if let from = m["from"] as? String, from != "me", let n = names[from] {
+                msg["from_name"] = n
+            }
+            // Group participants (search results) get the same object treatment.
+            if let parts = m["participants"] as? [String] {
+                msg["participants"] = parts.map { id -> [String: Any] in
+                    var p: [String: Any] = ["identifier": id]
+                    if let n = names[id] { p["contact_name"] = n }
+                    return p
+                }
+            }
+            return msg
+        }
+    }
+
+    /// Collect inbound sender handles and group participants from message dicts.
+    func identifiers(inMessages msgs: [[String: Any]]) -> [String] {
+        var ids = Set<String>()
+        for m in msgs {
+            if let from = m["from"] as? String, from != "me", from != "unknown" {
+                ids.insert(from)
+            }
+            if let parts = m["participants"] as? [String] {
+                parts.forEach { ids.insert($0) }
+            }
+        }
+        return Array(ids)
     }
 
     /// Build a conversation summary from a recent-query row.
@@ -366,9 +460,13 @@ public struct IMessageTool: ProbeTool {
         let hasMore = rows.count > limit
         let pageRows = hasMore ? Array(rows.prefix(limit)) : rows
 
-        let messages = pageRows.reversed().map { row -> [String: Any] in
+        let rawMessages = pageRows.reversed().map { row -> [String: Any] in
             messageFromRow(row)
         }
+
+        // Auto-resolve sender handles to Contacts names on output.
+        let names = nameResolver(identifiers(inMessages: rawMessages))
+        let messages = annotateMessages(rawMessages, names: names)
 
         var response: [String: Any] = [
             "count": messages.count,
@@ -429,7 +527,7 @@ public struct IMessageTool: ProbeTool {
         let (rows, err) = IMessageIntegration.queryChatDB(sql)
         if let err = err { return (err, true) }
 
-        let messages = rows.map { row -> [String: Any] in
+        let rawMessages = rows.map { row -> [String: Any] in
             var msg = messageFromRow(row, bodyHexIndex: 12, attachmentsIndex: 13)
             if row.count > 8 {
                 let chatRowID = row[11]
@@ -456,11 +554,129 @@ public struct IMessageTool: ProbeTool {
             return msg
         }
 
+        // Auto-resolve sender handles and group participants to Contacts names.
+        let names = nameResolver(identifiers(inMessages: rawMessages))
+        let messages = annotateMessages(rawMessages, names: names)
+
         let response: [String: Any] = [
             "count": messages.count,
             "messages": messages,
         ]
         return (IMessageIntegration.jsonEncode(response), false)
+    }
+
+    // MARK: - Stats
+
+    /// Rank conversations by message volume, with a sent/received split, honoring
+    /// an optional `--since` window. Sorted by message_count descending. 1:1
+    /// chats are annotated with `contact_name` on output (see #8).
+    private func stats(limit: Int, since: String?) -> (String, Bool) {
+        var sinceFilter = ""
+        var sinceISO: String?
+        if let since = since, let nanos = IMessageIntegration.isoToAppleNanos(since) {
+            sinceFilter = "AND m.date > \(nanos)"
+            sinceISO = IMessageIntegration.appleNanosToISO(String(nanos))
+        }
+
+        let sql = """
+            SELECT c.ROWID, c.chat_identifier, c.display_name, c.style,
+                   COUNT(m.ROWID) AS message_count,
+                   SUM(CASE WHEN m.is_from_me = 1 THEN 1 ELSE 0 END) AS sent,
+                   SUM(CASE WHEN m.is_from_me = 0 THEN 1 ELSE 0 END) AS received,
+                   MAX(m.date) AS last_date
+            FROM chat c
+            JOIN chat_message_join cmj ON c.ROWID = cmj.chat_id
+            JOIN message m ON cmj.message_id = m.ROWID
+            WHERE m.item_type = 0 \(sinceFilter)
+            GROUP BY c.ROWID
+            ORDER BY message_count DESC
+            LIMIT \(limit)
+            """
+
+        let (rows, err) = IMessageIntegration.queryChatDB(sql)
+        if let err = err { return (err, true) }
+
+        let rawChats = rows.map { statsChatFromRow($0) }
+        let names = nameResolver(identifiers(inStats: rawChats))
+        let chats = annotateStats(rawChats, names: names)
+
+        var response: [String: Any] = [
+            "count": chats.count,
+            "chats": chats,
+        ]
+        if let sinceISO = sinceISO { response["since"] = sinceISO }
+        return (IMessageIntegration.jsonEncode(response), false)
+    }
+
+    /// Shape a stats row into an output dict. Pure (no DB), so the count/split
+    /// shaping is unit-testable with fixture rows.
+    /// Columns: 0=ROWID, 1=chat_identifier, 2=display_name, 3=style,
+    /// 4=message_count, 5=sent, 6=received, 7=last_date.
+    func statsChatFromRow(_ row: [String]) -> [String: Any] {
+        let chatRowID = row[0]
+        let chatIdentifier = row[1]
+        let displayName = row[2]
+        let isGroup = row[3] == "43"
+
+        var entry: [String: Any] = [
+            "chat_id": chatIdentifier,
+            "message_count": Int(row[4]) ?? 0,
+            "sent": Int(row[5]) ?? 0,
+            "received": Int(row[6]) ?? 0,
+        ]
+        if row.count > 7, !row[7].isEmpty {
+            entry["last_activity"] = IMessageIntegration.appleNanosToISO(row[7])
+        }
+
+        if isGroup {
+            entry["chat_name"] = displayName.isEmpty ? "(unnamed group)" : displayName
+            let participantSQL = """
+                SELECT h.id FROM handle h
+                JOIN chat_handle_join chj ON h.ROWID = chj.handle_id
+                WHERE chj.chat_id = \(chatRowID)
+                """
+            let (pRows, _) = IMessageIntegration.queryChatDB(participantSQL)
+            if !pRows.isEmpty {
+                entry["participants"] = pRows.map { $0[0] }
+            }
+        } else {
+            entry["chat_name"] = chatIdentifier
+        }
+        return entry
+    }
+
+    /// Collect handles from stats dicts for batched name resolution.
+    func identifiers(inStats chats: [[String: Any]]) -> [String] {
+        var ids = Set<String>()
+        for c in chats {
+            if c["participants"] == nil, let chatID = c["chat_id"] as? String {
+                ids.insert(chatID)
+            }
+            if let parts = c["participants"] as? [String] {
+                parts.forEach { ids.insert($0) }
+            }
+        }
+        return Array(ids)
+    }
+
+    /// Annotate stats dicts with `contact_name` (1:1) and participant objects
+    /// (groups). Pure; raw handles preserved.
+    func annotateStats(_ chats: [[String: Any]], names: [String: String]) -> [[String: Any]] {
+        guard !names.isEmpty else { return chats }
+        return chats.map { chat in
+            var c = chat
+            if c["participants"] == nil, let chatID = c["chat_id"] as? String, let name = names[chatID] {
+                c["contact_name"] = name
+            }
+            if let parts = c["participants"] as? [String] {
+                c["participants"] = parts.map { id -> [String: Any] in
+                    var p: [String: Any] = ["identifier": id]
+                    if let n = names[id] { p["contact_name"] = n }
+                    return p
+                }
+            }
+            return c
+        }
     }
 
     // MARK: - Fetch Attachment
