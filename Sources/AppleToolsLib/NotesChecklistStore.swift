@@ -30,7 +30,9 @@ public enum NotesChecklistStore {
         public let url: String
     }
 
-    private static var storePath: String {
+    /// Path to the on-disk Notes Core Data store. Internal so the full-text
+    /// search path (NotesFullTextStore) reads the same store.
+    static var storePath: String {
         let home = NSHomeDirectory()
         return "\(home)/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
     }
@@ -108,6 +110,19 @@ public enum NotesChecklistStore {
     }
 
     // MARK: - Protobuf
+
+    /// Extract the note's body plaintext from an inflated document protobuf.
+    /// Structure: NoteStoreProto.document(2).note(3).note_text(2) string. The
+    /// first line is the title. Shared with NotesFullTextStore so full-text
+    /// search scans the same text the read path renders. Returns nil on any
+    /// parse failure (e.g. encrypted/password-protected notes).
+    static func plaintext(fromInflated data: Data) -> String? {
+        let bytes = [UInt8](data)
+        guard let doc = fieldBytes(bytes, field: 2),
+              let note = fieldBytes(doc, field: 3),
+              let textBytes = fieldBytes(note, field: 2) else { return nil }
+        return String(bytes: textBytes, encoding: .utf8)
+    }
 
     /// Parse the Notes document protobuf far enough to recover checklist items.
     /// Structure: NoteStoreProto.document(2).note(3) { note_text(2) string,

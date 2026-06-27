@@ -145,85 +145,26 @@ public enum NotesIntegration {
 
     // MARK: - Search
 
-    public static func searchNotes(query: String, folder: String?, offset: Int, limit: Int) throws -> (total: Int, notes: [NoteSummary]) {
-        var env = ["APPLE_TOOLS_NOTES_QUERY": query]
-        let folderBinding: String
-        let folderClause: String
-        if let folder = folder {
-            env["APPLE_TOOLS_NOTES_FOLDER"] = folder
-            folderBinding = """
-            set theFolder to do shell script "printenv APPLE_TOOLS_NOTES_FOLDER"
-            """
-            folderClause = "every note of folder theFolder whose name contains theQuery or plaintext contains theQuery"
-        } else {
-            folderBinding = ""
-            folderClause = "every note whose name contains theQuery or plaintext contains theQuery"
+    /// Search notes by title (default) or title+body (`fullText: true`).
+    ///
+    /// Served by reading the on-disk store (NotesStoreSearch), not AppleScript.
+    /// The AppleScript `whose` filter costs one Apple-event round-trip per
+    /// match, so a broad query times out on large stores even title-only
+    /// (issue #13) — the backend, not the `plaintext contains` clause, was the
+    /// problem. `total` is the full match count; pagination is applied here so
+    /// the output schema is unchanged.
+    public static func searchNotes(query: String, folder: String?, offset: Int, limit: Int, fullText: Bool = false) throws -> (total: Int, notes: [NoteSummary]) {
+        let hits = searchLookup(query, folder, fullText)
+        let page = hits.dropFirst(offset).prefix(limit)
+        let notes = page.map {
+            NoteSummary(id: $0.id, title: $0.title, modified: $0.modified, snippet: $0.snippet)
         }
-
-        let script = """
-        set theQuery to do shell script "printenv APPLE_TOOLS_NOTES_QUERY"
-        \(folderBinding)
-        \(DateFormatting.appleScriptComponentsHandler)
-        tell application "Notes"
-            set matchingNotes to \(folderClause)
-            set totalCount to count of matchingNotes
-            set output to (totalCount as string) & linefeed
-            set startIdx to \(offset + 1)
-            set endIdx to \(offset + limit)
-            if endIdx > totalCount then set endIdx to totalCount
-            if startIdx > totalCount then return (totalCount as string) & linefeed
-            repeat with i from startIdx to endIdx
-                set n to item i of matchingNotes
-                set nName to name of n
-                set nID to id of n
-                set nDate to my atDateComponents(modification date of n)
-                set nPlain to plaintext of n
-                -- Skip first line (title) and leading whitespace for snippet
-                set firstLF to offset of linefeed in nPlain
-                if firstLF > 0 and firstLF < (length of nPlain) then
-                    set nPlain to text (firstLF + 1) thru -1 of nPlain
-                    -- Trim leading whitespace/newlines
-                    repeat while nPlain starts with linefeed or nPlain starts with " "
-                        if length of nPlain > 1 then
-                            set nPlain to text 2 thru -1 of nPlain
-                        else
-                            set nPlain to ""
-                            exit repeat
-                        end if
-                    end repeat
-                else
-                    set nPlain to ""
-                end if
-                if length of nPlain > 200 then
-                    set nPlain to text 1 thru 200 of nPlain
-                end if
-                set output to output & nID & "\\t" & nName & "\\t" & nDate & "\\t" & nPlain & linefeed
-            end repeat
-            return output
-        end tell
-        """
-
-        let (out, err) = runAppleScript(script, env, nil)
-        if let err = err { throw NotesError.scriptFailed(err) }
-
-        let lines = out.components(separatedBy: "\n").filter { !$0.isEmpty }
-        guard let firstLine = lines.first, let totalCount = Int(firstLine.trimmingCharacters(in: .whitespaces)) else {
-            throw NotesError.parseFailure("failed to parse search results")
-        }
-
-        var notes: [NoteSummary] = []
-        for line in lines.dropFirst() {
-            let parts = line.components(separatedBy: "\t")
-            guard parts.count >= 4 else { continue }
-            notes.append(NoteSummary(
-                id: parts[0],
-                title: parts[1],
-                modified: DateFormatting.isoFromAppleScriptComponents(parts[2]),
-                snippet: parts[3...].joined(separator: "\t")
-            ))
-        }
-        return (totalCount, notes)
+        return (hits.count, notes)
     }
+
+    /// Test seam: store-backed search lookup. Defaults to the on-disk store
+    /// reader; swappable in tests so the search path stays offline.
+    public static var searchLookup: (_ query: String, _ folder: String?, _ fullText: Bool) -> [NotesStoreSearch.Hit] = NotesStoreSearch.search
 
     // MARK: - Read
 
