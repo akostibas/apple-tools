@@ -361,7 +361,6 @@ public struct PhotosTool: ProbeTool {
     // MARK: - LLM payload formatting
 
     private func assetMetadata(_ asset: PHAsset, matched: String? = nil) -> [String: Any] {
-        let fmt = ISO8601DateFormatter()
         var entry: [String: Any] = [
             "id": asset.localIdentifier,
             "width": asset.pixelWidth,
@@ -373,11 +372,11 @@ public struct PhotosTool: ProbeTool {
         }
 
         if let created = asset.creationDate {
-            entry["created"] = fmt.string(from: created)
+            entry["created"] = DateFormatting.iso(created)
         }
 
         if let modified = asset.modificationDate {
-            entry["modified"] = fmt.string(from: modified)
+            entry["modified"] = DateFormatting.iso(modified)
         }
 
         let resources = PHAssetResource.assetResources(for: asset)

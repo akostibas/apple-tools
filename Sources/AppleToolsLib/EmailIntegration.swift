@@ -81,6 +81,7 @@ public enum EmailIntegration {
     /// we trim to `limit` after the merge.
     public static func recentInboxMessages(limit: Int) throws -> [InboxEntry] {
         let script = """
+        \(DateFormatting.appleScriptComponentsHandler)
         tell application "Mail"
             set output to ""
             set allAccounts to every account
@@ -97,7 +98,7 @@ public enum EmailIntegration {
                         set mID to message id of m
                         set mSubject to subject of m
                         set mFrom to sender of m
-                        set mDate to date received of m
+                        set mDate to my atDateComponents(date received of m)
                         set mRead to read status of m
                         set mAttCount to count of mail attachments of m
                         set output to output & mID & "\\t" & mSubject & "\\t" & mFrom & "\\t" & mDate & "\\t" & mRead & "\\t" & mAttCount & linefeed
@@ -120,7 +121,7 @@ public enum EmailIntegration {
                 id: parts[0],
                 subject: parts[1],
                 from: parts[2],
-                date: parts[3],
+                date: DateFormatting.isoFromAppleScriptComponents(parts[3]),
                 read: parts[4] == "true",
                 attachmentCount: attCount
             ))
@@ -138,6 +139,7 @@ public enum EmailIntegration {
         let env = ["APPLE_TOOLS_EMAIL_MSG_ID": id]
         let script = """
         set theMsgID to do shell script "printenv APPLE_TOOLS_EMAIL_MSG_ID"
+        \(DateFormatting.appleScriptComponentsHandler)
         tell application "Mail"
             set allAccounts to every account
             repeat with acct in allAccounts
@@ -151,7 +153,7 @@ public enum EmailIntegration {
                         set mFrom to sender of m
                         set mTo to address of every to recipient of m
                         set mCC to address of every cc recipient of m
-                        set mDate to date received of m
+                        set mDate to my atDateComponents(date received of m)
                         set mContent to content of m
                         -- Join to/cc lists with comma
                         set toStr to ""
@@ -232,7 +234,7 @@ public enum EmailIntegration {
             from: parts[2],
             to: parts[3],
             cc: parts[4],
-            date: parts[5],
+            date: DateFormatting.isoFromAppleScriptComponents(parts[5]),
             body: bodyText,
             attachmentCount: attachCount,
             attachments: attachments

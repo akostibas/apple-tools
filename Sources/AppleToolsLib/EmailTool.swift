@@ -162,15 +162,12 @@ public struct EmailTool: ProbeTool {
             return ("search failed: \(error.localizedDescription)", true)
         }
 
-        let isoOut = ISO8601DateFormatter()
-        isoOut.formatOptions = [.withInternetDateTime]
-
         let messages: [[String: Any]] = hits.map { h in
             var entry: [String: Any] = [
                 "id": h.messageID,
                 "from": h.senderName.map { "\(h.senderAddress) (\($0))" } ?? h.senderAddress,
                 "subject": h.subject,
-                "date": isoOut.string(from: h.date),
+                "date": DateFormatting.iso(h.date),
                 "mailbox": prettifyMailboxURL(h.mailboxURL),
                 // Classified from address + display name (no MIME headers in
                 // the search path). See BulkSenderClassifier.
@@ -192,7 +189,7 @@ public struct EmailTool: ProbeTool {
         // have to scrape, plus a hint pointing at a REAL address for the
         // `from_email` scalpel. Skipped for from_email (already exact).
         if criteria.fromEmail == nil, let fromQuery = criteria.from,
-           let rollup = senderRollup(hits: hits, fromQuery: fromQuery, iso: isoOut) {
+           let rollup = senderRollup(hits: hits, fromQuery: fromQuery) {
             response["senders"] = rollup.senders
             response["hint"] = rollup.hint
         }
@@ -205,7 +202,7 @@ public struct EmailTool: ProbeTool {
     /// Counts/dates are computed over the RETURNED hits (capped at `limit`),
     /// so raise `--limit` to widen the picture.
     private func senderRollup(
-        hits: [EmailSearch.Hit], fromQuery: String, iso: ISO8601DateFormatter
+        hits: [EmailSearch.Hit], fromQuery: String
     ) -> (senders: [[String: Any]], hint: String)? {
         let summaries = EmailSearch.senderRollup(hits)
         guard !summaries.isEmpty else { return nil }
@@ -214,8 +211,8 @@ public struct EmailTool: ProbeTool {
             [
                 "address": s.address,
                 "message_count": s.count,
-                "first_date": iso.string(from: s.first),
-                "last_date": iso.string(from: s.last),
+                "first_date": DateFormatting.iso(s.first),
+                "last_date": DateFormatting.iso(s.last),
             ]
         }
 
@@ -308,7 +305,7 @@ public struct EmailTool: ProbeTool {
             "subject": parsed.subject,
             "from": parsed.from,
             "to": parsed.to,
-            "date": parsed.dateHeader,
+            "date": DateFormatting.isoFromRFC2822(parsed.dateHeader),
             "body": parsed.body,
         ]
         if let cc = parsed.cc, !cc.isEmpty { response["cc"] = cc }

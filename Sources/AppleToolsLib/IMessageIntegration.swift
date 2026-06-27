@@ -510,9 +510,7 @@ public enum IMessageIntegration {
         guard let nanos = Int64(raw) else { return raw }
         let unixSeconds = Double(nanos) / 1_000_000_000.0 + Double(appleEpochOffset)
         let date = Date(timeIntervalSince1970: unixSeconds)
-        let fmt = ISO8601DateFormatter()
-        fmt.formatOptions = [.withInternetDateTime]
-        return fmt.string(from: date)
+        return DateFormatting.iso(date)
     }
 
     public static func isoToAppleNanos(_ iso: String) -> Int64? {

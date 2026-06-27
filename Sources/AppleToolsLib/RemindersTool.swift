@@ -280,8 +280,7 @@ public struct RemindersTool: ProbeTool {
 
         if let dueComps = reminder.dueDateComponents,
            let dueDate = Calendar.current.date(from: dueComps) {
-            let fmt = ISO8601DateFormatter()
-            entry["due_date"] = fmt.string(from: dueDate)
+            entry["due_date"] = DateFormatting.iso(dueDate)
         }
 
         if let notes = reminder.notes, !notes.isEmpty {

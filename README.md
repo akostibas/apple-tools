@@ -37,9 +37,14 @@ Every tool emits JSON. Field names are kept consistent across tools so an agent
 can read calendar + email + imessage + photos together without re-learning
 names. The rules:
 
-- **Timestamps** are always ISO-8601 strings, named for the moment they capture:
-  `created`, `modified`, `date` (the item's own time), `start`/`end` (spans),
-  `due_date`, `first_date`/`last_date` (rollup span), `last_message_date`.
+- **Timestamps** are always ISO-8601 strings in **UTC** (`...Z`), named for the
+  moment they capture: `created`, `modified`, `date` (the item's own time),
+  `start`/`end` (spans), `due_date`, `first_date`/`last_date` (rollup span),
+  `last_message_date`. Every tool routes through one formatter
+  (`DateFormatting`), so the format can't drift between actions. UTC is the
+  portable default — a library consumer that knows the user's actual location
+  can set `DateFormatting.outputTimeZone` once at startup to render every
+  timestamp in that zone instead (no per-call argument).
 - **Identifiers**: the opaque primary id of a record is `id` (events,
   reminders, contacts, notes, photos, email messages). Raw routing handles keep
   their qualified names (`chat_id`, participant `identifier`) — these are
