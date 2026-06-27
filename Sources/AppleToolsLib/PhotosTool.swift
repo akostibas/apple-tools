@@ -9,7 +9,9 @@ public struct PhotosTool: ProbeTool {
             type_: "object",
             properties: [
                 "action": PropertySchema(type_: "string", description: "search or fetch"),
-                "query": PropertySchema(type_: "string", description: "Search keyword — matches ML-recognized content (car, dog, beach), people, and filenames (for search)"),
+                "query": PropertySchema(type_: "string", description: "Search keyword — matches ML-recognized content (car, dog, beach), people, and filenames (for search). Each result is tagged `matched: person|content|filename`."),
+                "person": PropertySchema(type_: "string", description: "Restrict results to photos OF a recognized person by name (e.g. 'Sandy Ford'). Uses Photos face recognition. Results are tagged `matched: person` (for search)"),
+                "match": PropertySchema(type_: "string", description: "Constrain match type for --query: people | content | filename. With 'people' and no --query/--person, lists recognized people in the library (for search)"),
                 "album": PropertySchema(type_: "string", description: "Album name to filter by (for search)"),
                 "start_date": PropertySchema(type_: "string", description: "Start date, ISO 8601 e.g. 2026-01-15 (for search)"),
                 "end_date": PropertySchema(type_: "string", description: "End date, ISO 8601 (for search)"),
@@ -44,11 +46,13 @@ public struct PhotosTool: ProbeTool {
         switch action {
         case "search":
             let query = params?["query"]?.value as? String
+            let person = params?["person"]?.value as? String
+            let match = (params?["match"]?.value as? String)?.lowercased()
             let album = params?["album"]?.value as? String
             let startDate = params?["start_date"]?.value as? String
             let endDate = params?["end_date"]?.value as? String
             let limit = params?["limit"]?.value as? Int ?? 20
-            return search(query: query, album: album, startDate: startDate, endDate: endDate, limit: limit)
+            return search(query: query, person: person, match: match, album: album, startDate: startDate, endDate: endDate, limit: limit)
         case "fetch":
             guard let id = params?["id"]?.value as? String, !id.isEmpty else {
                 return ("missing required parameter: id", true)
@@ -66,13 +70,25 @@ public struct PhotosTool: ProbeTool {
 
     // MARK: - Search
 
-    private func search(query: String?, album: String?, startDate: String?, endDate: String?, limit: Int) -> (String, Bool) {
+    private func search(query: String?, person: String?, match: String?, album: String?, startDate: String?, endDate: String?, limit: Int) -> (String, Bool) {
+        // Explicit people-listing request: `--match people` with nothing to search for.
+        let personName = person ?? (match == "people" ? query : nil)
+        if match == "people" && (personName?.isEmpty ?? true) {
+            return listPeople()
+        }
+
+        // Person-restricted search (`--person NAME` or `--match people --query NAME`).
+        if let name = personName, !name.isEmpty {
+            return searchByPerson(name: name, startDate: startDate, endDate: endDate, limit: limit)
+        }
+
         if let albumName = album {
             return searchInAlbum(albumName: albumName, query: query, startDate: startDate, endDate: endDate, limit: limit)
         }
 
-        // PSI (ML-label) search first when there's a keyword.
-        if let query = query, !query.isEmpty {
+        // PSI (ML-label) search first when there's a keyword — unless the caller
+        // constrained matching to filenames.
+        if let query = query, !query.isEmpty, match != "filename" {
             // Validate dates before touching PSI so format errors come back quickly.
             var startDateObj: Date?
             var endDateObj: Date?
@@ -96,7 +112,7 @@ public struct PhotosTool: ProbeTool {
                         stop.pointee = true
                         return
                     }
-                    results.append(self.assetMetadata(asset))
+                    results.append(self.assetMetadata(asset, matched: "content"))
                 }
                 let response: [String: Any] = [
                     "count": results.count,
@@ -151,7 +167,7 @@ public struct PhotosTool: ProbeTool {
                 return
             }
             examined += 1
-            let metadata = self.assetMetadata(asset)
+            let metadata = self.assetMetadata(asset, matched: hasQuery ? "filename" : nil)
             if let q = queryLower {
                 let filename = (metadata["filename"] as? String ?? "").lowercased()
                 if !filename.contains(q) { return }
@@ -234,6 +250,83 @@ public struct PhotosTool: ProbeTool {
         return (jsonEncode(response), false)
     }
 
+    // MARK: - People (face recognition)
+
+    private func searchByPerson(name: String, startDate: String?, endDate: String?, limit: Int) -> (String, Bool) {
+        var startDateObj: Date?
+        var endDateObj: Date?
+        if let startStr = startDate {
+            guard let d = PhotosIntegration.parseDate(startStr) else {
+                return ("invalid start_date format (use ISO 8601, e.g. 2026-01-15 or 2026-01-15T09:00:00Z)", true)
+            }
+            startDateObj = d
+        }
+        if let endStr = endDate {
+            guard let d = PhotosIntegration.parseDate(endStr) else {
+                return ("invalid end_date format", true)
+            }
+            endDateObj = d
+        }
+
+        guard let result = PhotosIntegration.searchByPerson(name: name, start: startDateObj, end: endDateObj, limit: limit) else {
+            // Distinguish "no such person" from "person has no photos in range" by
+            // checking whether the name matches anyone, and suggest near matches.
+            if let people = PhotosIntegration.fetchNamedPeople() {
+                let suggestions = peopleSuggestions(people, near: name)
+                var msg = "no recognized person matching '\(name)'."
+                if !suggestions.isEmpty {
+                    msg += " Did you mean: \(suggestions.joined(separator: ", "))?"
+                }
+                msg += " Use `photos search --match people` to list recognized people."
+                return (msg, true)
+            }
+            return ("recognized-people search is unavailable (could not read the Photos face-recognition database).", true)
+        }
+
+        var results: [[String: Any]] = []
+        result.assets.enumerateObjects { asset, _, stop in
+            if results.count >= limit {
+                stop.pointee = true
+                return
+            }
+            results.append(self.assetMetadata(asset, matched: "person"))
+        }
+
+        let response: [String: Any] = [
+            "count": results.count,
+            "search_method": "person",
+            "matched_people": result.matchedPeople,
+            "photos": results,
+        ]
+        return (jsonEncode(response), false)
+    }
+
+    private func listPeople() -> (String, Bool) {
+        guard let people = PhotosIntegration.fetchNamedPeople() else {
+            return ("recognized-people listing is unavailable (could not read the Photos face-recognition database).", true)
+        }
+        let names = people.map { $0.label }
+        let response: [String: Any] = [
+            "count": names.count,
+            "people": names,
+        ]
+        return (jsonEncode(response), false)
+    }
+
+    /// Best-effort near matches for an unrecognized name (substring on either
+    /// direction), capped for a readable error message.
+    private func peopleSuggestions(_ people: [PhotosIntegration.NamedPerson], near name: String) -> [String] {
+        let q = PhotosIntegration.normalizePersonName(name)
+        guard !q.isEmpty else { return [] }
+        let firstToken = q.split(separator: " ").first.map(String.init) ?? q
+        let matches = people.filter { p in
+            [p.fullName, p.displayName].compactMap { $0 }
+                .map(PhotosIntegration.normalizePersonName)
+                .contains { $0.contains(firstToken) || firstToken.contains($0) }
+        }
+        return Array(matches.map { $0.label }.prefix(5))
+    }
+
     // MARK: - Fetch
 
     private func fetch(id: String, fullResolution: Bool) -> (String, Bool) {
@@ -267,7 +360,7 @@ public struct PhotosTool: ProbeTool {
 
     // MARK: - LLM payload formatting
 
-    private func assetMetadata(_ asset: PHAsset) -> [String: Any] {
+    private func assetMetadata(_ asset: PHAsset, matched: String? = nil) -> [String: Any] {
         let fmt = ISO8601DateFormatter()
         var entry: [String: Any] = [
             "id": asset.localIdentifier,
@@ -275,6 +368,9 @@ public struct PhotosTool: ProbeTool {
             "height": asset.pixelHeight,
             "media_subtype": mediaSubtypeLabels(asset.mediaSubtypes),
         ]
+        if let matched = matched {
+            entry["matched"] = matched
+        }
 
         if let created = asset.creationDate {
             entry["created"] = fmt.string(from: created)

@@ -20,6 +20,31 @@ public enum PhotosIntegration {
         public let matchedLabels: [String]
     }
 
+    /// A named, recognized person from the Photos face-recognition database.
+    public struct NamedPerson: Equatable {
+        public let pk: Int64
+        public let fullName: String?
+        public let displayName: String?
+
+        public init(pk: Int64, fullName: String?, displayName: String?) {
+            self.pk = pk
+            self.fullName = fullName
+            self.displayName = displayName
+        }
+
+        /// Best human-readable label for the person.
+        public var label: String {
+            if let f = fullName, !f.isEmpty { return f }
+            if let d = displayName, !d.isEmpty { return d }
+            return "Unknown"
+        }
+    }
+
+    public struct PersonResult {
+        public let assets: PHFetchResult<PHAsset>
+        public let matchedPeople: [String]
+    }
+
     public struct ImageExport {
         public let data: Data?
         public let filename: String
@@ -268,6 +293,151 @@ public enum PhotosIntegration {
             NSUUID(uuidBytes: ptr.baseAddress!.assumingMemoryBound(to: UInt8.self)) as UUID
         }
         return uuid.uuidString.uppercased()
+    }
+
+    // MARK: - People (face recognition) search
+
+    /// Normalize a person name for comparison: trimmed, lowercased, internal
+    /// whitespace collapsed. Pure and testable.
+    public static func normalizePersonName(_ name: String) -> String {
+        let lowered = name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = lowered.split(whereSeparator: { $0.isWhitespace })
+        return parts.joined(separator: " ")
+    }
+
+    /// Select recognized people matching a query name. Pure (no DB) so it is
+    /// unit-testable. Strategy: prefer exact (normalized) matches on full or
+    /// display name; if none, fall back to substring matches on either name.
+    /// This makes "Sandy Ford" pick exactly that person while "John" can match
+    /// several recognized Johns ("photos of John").
+    public static func matchPeople(_ people: [NamedPerson], query: String) -> [NamedPerson] {
+        let q = normalizePersonName(query)
+        guard !q.isEmpty else { return [] }
+
+        func names(_ p: NamedPerson) -> [String] {
+            [p.fullName, p.displayName].compactMap { $0 }.map(normalizePersonName).filter { !$0.isEmpty }
+        }
+
+        let exact = people.filter { names($0).contains(q) }
+        if !exact.isEmpty { return exact }
+        return people.filter { p in names(p).contains { $0.contains(q) } }
+    }
+
+    /// Read all named, recognized people from the Photos database. Returns nil
+    /// when the database is unavailable or the schema doesn't match.
+    public static func fetchNamedPeople() -> [NamedPerson]? {
+        var db: OpaquePointer?
+        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
+        guard sqlite3_open_v2(photosDatabasePath, &db, flags, nil) == SQLITE_OK, let db = db else {
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        guard validatePhotosPersonSchema(db) else { return nil }
+
+        let sql = """
+            SELECT Z_PK, ZFULLNAME, ZDISPLAYNAME FROM ZPERSON
+            WHERE (ZFULLNAME IS NOT NULL AND ZFULLNAME <> '')
+               OR (ZDISPLAYNAME IS NOT NULL AND ZDISPLAYNAME <> '')
+            ORDER BY ZFACECOUNT DESC
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+
+        var people: [NamedPerson] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let pk = sqlite3_column_int64(stmt, 0)
+            let full = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
+            let display = sqlite3_column_text(stmt, 2).map { String(cString: $0) }
+            people.append(NamedPerson(pk: pk, fullName: full, displayName: display))
+        }
+        return people
+    }
+
+    /// Find assets that contain a recognized person matching `name`. Returns nil
+    /// when the database is unavailable, the schema doesn't match, the name
+    /// matches no recognized person, or no assets are found — callers should
+    /// surface that explicitly rather than falling back to a blended search.
+    public static func searchByPerson(name: String, start: Date?, end: Date?, limit: Int) -> PersonResult? {
+        guard let people = fetchNamedPeople() else { return nil }
+        let matched = matchPeople(people, query: name)
+        if matched.isEmpty { return nil }
+
+        var db: OpaquePointer?
+        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
+        guard sqlite3_open_v2(photosDatabasePath, &db, flags, nil) == SQLITE_OK, let db = db else {
+            return nil
+        }
+        defer { sqlite3_close(db) }
+
+        let placeholders = matched.map { _ in "?" }.joined(separator: ",")
+        // Bound the work: gather more UUIDs than `limit` so PhotoKit's date
+        // filter + sort still has material to return, but cap total scan.
+        let uuidCap = max(limit * 10, 200)
+        let sql = """
+            SELECT DISTINCT a.ZUUID
+            FROM ZASSET a JOIN ZDETECTEDFACE f ON f.ZASSETFORFACE = a.Z_PK
+            WHERE f.ZPERSONFORFACE IN (\(placeholders)) AND a.ZUUID IS NOT NULL
+            LIMIT ?
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+
+        for (i, person) in matched.enumerated() {
+            sqlite3_bind_int64(stmt, Int32(i + 1), person.pk)
+        }
+        sqlite3_bind_int(stmt, Int32(matched.count + 1), Int32(uuidCap))
+
+        var localIdentifiers: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let cStr = sqlite3_column_text(stmt, 0) {
+                localIdentifiers.append("\(String(cString: cStr))/L0/001")
+            }
+        }
+        if localIdentifiers.isEmpty { return nil }
+
+        let fetchOptions = PHFetchOptions()
+        var predicates: [NSPredicate] = [NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)]
+        if let start = start {
+            predicates.append(NSPredicate(format: "creationDate >= %@", start as NSDate))
+        }
+        if let end = end {
+            let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: end) ?? end
+            predicates.append(NSPredicate(format: "creationDate <= %@", endOfDay as NSDate))
+        }
+        fetchOptions.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+        fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: localIdentifiers, options: fetchOptions)
+        return PersonResult(assets: assets, matchedPeople: matched.map { $0.label })
+    }
+
+    private static var photosDatabasePath: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return "\(home)/Pictures/Photos Library.photoslibrary/database/Photos.sqlite"
+    }
+
+    /// Validate the Photos database exposes the face-recognition tables/columns
+    /// we depend on. Returns false if anything is unexpected (e.g. an OS that
+    /// reorganized the schema), so callers can degrade gracefully.
+    private static func validatePhotosPersonSchema(_ db: OpaquePointer) -> Bool {
+        let expectations: [(table: String, columns: Set<String>)] = [
+            ("ZPERSON", ["Z_PK", "ZFULLNAME", "ZDISPLAYNAME"]),
+            ("ZDETECTEDFACE", ["ZASSETFORFACE", "ZPERSONFORFACE"]),
+            ("ZASSET", ["Z_PK", "ZUUID"]),
+        ]
+        for (table, requiredColumns) in expectations {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "PRAGMA table_info(\(table))", -1, &stmt, nil) == SQLITE_OK else { return false }
+            defer { sqlite3_finalize(stmt) }
+            var found: Set<String> = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let name = sqlite3_column_text(stmt, 1) { found.insert(String(cString: name)) }
+            }
+            if !requiredColumns.isSubset(of: found) { return false }
+        }
+        return true
     }
 
     // MARK: - Image export
