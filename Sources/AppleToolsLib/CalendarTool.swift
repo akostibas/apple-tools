@@ -182,8 +182,8 @@ public struct CalendarTool: ProbeTool {
             "id": event.eventIdentifier ?? "",
             "title": event.title ?? "",
             "calendar": event.calendar.title,
-            "start": DateFormatting.iso(event.startDate),
-            "end": DateFormatting.iso(event.endDate),
+            "start": DateFormatting.calendarTime(event.startDate, allDay: event.isAllDay),
+            "end": DateFormatting.calendarTime(event.endDate, allDay: event.isAllDay),
         ]
         return (jsonString(response) ?? "{}", false)
     }
@@ -256,8 +256,8 @@ public struct CalendarTool: ProbeTool {
             externalID: event.calendarItemExternalIdentifier,
             title: event.title ?? "",
             calendar: event.calendar.title,
-            start: DateFormatting.iso(event.startDate),
-            end: DateFormatting.iso(event.endDate),
+            start: DateFormatting.calendarTime(event.startDate, allDay: event.isAllDay),
+            end: DateFormatting.calendarTime(event.endDate, allDay: event.isAllDay),
             allDay: event.isAllDay,
             location: event.location,
             notes: event.notes,

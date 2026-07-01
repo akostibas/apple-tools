@@ -94,4 +94,59 @@ final class DateFormattingTests: XCTestCase {
     func testRFC2822ReturnsRawOnEmpty() {
         XCTAssertEqual(DateFormatting.isoFromRFC2822(""), "")
     }
+
+    // MARK: - floatingLocal(from:) — zone-less reminder due times (#824)
+
+    func testFloatingLocalTimedIsZoneless() {
+        var c = DateComponents()
+        c.year = 2026; c.month = 7; c.day = 1; c.hour = 9; c.minute = 0; c.second = 0
+        XCTAssertEqual(DateFormatting.floatingLocal(from: c), "2026-07-01T09:00:00")
+    }
+
+    func testFloatingLocalTimedDefaultsSecondsToZero() {
+        var c = DateComponents()
+        c.year = 2026; c.month = 12; c.day = 5; c.hour = 17; c.minute = 30
+        XCTAssertEqual(DateFormatting.floatingLocal(from: c), "2026-12-05T17:30:00")
+    }
+
+    func testFloatingLocalDateOnlyOmitsTime() {
+        var c = DateComponents()
+        c.year = 2026; c.month = 7; c.day = 1
+        XCTAssertEqual(DateFormatting.floatingLocal(from: c), "2026-07-01")
+    }
+
+    func testFloatingLocalIsIndependentOfOutputTimeZone() {
+        // A floating time must not shift when the output zone changes — it has no
+        // zone at all. This is the core #824 invariant.
+        var c = DateComponents()
+        c.year = 2026; c.month = 7; c.day = 1; c.hour = 9; c.minute = 0
+        DateFormatting.outputTimeZone = TimeZone(identifier: "Asia/Tokyo")!
+        XCTAssertEqual(DateFormatting.floatingLocal(from: c), "2026-07-01T09:00:00")
+    }
+
+    func testFloatingLocalReturnsNilWithoutDate() {
+        var c = DateComponents()
+        c.hour = 9; c.minute = 0
+        XCTAssertNil(DateFormatting.floatingLocal(from: c))
+    }
+
+    // MARK: - localDateOnly / calendarTime — all-day off-by-one fold-in (#824)
+
+    func testCalendarTimeAllDayIsBareLocalDate() {
+        // An all-day event anchored at machine-local midnight renders as that
+        // local date, regardless of the machine's offset from UTC — no instant,
+        // so no cross-midnight shift.
+        let cal = Calendar(identifier: .gregorian)
+        var c = DateComponents()
+        c.year = 2026; c.month = 7; c.day = 1; c.hour = 0; c.minute = 0; c.second = 0
+        let midnight = cal.date(from: c)!  // local midnight, machine zone
+        XCTAssertEqual(DateFormatting.calendarTime(midnight, allDay: true), "2026-07-01")
+    }
+
+    func testCalendarTimeTimedFallsThroughToISO() {
+        XCTAssertEqual(
+            DateFormatting.calendarTime(Date(timeIntervalSince1970: 0), allDay: false),
+            "1970-01-01T00:00:00Z"
+        )
+    }
 }
