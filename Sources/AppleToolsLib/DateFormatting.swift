@@ -59,6 +59,46 @@ public enum DateFormatting {
         outputFormatter.string(from: date)
     }
 
+    /// Format floating wall-clock `DateComponents` as a **zone-less** local
+    /// string — `"YYYY-MM-DDTHH:MM:SS"` when a time-of-day is present, or a bare
+    /// `"YYYY-MM-DD"` when it isn't (a date-only reminder). Used for values that
+    /// must never be timezone-converted, e.g. EventKit reminder due dates: a
+    /// reminder due 9am fires at 9am wherever the user is, so the components are
+    /// serialized verbatim rather than round-tripped through a `Date` (which
+    /// would anchor them to the probe machine's zone and destroy the floating
+    /// semantics — the #824 bug). Returns `nil` if the components lack a date.
+    public static func floatingLocal(from comps: DateComponents) -> String? {
+        guard let y = comps.year, let mo = comps.month, let d = comps.day else {
+            return nil
+        }
+        if let h = comps.hour, let mi = comps.minute {
+            let s = comps.second ?? 0
+            return String(format: "%04d-%02d-%02dT%02d:%02d:%02d", y, mo, d, h, mi, s)
+        }
+        return String(format: "%04d-%02d-%02d", y, mo, d)
+    }
+
+    /// Format a `Date` as a bare local calendar date `"YYYY-MM-DD"` in the
+    /// machine timezone. Used for all-day calendar events, whose `startDate` is
+    /// anchored at machine-local midnight: rendering date-only (not a UTC
+    /// instant) avoids a conversion that shifts the date across a day boundary
+    /// for probe machines east of UTC (the all-day off-by-one, folded into #824).
+    public static func localDateOnly(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: date)
+    }
+
+    /// Serialize a calendar event time: a bare local date for all-day events
+    /// (never converted, see ``localDateOnly(_:)``), otherwise the canonical UTC
+    /// instant (a timed event is a real instant, safe to convert downstream).
+    public static func calendarTime(_ date: Date, allDay: Bool) -> String {
+        allDay ? localDateOnly(date) : iso(date)
+    }
+
     /// AppleScript handler that serializes a date to locale-independent integer
     /// components `"year,month,day,hours,minutes,seconds"`. Inject this near the
     /// top of a script (OUTSIDE any `tell application` block) and invoke it as

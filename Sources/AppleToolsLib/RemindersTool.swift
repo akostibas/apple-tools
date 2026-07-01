@@ -308,9 +308,13 @@ public struct RemindersTool: ProbeTool {
             "completed": reminder.isCompleted,
         ]
 
+        // Reminder due times are floating wall-clock (no zone). Emit them
+        // zone-less so the server can label — never convert — them (#824). A
+        // timed reminder yields "YYYY-MM-DDTHH:MM:SS"; a date-only one yields
+        // "YYYY-MM-DD".
         if let dueComps = reminder.dueDateComponents,
-           let dueDate = Calendar.current.date(from: dueComps) {
-            entry["due_date"] = DateFormatting.iso(dueDate)
+           let due = DateFormatting.floatingLocal(from: dueComps) {
+            entry["due_date"] = due
         }
 
         if let notes = reminder.notes, !notes.isEmpty {
