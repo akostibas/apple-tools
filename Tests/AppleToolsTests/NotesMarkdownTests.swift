@@ -175,4 +175,36 @@ final class NotesMarkdownTests: XCTestCase {
         let back = NotesMarkdown.notesHTMLToMarkdown(html)
         XCTAssertEqual(back, md)
     }
+
+    // MARK: - composeBodyWithTitle (create path — single title line)
+
+    func testComposePrependsTitleWhenBodyHasNoTitle() {
+        let out = NotesIntegration.composeBodyWithTitle(title: "My Note", body: "Body line one.")
+        XCTAssertEqual(out, "# My Note\n\nBody line one.")
+    }
+
+    func testComposeDropsDuplicateHeadingTitle() {
+        // The LLM naturally leads with the title as an H1; it must not appear twice.
+        let body = "# My Note\n\nBody line one."
+        let out = NotesIntegration.composeBodyWithTitle(title: "My Note", body: body)
+        XCTAssertEqual(out, "# My Note\n\nBody line one.")
+    }
+
+    func testComposeDropsDuplicatePlainTitle() {
+        // A leading plain (non-heading) line repeating the title is also dropped.
+        let body = "My Note\n\nBody line one."
+        let out = NotesIntegration.composeBodyWithTitle(title: "My Note", body: body)
+        XCTAssertEqual(out, "# My Note\n\nBody line one.")
+    }
+
+    func testComposeKeepsDistinctLeadingHeading() {
+        let body = "# Section One\n\nBody."
+        let out = NotesIntegration.composeBodyWithTitle(title: "My Note", body: body)
+        XCTAssertEqual(out, "# My Note\n\n# Section One\n\nBody.")
+    }
+
+    func testComposeEmptyBodyIsTitleOnly() {
+        let out = NotesIntegration.composeBodyWithTitle(title: "My Note", body: "")
+        XCTAssertEqual(out, "# My Note")
+    }
 }

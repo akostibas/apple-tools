@@ -180,12 +180,19 @@ private func notesCreateIntegration() -> AppleScriptEscapingCorpusTests.AppleScr
             // varies on the body key. Folder nil so the simpler atClause
             // shape is exercised.
             _ = try? NotesIntegration.createNote(title: "fixed-title", body: payload, folder: nil)
-            // NotesIntegration converts body via markdownToNotesHTML before
-            // placing it in env. The corpus's expected value is the raw
-            // payload, but env carries the HTML form. Translate back so
-            // the assertion logic stays uniform.
+            // NotesIntegration composes the title as the body's first line
+            // (composeBodyWithTitle, so Apple Notes doesn't duplicate it),
+            // then converts via markdownToNotesHTML before placing it in env.
+            // The corpus's expected value is the raw body payload, so reverse
+            // the HTML and strip the synthetic "# fixed-title" prefix to keep
+            // the assertion logic uniform.
             if let html = captured.env["APPLE_TOOLS_NOTES_BODY"] {
-                captured.env["APPLE_TOOLS_NOTES_BODY"] = htmlToPayload(html)
+                var recovered = htmlToPayload(html)
+                let titlePrefix = "<h1>fixed-title</h1>\n\n"
+                if recovered.hasPrefix(titlePrefix) {
+                    recovered = String(recovered.dropFirst(titlePrefix.count))
+                }
+                captured.env["APPLE_TOOLS_NOTES_BODY"] = recovered
             }
             return captured
         }

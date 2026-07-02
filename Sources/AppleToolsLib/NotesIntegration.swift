@@ -243,9 +243,15 @@ public enum NotesIntegration {
     // MARK: - Create
 
     public static func createNote(title: String, body: String, folder: String?) throws -> CreatedNote {
-        let htmlBody = body.isEmpty ? "" : NotesMarkdown.markdownToNotesHTML(body)
+        // Apple Notes always prepends the note's `name` property to the body as
+        // the first (body-styled) line, and the LLM's Markdown body naturally
+        // leads with the title as an H1 — the two collide into a duplicate
+        // header (issue: double title line). Instead we DON'T set `name`: we
+        // make the title the body's first line as an H1 and let Notes derive
+        // the title from it. That yields a single, Title-styled header.
+        let composed = composeBodyWithTitle(title: title, body: body)
+        let htmlBody = NotesMarkdown.markdownToNotesHTML(composed)
         var env = [
-            "APPLE_TOOLS_NOTES_TITLE": title,
             "APPLE_TOOLS_NOTES_BODY": htmlBody,
         ]
 
@@ -260,17 +266,16 @@ public enum NotesIntegration {
             if not (exists folder theFolder) then
                         make new folder with properties {name:theFolder}
                     end if
-                    set newNote to make new note at folder theFolder with properties {name:theTitle, body:theBody}
+                    set newNote to make new note at folder theFolder with properties {body:theBody}
             """
         } else {
             folderBinding = ""
             atClause = """
-            set newNote to make new note with properties {name:theTitle, body:theBody}
+            set newNote to make new note with properties {body:theBody}
             """
         }
 
         let script = """
-        set theTitle to do shell script "printenv APPLE_TOOLS_NOTES_TITLE"
         set theBody to do shell script "printenv APPLE_TOOLS_NOTES_BODY"
         \(folderBinding)
         log "PHASE: prepare"
@@ -297,6 +302,28 @@ public enum NotesIntegration {
             throw NotesError.parseFailure("note created but failed to parse response")
         }
         return CreatedNote(id: parts[0], title: parts[1])
+    }
+
+    /// Build the Markdown that becomes a new note's body so its first line is
+    /// the title as an H1 — the line Apple Notes promotes to the note title.
+    /// A leading heading (or plain line) in `body` that just repeats the title
+    /// is dropped so the title isn't emitted twice.
+    static func composeBodyWithTitle(title: String, body: String) -> String {
+        var rest = body
+        var lines = body.components(separatedBy: "\n")
+        if let first = lines.first {
+            let bare = first.drop(while: { $0 == "#" || $0 == " " })
+            if String(bare).trimmingCharacters(in: .whitespaces) == title.trimmingCharacters(in: .whitespaces) {
+                lines.removeFirst()
+                // Also swallow a single blank line left under the old title.
+                if lines.first?.trimmingCharacters(in: .whitespaces).isEmpty == true {
+                    lines.removeFirst()
+                }
+                rest = lines.joined(separator: "\n")
+            }
+        }
+        let heading = "# \(title)"
+        return rest.isEmpty ? heading : "\(heading)\n\n\(rest)"
     }
 
     // MARK: - Append
