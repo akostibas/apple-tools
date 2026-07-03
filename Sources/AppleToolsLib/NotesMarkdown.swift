@@ -364,9 +364,17 @@ public enum NotesMarkdown {
 
     private static func decodeEntities(_ s: String) -> String {
         var out = s
-        let named = ["&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"",
-                     "&#39;": "'", "&apos;": "'", "&nbsp;": " "]
-        for (k, v) in named { out = out.replacingOccurrences(of: k, with: v) }
+        // Fixed, explicit order — never rely on Dictionary iteration order.
+        // `&amp;` MUST decode last: doing it first turns a doubly-escaped
+        // entity like `&amp;lt;` (visible text `&lt;`) into `<`, corrupting
+        // write->read round-trips of any text containing `&`, `<`, `>`
+        // (issue #29). Decode named/numeric entities first, `&amp;` -> `&` last.
+        let ordered: [(String, String)] = [
+            ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""),
+            ("&#39;", "'"), ("&apos;", "'"), ("&nbsp;", " "),
+            ("&amp;", "&"),
+        ]
+        for (k, v) in ordered { out = out.replacingOccurrences(of: k, with: v) }
         return out
     }
 }

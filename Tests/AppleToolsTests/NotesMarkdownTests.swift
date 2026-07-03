@@ -93,6 +93,13 @@ final class NotesMarkdownTests: XCTestCase {
         XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html), "a < b & c")
     }
 
+    func testReadDoesNotDoubleDecodeEntities() {
+        // Visible text `&lt;` is stored doubly-escaped as `&amp;lt;`. Decoding
+        // `&amp;` last (never first) keeps it as `&lt;`, not `<` (issue #29).
+        let html = "<div>&amp;lt;script&amp;gt;</div>"
+        XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html), "&lt;script&gt;")
+    }
+
     func testReadChecklistOverlay() {
         // AppleScript gives plain bullets; overlay marks state by text match.
         let html = "<ul>\n<li>One</li>\n<li>Two</li>\n<li>Three</li>\n</ul>"
