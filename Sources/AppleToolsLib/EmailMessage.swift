@@ -756,17 +756,10 @@ enum EmailMessage {
         if let re = try? NSRegularExpression(pattern: "<[^>]+>", options: []) {
             s = re.stringByReplacingMatches(in: s, range: NSRange(location: 0, length: (s as NSString).length), withTemplate: "")
         }
-        // Decode a few common entities in a FIXED order, with `&amp;` LAST.
-        // The ampersand must be decoded after every other entity, otherwise a
-        // literal, already-escaped sequence like `&amp;lt;` decodes twice into
-        // `<` (issue #29). Named/numeric entities first; `&amp;` -> `&` last.
-        let entities: [(String, String)] = [
-            ("&lt;", "<"), ("&gt;", ">"),
-            ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
-            ("&nbsp;", " "),
-            ("&amp;", "&"),
-        ]
-        for (e, r) in entities { s = s.replacingOccurrences(of: e, with: r) }
+        // Decode the basic entity set (shared helper; `&amp;` decoded last,
+        // see HTMLEntities). Doing `&amp;` first would double-decode an
+        // already-escaped sequence like `&amp;lt;` into `<` (issue #29).
+        s = HTMLEntities.decodeBasic(s)
         // Collapse runs of blank lines.
         if let re = try? NSRegularExpression(pattern: "\n{3,}", options: []) {
             s = re.stringByReplacingMatches(in: s, range: NSRange(location: 0, length: (s as NSString).length), withTemplate: "\n\n")

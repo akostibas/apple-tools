@@ -125,19 +125,6 @@ public struct IMessageTool: ProbeTool {
         return "invalid '\(field)' value: '\(value)' — use ISO 8601 (e.g. 2026-07-03T12:00:00Z), a date (2026-07-03), or a next_before cursor from a prior page"
     }
 
-    /// Escape a user-supplied substring for safe use inside a SQL `LIKE`
-    /// pattern, so wildcard metacharacters are matched literally. `%`, `_`, and
-    /// the escape char `\` itself are backslash-escaped; the query must pair
-    /// this with an `ESCAPE '\'` clause. Without it, searching `100%` matches
-    /// any message containing `100`, and `is_a` matches `isla` (issue #33).
-    /// Kept deliberately textually simple so it can be lifted into a single
-    /// shared helper at integration.
-    static func escapeLIKE(_ s: String) -> String {
-        return s.replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "%", with: "\\%")
-                .replacingOccurrences(of: "_", with: "\\_")
-    }
-
     // MARK: - Preflight
 
     public func preflight() -> (ok: Bool, message: String) {
@@ -563,7 +550,7 @@ public struct IMessageTool: ProbeTool {
         // Escape single quotes for the SQL string literal, and LIKE wildcards
         // so `%`/`_` in the query match literally (issue #33). The LIKE below
         // carries a matching `ESCAPE '\'` clause.
-        let escaped = Self.escapeLIKE(query).replacingOccurrences(of: "'", with: "''")
+        let escaped = SQLEscaping.escapeLIKE(query).replacingOccurrences(of: "'", with: "''")
 
         var extraFilters = ""
         if let chat = chat {

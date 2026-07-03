@@ -96,7 +96,7 @@ public enum MailDraftVerifier {
         // `_` (common — `john_doe@x.com`) or `%` isn't treated as a wildcard,
         // which let a near-miss draft row falsely confirm (issue #33). Paired
         // with the `ESCAPE '\'` clause in the query.
-        let recipientPattern = "%\(escapeLIKE(recipient))%"
+        let recipientPattern = "%\(SQLEscaping.escapeLIKE(recipient))%"
 
         while Date().timeIntervalSince(start) < deadline {
             if let rowid = findMatchingDraft(
@@ -109,14 +109,6 @@ public enum MailDraftVerifier {
             Thread.sleep(forTimeInterval: pollInterval)
         }
         return .inconclusive
-    }
-
-    /// Escape LIKE wildcards in user input so a query containing %, _ or \ is
-    /// matched literally (paired with `ESCAPE '\'` in the SQL).
-    static func escapeLIKE(_ s: String) -> String {
-        return s.replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "%", with: "\\%")
-                .replacingOccurrences(of: "_", with: "\\_")
     }
 
     // MARK: - SQLite query

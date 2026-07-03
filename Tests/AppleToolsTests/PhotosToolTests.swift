@@ -109,15 +109,15 @@ final class PhotosToolTests: XCTestCase {
     // MARK: - LIKE escaping (#33)
 
     func testEscapeLIKEEscapesWildcards() {
-        XCTAssertEqual(PhotosIntegration.escapeLIKE("100%"), "100\\%")
-        XCTAssertEqual(PhotosIntegration.escapeLIKE("is_a"), "is\\_a")
-        XCTAssertEqual(PhotosIntegration.escapeLIKE("a\\b"), "a\\\\b")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("100%"), "100\\%")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("is_a"), "is\\_a")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("a\\b"), "a\\\\b")
         // Escape the backslash first so it doesn't double-escape the % it precedes.
-        XCTAssertEqual(PhotosIntegration.escapeLIKE("%_\\"), "\\%\\_\\\\")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("%_\\"), "\\%\\_\\\\")
     }
 
     func testEscapeLIKELeavesPlainTextUntouched() {
-        XCTAssertEqual(PhotosIntegration.escapeLIKE("dog"), "dog")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("dog"), "dog")
     }
 
     // MARK: - Parameter validation

@@ -167,7 +167,7 @@ final class MailDraftVerifierTests: XCTestCase {
     }
 
     func testEscapeLIKEEscapesWildcardsAndBackslash() {
-        XCTAssertEqual(MailDraftVerifier.escapeLIKE("a_b%c\\d"), "a\\_b\\%c\\\\d")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("a_b%c\\d"), "a\\_b\\%c\\\\d")
     }
 
     // MARK: - Fixture builder

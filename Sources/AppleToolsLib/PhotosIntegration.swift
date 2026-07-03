@@ -110,15 +110,6 @@ public enum PhotosIntegration {
         date.timeIntervalSince1970 - appleEpochOffset
     }
 
-    /// Escape LIKE wildcards in user input so a query containing `%`, `_` or `\`
-    /// is matched literally (paired with `ESCAPE '\'` in the SQL). Without this,
-    /// a query like `100%` matches every label.
-    static func escapeLIKE(_ s: String) -> String {
-        return s.replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "%", with: "\\%")
-                .replacingOccurrences(of: "_", with: "\\_")
-    }
-
     // MARK: - Search (PhotoKit)
 
     /// Fetch image-type assets in a date range. If `fetchLimit` is provided
@@ -196,7 +187,7 @@ public enum PhotosIntegration {
         // Match labels in categories that cover people, keywords, and ML content.
         // Escape LIKE wildcards so a query like `100%` matches literally rather
         // than every label (paired with `ESCAPE '\'`).
-        let searchPattern = "%\(escapeLIKE(query.lowercased()))%"
+        let searchPattern = "%\(SQLEscaping.escapeLIKE(query.lowercased()))%"
         let groupSQL = """
             SELECT rowid, content_string, category FROM groups
             WHERE normalized_string LIKE ?1 ESCAPE '\\' AND category BETWEEN 1200 AND 1899

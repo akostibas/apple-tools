@@ -322,13 +322,13 @@ final class IMessageToolTests: XCTestCase {
     /// match literally (paired with `ESCAPE '\'`). Otherwise `100%` matches any
     /// message containing `100` and `is_a` matches `isla`.
     func testEscapeLIKEEscapesWildcardsAndEscapeChar() {
-        XCTAssertEqual(IMessageTool.escapeLIKE("100%"), "100\\%")
-        XCTAssertEqual(IMessageTool.escapeLIKE("is_a"), "is\\_a")
-        XCTAssertEqual(IMessageTool.escapeLIKE("a\\b"), "a\\\\b")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("100%"), "100\\%")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("is_a"), "is\\_a")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("a\\b"), "a\\\\b")
         // Order matters: the escape char is doubled first so we don't
         // double-escape the backslashes we introduce for % and _.
-        XCTAssertEqual(IMessageTool.escapeLIKE("%_\\"), "\\%\\_\\\\")
-        XCTAssertEqual(IMessageTool.escapeLIKE("plain text"), "plain text")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("%_\\"), "\\%\\_\\\\")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("plain text"), "plain text")
     }
 
     // MARK: - Date filter parsing (#20, #23)
