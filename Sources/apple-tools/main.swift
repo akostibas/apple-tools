@@ -139,7 +139,15 @@ var globalArgs: [String] = []
 do {
     var i = 0
     while i < argv.count {
-        switch argv[i] {
+        let arg = argv[i]
+        // A standalone `--` terminates global-flag scanning: every token after
+        // it is passed to the tool verbatim, so a tool-flag value that collides
+        // with a global-flag name is never stolen (#34).
+        if arg == "--" {
+            globalArgs.append(contentsOf: argv[(i + 1)...])
+            break
+        }
+        switch arg {
         case "--confirm":
             confirm = true
             i += 1
@@ -151,7 +159,13 @@ do {
             outputDir = argv[i + 1]
             i += 2
         default:
-            globalArgs.append(argv[i])
+            // `--output-dir=PATH` keeps the value in one token, so it can't
+            // swallow the following token (#34).
+            if arg.hasPrefix("--output-dir=") {
+                outputDir = String(arg.dropFirst("--output-dir=".count))
+            } else {
+                globalArgs.append(arg)
+            }
             i += 1
         }
     }
@@ -208,27 +222,40 @@ let hasAction = schema?.properties?["action"] != nil
 var params: [String: AnyCodable]
 var resolvedAction: String?
 
+// A leading positional token (for tools that dispatch on `action`) is the
+// action subcommand. Capture it up front so it survives BOTH the --flag mapper
+// and the --json escape hatch — previously `<tool> <action> --json {...}`
+// silently dropped the action (#34).
+var positionalAction: String?
+var afterAction = rest
+if hasAction, let candidate = rest.first, !candidate.hasPrefix("--") {
+    positionalAction = candidate
+    afterAction = Array(rest.dropFirst())
+}
+
 // Raw JSON escape hatch.
-if let jsonIdx = rest.firstIndex(of: "--json") {
-    guard jsonIdx + 1 < rest.count else { fail("--json needs a JSON object argument") }
-    let jsonStr = rest[jsonIdx + 1]
+if let jsonIdx = afterAction.firstIndex(of: "--json") {
+    guard jsonIdx + 1 < afterAction.count else { fail("--json needs a JSON object argument") }
+    let jsonStr = afterAction[jsonIdx + 1]
     guard let data = jsonStr.data(using: .utf8),
-          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+          var obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
         fail("--json value is not a valid JSON object")
+    }
+    // Merge a positional action into the JSON params. Reject the mixed form
+    // loudly if the JSON also carries a *different* action rather than silently
+    // preferring one (#34).
+    if let action = positionalAction {
+        if let jsonAction = obj["action"] as? String, jsonAction != action {
+            fail("conflicting action: positional '\(action)' vs '\(jsonAction)' in --json (pass only one)")
+        }
+        obj["action"] = action
     }
     params = obj.mapValues { AnyCodable($0) }
     resolvedAction = params["action"]?.value as? String
 } else {
-    // First non-flag token (if the tool dispatches on `action`) is the action.
-    var action: String?
-    var flagTokens = rest
-    if hasAction, let candidate = rest.first, !candidate.hasPrefix("--") {
-        action = candidate
-        flagTokens = Array(rest.dropFirst())
-    }
-    resolvedAction = action
+    resolvedAction = positionalAction
     do {
-        params = try CLIArgumentMapper.buildParams(tokens: flagTokens, schema: schema, action: action)
+        params = try CLIArgumentMapper.buildParams(tokens: afterAction, schema: schema, action: positionalAction)
     } catch {
         fail("\(error)")
     }

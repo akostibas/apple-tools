@@ -147,8 +147,16 @@ public enum DateFormatting {
     /// which reads the raw header off the `.emlx` file. Returns the raw input
     /// unchanged if it doesn't parse.
     public static func isoFromRFC2822(_ raw: String) -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return raw }
+        // RFC 2822 permits a trailing parenthesized comment on the zone, e.g.
+        // `Thu, 15 Jan 2026 09:30:00 -0800 (PST)`. None of the numeric-zone
+        // formats below match once that comment is present, so the whole header
+        // would fall through and be re-emitted raw — reintroducing mixed-format
+        // date drift on the email fast path (#38). Strip it before parsing.
+        if trimmed.hasSuffix(")"), let open = trimmed.lastIndex(of: "(") {
+            trimmed = String(trimmed[..<open]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         for formatter in rfc2822Formatters {
             if let date = formatter.date(from: trimmed) { return iso(date) }
         }

@@ -54,8 +54,8 @@ public struct RemindersTool: ProbeTool {
             let dueDate = params?["due_date"]?.value as? String
             let dueDateEnd = params?["due_date_end"]?.value as? String
             let showCompleted = params?["show_completed"]?.value as? Bool ?? false
-            if query == nil && listName == nil && dueDate == nil {
-                return ("search requires at least one of: query, list_name, or due_date", true)
+            if query == nil && listName == nil && dueDate == nil && dueDateEnd == nil {
+                return ("search requires at least one of: query, list_name, due_date, or due_date_end", true)
             }
             guard RemindersIntegration.requestAccess() else { return accessDenied }
             return searchReminders(query: query, listName: listName, dueDate: dueDate, dueDateEnd: dueDateEnd, showCompleted: showCompleted)
@@ -129,6 +129,9 @@ public struct RemindersTool: ProbeTool {
             calendars = resolved
         }
 
+        // Parse the range bounds independently so an upper bound works on its
+        // own: `due_date_end` without `due_date` means "everything due at or
+        // before X" rather than being silently ignored (#38).
         var startDate: Date? = nil
         var endDate: Date? = nil
         if let startStr = dueDate {
@@ -136,18 +139,22 @@ public struct RemindersTool: ProbeTool {
                 return ("invalid due_date format (use ISO 8601, e.g. 2026-04-15T09:00:00Z)", true)
             }
             startDate = parsed
-            if let endStr = dueDateEnd {
-                guard let d = RemindersIntegration.parseDate(endStr) else {
-                    return ("invalid due_date_end format", true)
-                }
-                endDate = d
-            } else {
-                endDate = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: parsed) ?? parsed.addingTimeInterval(86400)
+        }
+        if let endStr = dueDateEnd {
+            guard let parsed = RemindersIntegration.parseDate(endStr) else {
+                return ("invalid due_date_end format", true)
             }
+            endDate = parsed
+        }
+        // A lone `due_date` means "due on that day": bound the (otherwise
+        // point) range to end-of-day so the whole day matches. A lone
+        // `due_date_end` stays open at the bottom.
+        if let start = startDate, endDate == nil {
+            endDate = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: start) ?? start.addingTimeInterval(86400)
         }
 
         let predicate: NSPredicate
-        if showCompleted || startDate != nil {
+        if showCompleted || startDate != nil || endDate != nil {
             predicate = RemindersIntegration.predicateForAllReminders(in: calendars)
         } else {
             predicate = RemindersIntegration.predicateForIncompleteReminders(in: calendars)
@@ -158,13 +165,15 @@ public struct RemindersTool: ProbeTool {
             reminders = reminders.filter { !$0.isCompleted }
         }
 
-        if let start = startDate, let end = endDate {
+        if startDate != nil || endDate != nil {
             reminders = reminders.filter { reminder in
                 guard let dueComps = reminder.dueDateComponents,
                       let due = Calendar.current.date(from: dueComps) else {
                     return false
                 }
-                return due >= start && due <= end
+                if let start = startDate, due < start { return false }
+                if let end = endDate, due > end { return false }
+                return true
             }
         }
 
