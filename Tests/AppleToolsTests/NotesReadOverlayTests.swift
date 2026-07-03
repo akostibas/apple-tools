@@ -16,7 +16,7 @@ final class NotesReadOverlayTests: XCTestCase {
     private func stubRead(title: String, html: String) {
         NotesIntegration.runAppleScript = { _, _, _ in
             let parts = ["id://1", title, "Notes", "date", "date", html]
-            return (parts.joined(separator: "\t"), nil)
+            return (parts.joined(separator: NotesIntegration.fieldSep), nil)
         }
     }
 

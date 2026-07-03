@@ -104,15 +104,28 @@ public enum NotesMarkdown {
     /// Convert inline Markdown within a single line to Notes HTML.
     static func inlineToHTML(_ line: String) -> String {
         var s = NotesIntegration.escapeHTML(line)
-        // Order matters: code first (so its contents aren't reinterpreted),
-        // then bold before italic, then strikethrough, then links.
-        s = replace(s, #"`([^`]+)`"#, "<tt>$1</tt>")
+        // Extract code spans first and swap in opaque placeholders so their
+        // contents survive the emphasis/link passes untouched (issue #37):
+        // `__init__` must render <tt>__init__</tt>, not <tt><b>init</b></tt>.
+        // Replacing the backticks in place isn't enough — the inner text is
+        // still visible to the later regexes. U+E000 is a private-use scalar
+        // that can't occur in note text and carries no Markdown meaning.
+        var codeSpans: [String] = []
+        s = replaceMatches(s, #"`([^`]+)`"#) { groups in
+            codeSpans.append("<tt>\(groups[1])</tt>")
+            return "\u{E000}\(codeSpans.count - 1)\u{E000}"
+        }
+        // Order matters: bold before italic, then strikethrough, then links.
         s = replace(s, #"\*\*([^*]+)\*\*"#, "<b>$1</b>")
         s = replace(s, #"__([^_]+)__"#, "<b>$1</b>")
         s = replace(s, #"\*([^*]+)\*"#, "<i>$1</i>")
         s = replace(s, #"~~([^~]+)~~"#, "<strike>$1</strike>")
         // Links can't carry href through Notes; render as "text (url)".
         s = replace(s, #"\[([^\]]+)\]\(([^)]+)\)"#, "$1 ($2)")
+        // Restore the masked code spans.
+        for (idx, span) in codeSpans.enumerated() {
+            s = s.replacingOccurrences(of: "\u{E000}\(idx)\u{E000}", with: span)
+        }
         return s
     }
 
@@ -120,6 +133,29 @@ public enum NotesMarkdown {
         guard let re = try? NSRegularExpression(pattern: pattern) else { return s }
         let range = NSRange(s.startIndex..., in: s)
         return re.stringByReplacingMatches(in: s, range: range, withTemplate: template)
+    }
+
+    /// Like `replace`, but calls `transform` with each match's capture groups
+    /// (group 0 = whole match) so the caller can build a per-match replacement.
+    /// Matches are rewritten right-to-left so earlier ranges stay valid.
+    private static func replaceMatches(_ s: String, _ pattern: String,
+                                       _ transform: ([String]) -> String) -> String {
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return s }
+        var result = s
+        let full = NSRange(result.startIndex..., in: result)
+        for m in re.matches(in: result, range: full).reversed() {
+            guard let mr = Range(m.range, in: result) else { continue }
+            var groups: [String] = []
+            for gi in 0..<m.numberOfRanges {
+                if let gr = Range(m.range(at: gi), in: result) {
+                    groups.append(String(result[gr]))
+                } else {
+                    groups.append("")
+                }
+            }
+            result.replaceSubrange(mr, with: transform(groups))
+        }
+        return result
     }
 
     // MARK: - Notes HTML -> Markdown (read path)
@@ -175,14 +211,18 @@ public enum NotesMarkdown {
         var result = markdown
         var cursor = result.startIndex
         for link in links where !link.text.isEmpty {
-            // Already linked from the in-body href echo — advance past, no rewrap.
-            if result.range(of: "](\(link.url))") != nil {
-                if let r = result.range(of: link.text, range: cursor..<result.endIndex) {
-                    cursor = r.upperBound
-                }
+            guard let r = result.range(of: link.text, range: cursor..<result.endIndex) else {
                 continue
             }
-            guard let r = result.range(of: link.text, range: cursor..<result.endIndex) else {
+            // Already rendered as [text](url) *at this position* (the in-body
+            // href echo) — advance past, don't rewrap. The check is scoped to
+            // this match's surroundings, not the whole string: a global search
+            // would skip every later span sharing the same URL but a different
+            // display text (issue #37).
+            let precededByBracket = r.lowerBound > result.startIndex &&
+                result[result.index(before: r.lowerBound)] == "["
+            if precededByBracket, result[r.upperBound...].hasPrefix("](\(link.url))") {
+                cursor = r.upperBound
                 continue
             }
             // Bare link: the URL already is its own visible text. Skip wrapping.
