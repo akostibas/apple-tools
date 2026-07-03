@@ -17,6 +17,23 @@ apple-tools list           # see the tools
 apple-tools calendar list --start 2026-06-15T00:00:00Z --end 2026-06-16T00:00:00Z
 ```
 
+## Upgrading
+
+`make install` symlinks `~/bin/apple-tools` into this source checkout, so the
+installed binary only changes when you rebuild it — pulling new commits or
+cutting a release tag does **not** update it on its own. To upgrade:
+
+```bash
+cd <your apple-tools checkout>
+git pull
+make install               # rebuild and refresh the symlinks (idempotent)
+```
+
+The CLI performs a best-effort check at most once per week and prints a one-line
+nudge to **stderr** when a newer release tag exists (stdout — the JSON tool
+contract — is never touched). It fails silent when offline and never blocks a
+command. Disable it entirely with `APPLE_TOOLS_NO_UPDATE_CHECK=1`.
+
 ## CLI shape
 
 ```
