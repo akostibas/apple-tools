@@ -73,6 +73,27 @@ final class NotesSearchTests: XCTestCase {
         XCTAssertTrue(notes.isEmpty)
     }
 
+    func testNegativeOffsetIsClampedNotATrap() throws {
+        // dropFirst traps on a negative count; a caller-supplied offset of -1
+        // must degrade to 0, not crash the process.
+        stub([hit("p1", "A"), hit("p2", "B")])
+        let (total, notes) = try NotesIntegration.searchNotes(query: "x", folder: nil, offset: -1, limit: 5)
+        XCTAssertEqual(total, 2)
+        XCTAssertEqual(notes.map { $0.id }, ["p1", "p2"])
+    }
+
+    func testToolClampsNegativeOffset() {
+        stub([hit("p1", "A")])
+        let tool = NotesTool()
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("search"),
+            "query": AnyCodable("x"),
+            "offset": AnyCodable(-3),
+        ])
+        XCTAssertFalse(isError, result)
+        XCTAssertTrue(result.contains("p1"))
+    }
+
     // MARK: - Output schema
 
     func testSearchJSONSchemaUnchanged() throws {

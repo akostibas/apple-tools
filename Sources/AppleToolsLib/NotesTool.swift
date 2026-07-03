@@ -45,7 +45,7 @@ public struct NotesTool: ProbeTool {
                 return ("missing required parameter: query", true)
             }
             let folder = params?["folder"]?.value as? String
-            let offset = intParam(params, key: "offset") ?? 0
+            let offset = max(0, intParam(params, key: "offset") ?? 0)
             let limit = clamp(intParam(params, key: "limit") ?? 20, min: 1, max: 50)
             let fullText = boolParam(params, key: "full_text") ?? false
             return search(query: query, folder: folder, offset: offset, limit: limit, fullText: fullText)

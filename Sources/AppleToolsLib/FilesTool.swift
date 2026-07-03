@@ -23,6 +23,13 @@ public struct FilesTool: ProbeTool {
 
     private let documentsDir = NSHomeDirectory() + "/Documents"
 
+    /// True when `resolved` (an already-standardized absolute path) is
+    /// ~/Documents itself or strictly inside it. A bare `hasPrefix` check
+    /// would also accept sibling dirs like "~/Documents Backup".
+    private func isWithinDocuments(_ resolved: String) -> Bool {
+        resolved == documentsDir || resolved.hasPrefix(documentsDir + "/")
+    }
+
     public let accessPolicy: ToolAccessPolicy = .perAction([
         "search": .read,
         "list":   .read,
@@ -137,7 +144,7 @@ public struct FilesTool: ProbeTool {
             fullPath = (documentsDir as NSString).appendingPathComponent(relativePath)
         }
         let resolved = (fullPath as NSString).standardizingPath
-        guard resolved.hasPrefix(documentsDir) else {
+        guard isWithinDocuments(resolved) else {
             return ("path escapes ~/Documents: \(relativePath)", true)
         }
 
@@ -208,7 +215,7 @@ public struct FilesTool: ProbeTool {
     private func info(relativePath: String) -> (String, Bool) {
         let fullPath = (documentsDir as NSString).appendingPathComponent(relativePath)
         let resolved = (fullPath as NSString).standardizingPath
-        guard resolved.hasPrefix(documentsDir) else {
+        guard isWithinDocuments(resolved) else {
             return ("path escapes ~/Documents: \(relativePath)", true)
         }
 
@@ -256,7 +263,7 @@ public struct FilesTool: ProbeTool {
         // Resolve and validate the path stays within ~/Documents.
         let fullPath = (documentsDir as NSString).appendingPathComponent(relativePath)
         let resolved = (fullPath as NSString).standardizingPath
-        guard resolved.hasPrefix(documentsDir) else {
+        guard isWithinDocuments(resolved) else {
             return ("path escapes ~/Documents: \(relativePath)", true)
         }
 

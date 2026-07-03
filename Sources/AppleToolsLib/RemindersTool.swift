@@ -180,7 +180,9 @@ public struct RemindersTool: ProbeTool {
         var results = reminders.map { reminderToDict($0, truncateNotes: true) }
 
         // Enrich with subtask relationships from the Reminders SQLite DB.
-        let ids = reminders.compactMap { $0.calendarItemExternalIdentifier }
+        // One entry per reminder (falling back to the local identifier when
+        // the external one is nil) so ids[i] stays aligned with results[i].
+        let ids = reminders.map { $0.calendarItemExternalIdentifier ?? $0.calendarItemIdentifier }
         let parentMap = RemindersDB.parents(forChildIDs: ids)
         let subtaskMap = RemindersDB.subtasks(forParentIDs: ids)
         for i in results.indices {
