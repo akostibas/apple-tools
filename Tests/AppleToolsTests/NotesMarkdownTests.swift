@@ -109,6 +109,31 @@ final class NotesMarkdownTests: XCTestCase {
         XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html), "&lt;script&gt;")
     }
 
+    func testReadDecodesSemicolonlessEntities() {
+        // Apple Notes serializes entities WITHOUT a trailing `;` (`&amp`, `&lt`)
+        // in its AppleScript body, so `notes read` must decode those too or
+        // every note with `&`/`<`/`>` reads back corrupted (issue #39). This is
+        // exactly the byte sequence Notes emits for input "A & B <3 end".
+        let html = "<div>A &amp B &lt3 end</div>"
+        XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html), "A & B <3 end")
+    }
+
+    func testReadSemicolonlessKeepsAmpLast() {
+        // The `&amp` (ampersand) form must decode LAST so a literal `&lt;`
+        // typed by the user — which Notes serializes as `&amplt;` — round-trips
+        // back to `&lt;`, not `<` (the #29 invariant, extended to legacy forms).
+        let html = "<div>&amplt; end</div>"
+        XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html), "&lt; end")
+    }
+
+    func testEmailDecodeLeavesBareFormsUntouched() {
+        // The shared decoder must NOT decode semicolon-less forms for email
+        // HTML (legacy defaults to false): a URL query like `a=1&ltd=2` would
+        // otherwise be mangled. Only the standard `&amp;` form is decoded.
+        XCTAssertEqual(HTMLEntities.decodeBasic("a=1&ltd=2&amp;x"), "a=1&ltd=2&x")
+        XCTAssertEqual(HTMLEntities.decodeBasic("a=1&ltd=2&amp;x", legacy: true), "a=1<d=2&x")
+    }
+
     func testReadChecklistOverlay() {
         // AppleScript gives plain bullets; overlay marks state by text match.
         let html = "<ul>\n<li>One</li>\n<li>Two</li>\n<li>Three</li>\n</ul>"

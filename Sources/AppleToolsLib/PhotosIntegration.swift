@@ -100,16 +100,6 @@ public enum PhotosIntegration {
         return Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: d) ?? d
     }
 
-    /// Seconds between the Unix epoch (1970-01-01) and the Apple/Core Data
-    /// reference epoch (2001-01-01). Photos' SQLite `creationDate` columns are
-    /// stored in Apple-epoch seconds.
-    static let appleEpochOffset: TimeInterval = 978_307_200
-
-    /// Convert a `Date` to Apple-epoch seconds for SQLite date comparisons.
-    static func appleTime(_ date: Date) -> Double {
-        date.timeIntervalSince1970 - appleEpochOffset
-    }
-
     // MARK: - Search (PhotoKit)
 
     /// Fetch image-type assets in a date range. If `fetchLimit` is provided
@@ -217,27 +207,24 @@ public enum PhotosIntegration {
 
         if groupIDs.isEmpty { return nil }
 
-        let fetchMultiplier = 3
         let placeholders = groupIDs.map { _ in "?" }.joined(separator: ",")
 
-        // Push the date range into SQL *before* the newest-first LIMIT. Applying
-        // the date filter only after `ORDER BY creationDate DESC LIMIT` (the old
-        // behavior, via PhotoKit) meant "dog photos from 2019" returned nothing
-        // whenever enough newer dog photos filled the limited slice.
-        // `assets.creationDate` is Apple-epoch seconds.
-        var dateClauses = ""
-        if start != nil { dateClauses += " AND a.creationDate >= ?" }
-        if end != nil { dateClauses += " AND a.creationDate <= ?" }
-
+        // Collect every asset UUID for the matched labels, unfiltered and
+        // unordered. Date filtering, newest-first ordering, and the final limit
+        // are ALL done by the PhotoKit fetch below against the real
+        // `creationDate`. We deliberately do NOT filter or order on
+        // psi.sqlite's `assets.creationDate`: despite the name it is not the
+        // photo's capture time (values are a quantized index timestamp — a
+        // 2026 asset reads ~25M, and the column min maps to ~Oct 2025 even
+        // though the library's oldest photo is 2007). Binding an Apple-epoch
+        // range against it returned zero rows for every date-scoped query
+        // (issue #32 regression); ordering by it sorts by index age, not photo
+        // age.
         let assetSQL = """
-            SELECT DISTINCT a.uuid_0, a.uuid_1, a.creationDate
+            SELECT DISTINCT a.uuid_0, a.uuid_1
             FROM ga JOIN assets a ON a.rowid = ga.assetid
-            WHERE ga.groupid IN (\(placeholders))\(dateClauses)
-            ORDER BY a.creationDate DESC
-            LIMIT ?
+            WHERE ga.groupid IN (\(placeholders))
             """
-        // Note: creationDate is selected only to keep it available for ORDER BY
-        // under SELECT DISTINCT; the read loop below uses columns 0 and 1 only.
 
         var assetStmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, assetSQL, -1, &assetStmt, nil) == SQLITE_OK else { return nil }
@@ -248,15 +235,6 @@ public enum PhotosIntegration {
             sqlite3_bind_int64(assetStmt, bindIdx, gid)
             bindIdx += 1
         }
-        if let start = start {
-            sqlite3_bind_double(assetStmt, bindIdx, appleTime(start))
-            bindIdx += 1
-        }
-        if let end = end {
-            sqlite3_bind_double(assetStmt, bindIdx, appleTime(end))
-            bindIdx += 1
-        }
-        sqlite3_bind_int(assetStmt, bindIdx, Int32(limit * fetchMultiplier))
 
         var localIdentifiers: [String] = []
         while sqlite3_step(assetStmt) == SQLITE_ROW {
@@ -279,6 +257,9 @@ public enum PhotosIntegration {
         }
         fetchOptions.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
         fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        // PhotoKit sorts by true creationDate before applying the limit, so
+        // this yields the newest `limit` matches within the date range.
+        fetchOptions.fetchLimit = limit
 
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: localIdentifiers, options: fetchOptions)
         return PSIResult(assets: assets, matchedLabels: matchedLabels)
