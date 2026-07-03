@@ -53,6 +53,63 @@ final class NotesLiveTests: XCTestCase {
         XCTAssertTrue(lines.contains("2. second"), "ordered2; got:\n\(note.content)")
     }
 
+    /// A "/"-separated folder path (the format the `folders` action reports)
+    /// must resolve to the nested folder — not create a literal folder named
+    /// "Parent/Sub" at the top level (issue: Shannon created junk folders when
+    /// filing a note into an existing subfolder).
+    func testCreateNoteWithFolderPathUsesNestedFolder() throws {
+        let parent = "AppleToolsPathLiveParent"
+        let sub = "AppleToolsPathLiveSub"
+        defer {
+            _ = runOsa("tell application \"Notes\" to if exists folder \"\(parent)/\(sub)\" then delete folder \"\(parent)/\(sub)\"")
+            _ = runOsa("tell application \"Notes\" to if exists folder \"\(parent)\" then delete folder \"\(parent)\"")
+        }
+        runOsa("""
+        tell application "Notes"
+            set p to make new folder with properties {name:"\(parent)"}
+            tell p to make new folder with properties {name:"\(sub)"}
+        end tell
+        """)
+
+        _ = try NotesIntegration.createNote(title: "PathResolve", body: "body", folder: "\(parent)/\(sub)")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let slashJunk = runOsa("tell application \"Notes\" to exists folder \"\(parent)/\(sub)\"")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // NB: `folder "A/B"` matches by literal name only, so `true` here means
+        // a junk folder literally named "Parent/Sub" was created — the bug.
+        XCTAssertEqual(slashJunk, "false", "path form must not create a literal slash-named folder")
+
+        let inSub = runOsa("""
+        tell application "Notes"
+            set f to folder "\(sub)" of folder "\(parent)" of default account
+            return exists (notes of f whose name is "PathResolve")
+        end tell
+        """).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(inSub, "true", "note should land in the existing nested folder")
+    }
+
+    /// A path whose leaf doesn't exist yet must create it nested under the
+    /// existing parent, not at the top level.
+    func testCreateNoteWithFolderPathCreatesMissingLeafNested() throws {
+        let parent = "AppleToolsPathLiveParent2"
+        let leaf = "AppleToolsPathLiveLeaf"
+        defer {
+            _ = runOsa("tell application \"Notes\" to if exists folder \"\(parent)\" then delete folder \"\(parent)\"")
+        }
+        runOsa("tell application \"Notes\" to make new folder with properties {name:\"\(parent)\"}")
+
+        _ = try NotesIntegration.createNote(title: "PathLeafCreate", body: "body", folder: "\(parent)/\(leaf)")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let nested = runOsa("""
+        tell application "Notes"
+            return exists folder "\(leaf)" of folder "\(parent)" of default account
+        end tell
+        """).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(nested, "true", "missing leaf should be created nested under the existing parent")
+    }
+
     /// Requires a manually-created note titled "Checkbox Test" with at least
     /// one checked and one unchecked item. Validates the protobuf-store read.
     func testChecklistStateFromProtobufStore() throws {
