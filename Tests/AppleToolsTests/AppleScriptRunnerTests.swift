@@ -125,6 +125,80 @@ final class AppleScriptRunnerTests: XCTestCase {
         XCTAssertTrue(r.stderr.contains("warning: something noisy"), "stderr should contain log line; got: \(r.stderr)")
     }
 
+    // MARK: - Robustness: SIGPIPE, marker-just-before-kill, clean-exit race
+
+    /// #16: osascript that dies before draining stdin must not SIGPIPE-kill the
+    /// host. Before the fix the parent took an unhandled SIGPIPE and exited 141
+    /// with no result. Here we force a large source (bigger than the pipe
+    /// buffer) into a script that exits immediately, so the write races a dead
+    /// reader. `run()` must return a RunResult, not crash the test process.
+    func testStdinWriteToEarlyExitDoesNotSIGPIPE() {
+        // ~256KB of comment text — far larger than the ~64KB pipe buffer, so
+        // the write can't complete in one shot and will still be flushing when
+        // osascript exits.
+        let big = String(repeating: "-- padding line to bloat the source\n", count: 8000)
+        let source = big + "return \"quick\""
+        let r = AppleScriptRunner.run(source: source, tool: "sigpipe-test", deadline: 20)
+        // The key assertion is simply that we got here — no SIGPIPE took down
+        // the process. Outcome is success (osascript ran the trailing return).
+        XCTAssertEqual(r.outcome, .success)
+        XCTAssertEqual(r.stdout.trimmingCharacters(in: .whitespacesAndNewlines), "quick")
+    }
+
+    /// #17: a `PHASE: committed` marker emitted immediately before the deadline
+    /// SIGKILL must still be parsed. The marker can land in the trailing stderr
+    /// drained after `waitUntilExit()` (after the readability handler is torn
+    /// down); before the fix that trailing data was appended raw and never
+    /// scanned, so a landed mutation was misclassified as outcome_unknown.
+    /// Run it a few times to exercise the timing window.
+    func testCommittedMarkerJustBeforeKillIsParsed() {
+        let script = """
+        log "PHASE: prepare"
+        log "PHASE: pre-commit"
+        log "PHASE: committed id=late-777"
+        delay 30
+        """
+        // If the marker is parsed, outcome is success (committed side effect).
+        // If it were dropped, outcome would be outcome_unknown.
+        var sawSuccess = false
+        for _ in 0..<3 {
+            let r = AppleScriptRunner.run(source: script, tool: "marker-race", deadline: 0.5)
+            XCTAssertTrue(r.killed, "script should be killed at the deadline")
+            if r.outcome == .success {
+                sawSuccess = true
+                XCTAssertEqual(r.lastPhase, "committed id=late-777")
+                XCTAssertEqual(r.committedID, "late-777")
+                break
+            }
+        }
+        XCTAssertTrue(sawSuccess,
+            "committed marker emitted just before SIGKILL must be parsed → success")
+    }
+
+    /// #18(2): a script that exits cleanly (status 0, full output) just as the
+    /// deadline fires must be classified success, not a timeout failure. We set
+    /// a deadline right around the script's natural completion and require that
+    /// whenever the process exited 0 the outcome is success — never `.failed`
+    /// "timed out". Repeat to hit the race window.
+    func testCleanExitRacingDeadlineIsSuccessNotTimeout() {
+        for _ in 0..<8 {
+            let r = AppleScriptRunner.run(
+                source: "delay 0.2\nreturn \"done\"",
+                tool: "clean-race",
+                deadline: 0.2
+            )
+            if r.exitCode == 0 {
+                XCTAssertEqual(r.outcome, .success,
+                    "a clean exit-0 must never be reported as a timeout failure")
+                XCTAssertEqual(r.stdout.trimmingCharacters(in: .whitespacesAndNewlines), "done")
+            } else {
+                // Deadline won the race and killed it — that's a legitimate timeout.
+                XCTAssertEqual(r.outcome, .failed)
+                XCTAssertTrue(r.killed)
+            }
+        }
+    }
+
     // MARK: - Post-verify hook ( / ADR-032)
 
     /// Verifier is NOT invoked when outcome is .success — no ambiguity to resolve.
