@@ -315,4 +315,121 @@ final class IMessageToolTests: XCTestCase {
         XCTAssertEqual(tool.definition.parameters?.properties?["exclude_spam"]?.type_, "boolean")
         XCTAssertEqual(tool.definition.parameters?.properties?["humans_only"]?.type_, "boolean")
     }
+
+    // MARK: - LIKE wildcard escaping (#33)
+
+    /// User text bound into a LIKE pattern must have `%`/`_`/`\` escaped so they
+    /// match literally (paired with `ESCAPE '\'`). Otherwise `100%` matches any
+    /// message containing `100` and `is_a` matches `isla`.
+    func testEscapeLIKEEscapesWildcardsAndEscapeChar() {
+        XCTAssertEqual(IMessageTool.escapeLIKE("100%"), "100\\%")
+        XCTAssertEqual(IMessageTool.escapeLIKE("is_a"), "is\\_a")
+        XCTAssertEqual(IMessageTool.escapeLIKE("a\\b"), "a\\\\b")
+        // Order matters: the escape char is doubled first so we don't
+        // double-escape the backslashes we introduce for % and _.
+        XCTAssertEqual(IMessageTool.escapeLIKE("%_\\"), "\\%\\_\\\\")
+        XCTAssertEqual(IMessageTool.escapeLIKE("plain text"), "plain text")
+    }
+
+    // MARK: - Date filter parsing (#20, #23)
+
+    /// A raw apple-nanos cursor (as emitted for next_before) round-trips
+    /// exactly, so pagination never floors same-second messages (#20).
+    func testDateFilterParsesRawAppleNanosCursor() {
+        let cursor = "742000000123456789"
+        XCTAssertEqual(IMessageIntegration.parseDateFilterToAppleNanos(cursor), 742000000123456789)
+    }
+
+    /// Full ISO, fractional ISO, and bare date/date-time forms all parse (#23).
+    func testDateFilterParsesISOAndDateForms() {
+        XCTAssertNotNil(IMessageIntegration.parseDateFilterToAppleNanos("2026-07-03T12:00:00Z"))
+        XCTAssertNotNil(IMessageIntegration.parseDateFilterToAppleNanos("2026-07-03T12:00:00.500Z"))
+        XCTAssertNotNil(IMessageIntegration.parseDateFilterToAppleNanos("2026-07-03"))
+        XCTAssertNotNil(IMessageIntegration.parseDateFilterToAppleNanos("2026-07-03 12:00:00"))
+        // Date-only resolves to UTC midnight of that day.
+        XCTAssertEqual(IMessageIntegration.parseDateFilterToAppleNanos("2026-07-03"),
+                       IMessageIntegration.parseDateFilterToAppleNanos("2026-07-03T00:00:00Z"))
+    }
+
+    /// Unparseable / empty values return nil so the caller can raise a tool
+    /// error instead of silently dropping the filter and looping page 1 (#23).
+    func testDateFilterRejectsUnparseableAndEmpty() {
+        XCTAssertNil(IMessageIntegration.parseDateFilterToAppleNanos("not a date"))
+        XCTAssertNil(IMessageIntegration.parseDateFilterToAppleNanos(""))
+        XCTAssertNil(IMessageIntegration.parseDateFilterToAppleNanos("  "))
+        XCTAssertNil(IMessageIntegration.parseDateFilterToAppleNanos("2026"))
+    }
+
+    /// The read/search/recent/stats tool actions surface a clear error (not a
+    /// silent unfiltered page) on a malformed since/before value (#23).
+    func testSearchRejectsMalformedBefore() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("search"),
+            "query": AnyCodable("hi"),
+            "before": AnyCodable("garbage"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("invalid 'before'"), "expected date-filter error: \(result)")
+    }
+
+    // MARK: - Attachment list parsing (#22)
+
+    /// Attachments are joined by the unit separator (char 31), not ", ", so a
+    /// filename containing a comma stays one entry; each entry splits on the
+    /// FIRST colon; an empty mime yields no `type` key (no colon leak).
+    func testAttachmentParsingHandlesCommasAndEmptyMime() {
+        let sep = "\u{1F}"
+        // Entry 1: comma in the filename. Entry 2: empty mime (was NULL).
+        // Entry 3: a colon inside the filename.
+        let attachments = ["image/png:report, final.pdf",
+                           ":no_mime.bin",
+                           "text/plain:weird:name.txt"].joined(separator: sep)
+        // read layout: attachments at index 9.
+        let row = ["1", "", "1", "iMessage", "1", "1", "", "0", "", attachments]
+        let msg = tool.messageFromRow(row)
+        guard let atts = msg["attachments"] as? [[String: String]] else {
+            return XCTFail("expected attachments array: \(msg)")
+        }
+        XCTAssertEqual(atts.count, 3, "comma in filename must not split the entry")
+        XCTAssertEqual(atts[0]["type"], "image/png")
+        XCTAssertEqual(atts[0]["filename"], "report, final.pdf")
+        XCTAssertNil(atts[1]["type"], "empty mime must not leak a bare colon as a type")
+        XCTAssertEqual(atts[1]["filename"], "no_mime.bin")
+        XCTAssertEqual(atts[2]["type"], "text/plain")
+        XCTAssertEqual(atts[2]["filename"], "weird:name.txt", "only the first colon splits mime from name")
+    }
+
+    // MARK: - Recipient handle matching (#21)
+
+    /// A national / formatted phone number also matches its E.164 form, since
+    /// chat.db stores handles canonically as E.164. Emails match verbatim only.
+    func testHandleMatchClauseIncludesE164ForPhoneNumbers() {
+        PhoneFormatting.defaultRegion = "US"
+        let clause = IMessageIntegration.handleMatchClause(column: "h.id", handle: "6502530000")
+        XCTAssertTrue(clause.contains("'6502530000'"), "raw input preserved: \(clause)")
+        XCTAssertTrue(clause.contains("'+16502530000'"), "E.164 form added: \(clause)")
+        XCTAssertTrue(clause.hasPrefix("h.id IN ("), "uses an IN predicate on the column: \(clause)")
+
+        let emailClause = IMessageIntegration.handleMatchClause(column: "h.id", handle: "a@b.com")
+        XCTAssertEqual(emailClause, "h.id IN ('a@b.com')", "email matches verbatim only")
+    }
+
+    // MARK: - attributedBody length decode (#35)
+
+    /// A >65535-byte message uses the 0x82 (4-byte little-endian) length marker;
+    /// the fallback decoder must read it rather than return garbage.
+    func testDecodeAttributedBodyHandles0x82LengthMarker() {
+        let text = "hello world"
+        var bytes: [UInt8] = Array("NSString".utf8)
+        bytes.append(contentsOf: [0x01, 0x02, 0x03, 0x04, 0x05])  // 5-byte preamble
+        let len = UInt32(text.utf8.count)
+        bytes.append(0x82)
+        bytes.append(UInt8(len & 0xFF))
+        bytes.append(UInt8((len >> 8) & 0xFF))
+        bytes.append(UInt8((len >> 16) & 0xFF))
+        bytes.append(UInt8((len >> 24) & 0xFF))
+        bytes.append(contentsOf: Array(text.utf8))
+        let hex = bytes.map { String(format: "%02x", $0) }.joined()
+        XCTAssertEqual(IMessageIntegration.decodeAttributedBody(hex: hex), text)
+    }
 }
