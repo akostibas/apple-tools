@@ -371,12 +371,14 @@ public enum NotesMarkdown {
                     break // span, font, u, and anything else: swallow tag
                 }
             } else {
-                // text content: collect until next '<', decode entities
+                // text content: collect until next '<', decode entities.
+                // legacy:true — Apple Notes emits semicolon-less entities
+                // (`&amp`, `&lt`) in its AppleScript body (issue #39).
                 var text = ""
                 while i < chars.count, chars[i] != "<" {
                     text.append(chars[i]); i += 1
                 }
-                line += HTMLEntities.decodeBasic(text)
+                line += HTMLEntities.decodeBasic(text, legacy: true)
             }
         }
         if !line.isEmpty || !prefix.isEmpty { flush() }
