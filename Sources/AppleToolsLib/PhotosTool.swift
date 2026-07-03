@@ -99,7 +99,7 @@ public struct PhotosTool: ProbeTool {
                 startDateObj = d
             }
             if let endStr = endDate {
-                guard let d = PhotosIntegration.parseDate(endStr) else {
+                guard let d = PhotosIntegration.parseEndDate(endStr) else {
                     return ("invalid end_date format", true)
                 }
                 endDateObj = d
@@ -138,7 +138,7 @@ public struct PhotosTool: ProbeTool {
             startDateObj = d
         }
         if let endStr = endDate {
-            guard let d = PhotosIntegration.parseDate(endStr) else {
+            guard let d = PhotosIntegration.parseEndDate(endStr) else {
                 return ("invalid end_date format", true)
             }
             endDateObj = d
@@ -203,7 +203,7 @@ public struct PhotosTool: ProbeTool {
             startDateObj = d
         }
         if let endStr = endDate {
-            guard let d = PhotosIntegration.parseDate(endStr) else {
+            guard let d = PhotosIntegration.parseEndDate(endStr) else {
                 return ("invalid end_date format", true)
             }
             endDateObj = d
@@ -262,7 +262,7 @@ public struct PhotosTool: ProbeTool {
             startDateObj = d
         }
         if let endStr = endDate {
-            guard let d = PhotosIntegration.parseDate(endStr) else {
+            guard let d = PhotosIntegration.parseEndDate(endStr) else {
                 return ("invalid end_date format", true)
             }
             endDateObj = d

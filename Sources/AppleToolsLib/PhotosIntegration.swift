@@ -89,6 +89,36 @@ public enum PhotosIntegration {
         return nil
     }
 
+    /// Parse an end-of-range date. A **date-only** string (no time component,
+    /// e.g. `2019-12-31`) means "through the end of that day", so it's widened
+    /// to local 23:59:59; a full timestamp (e.g. `2019-12-31T15:00:00Z`) is
+    /// taken as the exact instant. Returns nil for unparseable input.
+    public static func parseEndDate(_ str: String) -> Date? {
+        guard let d = parseDate(str) else { return nil }
+        let hasTime = str.contains("T") || str.contains(":")
+        if hasTime { return d }
+        return Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: d) ?? d
+    }
+
+    /// Seconds between the Unix epoch (1970-01-01) and the Apple/Core Data
+    /// reference epoch (2001-01-01). Photos' SQLite `creationDate` columns are
+    /// stored in Apple-epoch seconds.
+    static let appleEpochOffset: TimeInterval = 978_307_200
+
+    /// Convert a `Date` to Apple-epoch seconds for SQLite date comparisons.
+    static func appleTime(_ date: Date) -> Double {
+        date.timeIntervalSince1970 - appleEpochOffset
+    }
+
+    /// Escape LIKE wildcards in user input so a query containing `%`, `_` or `\`
+    /// is matched literally (paired with `ESCAPE '\'` in the SQL). Without this,
+    /// a query like `100%` matches every label.
+    static func escapeLIKE(_ s: String) -> String {
+        return s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "%", with: "\\%")
+                .replacingOccurrences(of: "_", with: "\\_")
+    }
+
     // MARK: - Search (PhotoKit)
 
     /// Fetch image-type assets in a date range. If `fetchLimit` is provided
@@ -101,8 +131,7 @@ public enum PhotosIntegration {
             predicates.append(NSPredicate(format: "creationDate >= %@", start as NSDate))
         }
         if let end = end {
-            let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: end) ?? end
-            predicates.append(NSPredicate(format: "creationDate <= %@", endOfDay as NSDate))
+            predicates.append(NSPredicate(format: "creationDate <= %@", end as NSDate))
         }
         predicates.append(NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue))
         fetchOptions.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
@@ -135,8 +164,7 @@ public enum PhotosIntegration {
             predicates.append(NSPredicate(format: "creationDate >= %@", start as NSDate))
         }
         if let end = end {
-            let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: end) ?? end
-            predicates.append(NSPredicate(format: "creationDate <= %@", endOfDay as NSDate))
+            predicates.append(NSPredicate(format: "creationDate <= %@", end as NSDate))
         }
         fetchOptions.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
         fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
@@ -166,10 +194,12 @@ public enum PhotosIntegration {
         guard validatePSISchema(db) else { return nil }
 
         // Match labels in categories that cover people, keywords, and ML content.
-        let searchPattern = "%\(query.lowercased())%"
+        // Escape LIKE wildcards so a query like `100%` matches literally rather
+        // than every label (paired with `ESCAPE '\'`).
+        let searchPattern = "%\(escapeLIKE(query.lowercased()))%"
         let groupSQL = """
             SELECT rowid, content_string, category FROM groups
-            WHERE normalized_string LIKE ?1 AND category BETWEEN 1200 AND 1899
+            WHERE normalized_string LIKE ?1 ESCAPE '\\' AND category BETWEEN 1200 AND 1899
             ORDER BY
                 CASE WHEN length(normalized_string) = length(?2) THEN 0 ELSE 1 END,
                 length(normalized_string)
@@ -198,22 +228,44 @@ public enum PhotosIntegration {
 
         let fetchMultiplier = 3
         let placeholders = groupIDs.map { _ in "?" }.joined(separator: ",")
+
+        // Push the date range into SQL *before* the newest-first LIMIT. Applying
+        // the date filter only after `ORDER BY creationDate DESC LIMIT` (the old
+        // behavior, via PhotoKit) meant "dog photos from 2019" returned nothing
+        // whenever enough newer dog photos filled the limited slice.
+        // `assets.creationDate` is Apple-epoch seconds.
+        var dateClauses = ""
+        if start != nil { dateClauses += " AND a.creationDate >= ?" }
+        if end != nil { dateClauses += " AND a.creationDate <= ?" }
+
         let assetSQL = """
-            SELECT DISTINCT a.uuid_0, a.uuid_1
+            SELECT DISTINCT a.uuid_0, a.uuid_1, a.creationDate
             FROM ga JOIN assets a ON a.rowid = ga.assetid
-            WHERE ga.groupid IN (\(placeholders))
+            WHERE ga.groupid IN (\(placeholders))\(dateClauses)
             ORDER BY a.creationDate DESC
             LIMIT ?
             """
+        // Note: creationDate is selected only to keep it available for ORDER BY
+        // under SELECT DISTINCT; the read loop below uses columns 0 and 1 only.
 
         var assetStmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, assetSQL, -1, &assetStmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(assetStmt) }
 
-        for (i, gid) in groupIDs.enumerated() {
-            sqlite3_bind_int64(assetStmt, Int32(i + 1), gid)
+        var bindIdx: Int32 = 1
+        for gid in groupIDs {
+            sqlite3_bind_int64(assetStmt, bindIdx, gid)
+            bindIdx += 1
         }
-        sqlite3_bind_int(assetStmt, Int32(groupIDs.count + 1), Int32(limit * fetchMultiplier))
+        if let start = start {
+            sqlite3_bind_double(assetStmt, bindIdx, appleTime(start))
+            bindIdx += 1
+        }
+        if let end = end {
+            sqlite3_bind_double(assetStmt, bindIdx, appleTime(end))
+            bindIdx += 1
+        }
+        sqlite3_bind_int(assetStmt, bindIdx, Int32(limit * fetchMultiplier))
 
         var localIdentifiers: [String] = []
         while sqlite3_step(assetStmt) == SQLITE_ROW {
@@ -232,8 +284,7 @@ public enum PhotosIntegration {
             predicates.append(NSPredicate(format: "creationDate >= %@", start as NSDate))
         }
         if let end = end {
-            let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: end) ?? end
-            predicates.append(NSPredicate(format: "creationDate <= %@", endOfDay as NSDate))
+            predicates.append(NSPredicate(format: "creationDate <= %@", end as NSDate))
         }
         fetchOptions.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
         fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
@@ -371,15 +422,20 @@ public enum PhotosIntegration {
         defer { sqlite3_close(db) }
 
         let placeholders = matched.map { _ in "?" }.joined(separator: ",")
-        // Bound the work: gather more UUIDs than `limit` so PhotoKit's date
-        // filter + sort still has material to return, but cap total scan.
+        // The old query applied an unordered `LIMIT max(limit*10, 200)` and then
+        // date-filtered the arbitrary query-plan-dependent slice in PhotoKit — so
+        // a person with thousands of photos could return an empty result for a
+        // valid date range. When a date range is present, drop the SQL LIMIT
+        // entirely so PhotoKit's date filter + newest-first sort sees every one
+        // of the person's assets; otherwise keep the bound to cap total scan.
+        let hasDateRange = start != nil || end != nil
         let uuidCap = max(limit * 10, 200)
-        let sql = """
+        var sql = """
             SELECT DISTINCT a.ZUUID
             FROM ZASSET a JOIN ZDETECTEDFACE f ON f.ZASSETFORFACE = a.Z_PK
             WHERE f.ZPERSONFORFACE IN (\(placeholders)) AND a.ZUUID IS NOT NULL
-            LIMIT ?
             """
+        if !hasDateRange { sql += "\n            LIMIT ?" }
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
@@ -387,7 +443,9 @@ public enum PhotosIntegration {
         for (i, person) in matched.enumerated() {
             sqlite3_bind_int64(stmt, Int32(i + 1), person.pk)
         }
-        sqlite3_bind_int(stmt, Int32(matched.count + 1), Int32(uuidCap))
+        if !hasDateRange {
+            sqlite3_bind_int(stmt, Int32(matched.count + 1), Int32(uuidCap))
+        }
 
         var localIdentifiers: [String] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -403,8 +461,7 @@ public enum PhotosIntegration {
             predicates.append(NSPredicate(format: "creationDate >= %@", start as NSDate))
         }
         if let end = end {
-            let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: end) ?? end
-            predicates.append(NSPredicate(format: "creationDate <= %@", endOfDay as NSDate))
+            predicates.append(NSPredicate(format: "creationDate <= %@", end as NSDate))
         }
         fetchOptions.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
         fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
