@@ -255,18 +255,53 @@ public enum NotesIntegration {
             "APPLE_TOOLS_NOTES_BODY": htmlBody,
         ]
 
+        // A folder of "" or only "/" separators has no usable segments —
+        // treat it as no folder at all.
+        let usableFolder = (folder?.split(separator: "/").contains { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false) ? folder : nil
+
         let folderBinding: String
         let atClause: String
-        if let folder = folder {
+        if let folder = usableFolder {
             env["APPLE_TOOLS_NOTES_FOLDER"] = folder
             folderBinding = """
             set theFolder to do shell script "printenv APPLE_TOOLS_NOTES_FOLDER"
             """
+            // Resolution order matters (issue: agents pass the `path` string
+            // that the `folders` action reports, e.g. "Parent/Sub", and the
+            // old code created a literal folder named "Parent/Sub"):
+            //   1. exact-name match anywhere in the hierarchy (lookup is
+            //      flattened; also covers folder names that contain "/")
+            //   2. "/"-separated path walk, creating missing segments nested
+            //   3. plain name with no "/": create at top level
             atClause = """
-            if not (exists folder theFolder) then
-                        make new folder with properties {name:theFolder}
+            set targetFolder to missing value
+                    if exists folder theFolder then
+                        set targetFolder to folder theFolder
+                    else
+                        set AppleScript's text item delimiters to "/"
+                        set segs to text items of theFolder
+                        set AppleScript's text item delimiters to ""
+                        set acct to default account
+                        repeat with i from 1 to count of segs
+                            set seg to (item i of segs) as string
+                            if seg is not "" then
+                                if targetFolder is missing value then
+                                    if exists folder seg of acct then
+                                        set targetFolder to folder seg of acct
+                                    else
+                                        set targetFolder to (make new folder at acct with properties {name:seg})
+                                    end if
+                                else
+                                    if exists folder seg of targetFolder then
+                                        set targetFolder to folder seg of targetFolder
+                                    else
+                                        set targetFolder to (make new folder at targetFolder with properties {name:seg})
+                                    end if
+                                end if
+                            end if
+                        end repeat
                     end if
-                    set newNote to make new note at folder theFolder with properties {body:theBody}
+                    set newNote to make new note at targetFolder with properties {body:theBody}
             """
         } else {
             folderBinding = ""

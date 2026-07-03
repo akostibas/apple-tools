@@ -60,7 +60,9 @@ Allow/Deny dialog; off by default.)
 - **reminders** — `lists`, `search`, `get`, `create`, `create-list` (new list,
   optional `--account`; rejects duplicate names), `complete`.
 - **notes** — `folders`, `search`, `read`, `create`, `append`. Content is
-  Markdown (headings, bold/italic/strike/mono, lists round-trip).
+  Markdown (headings, bold/italic/strike/mono, lists round-trip). `--folder`
+  takes a name or a `/`-separated path as reported by `folders`; on create,
+  missing path segments are created nested.
 - **contacts** — `search` (name/email/phone/group), `get` (by ID).
 - **email** — `inbox`, `search`, `read`, `fetch_attachment`, `draft` (does NOT
   send; supports attachments by absolute path).

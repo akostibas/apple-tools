@@ -9,7 +9,7 @@ public struct NotesTool: ProbeTool {
             properties: [
                 "action": PropertySchema(type_: "string", description: "folders, search, read, create, or append"),
                 "query": PropertySchema(type_: "string", description: "Search keyword (required for search)"),
-                "folder": PropertySchema(type_: "string", description: "Folder name (for search, create)"),
+                "folder": PropertySchema(type_: "string", description: "Folder name or '/'-separated path as reported by 'folders' (for search, create). On create, an existing folder is used as-is; a path with missing segments creates them nested"),
                 "id": PropertySchema(type_: "string", description: "Note ID, x-coredata:// URI (for read, append)"),
                 "title": PropertySchema(type_: "string", description: "Note title (for read, append, create)"),
                 "body": PropertySchema(type_: "string", description: "Note body as Markdown (for create)"),
