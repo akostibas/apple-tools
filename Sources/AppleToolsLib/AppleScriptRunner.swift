@@ -24,6 +24,26 @@ import Foundation
 /// no phase was observed.
 public enum AppleScriptRunner {
 
+    /// Process-wide SIGPIPE suppression, applied exactly once.
+    ///
+    /// Writing the script source into osascript's stdin is a raw `write(2)`.
+    /// If osascript dies before draining stdin (crash at launch, an external
+    /// SIGKILL, or our own deadline kill racing the write), the kernel raises
+    /// SIGPIPE on the writer — whose default disposition terminates the
+    /// process. Embedded in a long-lived library consumer (probe-macos) a
+    /// single bad spawn would take down the whole daemon (exit 141).
+    ///
+    /// Ignoring SIGPIPE process-wide turns that into an `EPIPE` errno the
+    /// throwing write path can catch. This is the standard disposition for
+    /// any process that talks to pipes/sockets it doesn't control; POSIX
+    /// per-thread signal masks can't cover it because SIGPIPE is delivered to
+    /// the thread doing the write, not maskable per-call. The `static let` is
+    /// initialized lazily and atomically by the runtime, so it runs once no
+    /// matter how many threads enter `run()` first.
+    private static let ignoreSIGPIPE: Void = {
+        signal(SIGPIPE, SIG_IGN)
+    }()
+
     /// Active-subprocess registry for external cancellation.
     ///
     /// `run()` registers its pid under the caller-supplied invocation ID for
@@ -154,6 +174,7 @@ public enum AppleScriptRunner {
         environment: [String: String] = [:],
         onOutcomeUnknown: (() -> VerifyResult)? = nil
     ) -> RunResult {
+        _ = Self.ignoreSIGPIPE // ensure SIGPIPE is neutralized before we write stdin
         let start = Date()
         Log.debug("applescript: tool=\(tool) starting deadline=\(deadline)s")
 
@@ -208,28 +229,40 @@ public enum AppleScriptRunner {
             stdoutLock.unlock()
         }
 
+        // Parse a single (newline-stripped) stderr line for a PHASE marker.
+        // Caller must hold `phaseLock`; mutates `lastPhase`/`committedID`.
+        func parseStderrLine(_ lineData: Data) {
+            guard let line = String(data: lineData, encoding: .utf8) else { return }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { return }
+            Log.debug("applescript: tool=\(tool) stderr: \(trimmed)")
+            if let range = trimmed.range(of: "PHASE: ") {
+                let phase = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+                lastPhase = phase
+                if phase.hasPrefix("committed"), let idRange = phase.range(of: "id=") {
+                    committedID = String(phase[idRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+                }
+                Log.info("applescript: tool=\(tool) phase=\(phase)")
+            }
+        }
+
+        // Consume every complete (newline-terminated) line currently buffered.
+        // Caller must hold `phaseLock`.
+        func drainCompleteStderrLines() {
+            while let nl = stderrBuffer.firstIndex(of: 0x0A) {
+                let lineData = stderrBuffer.prefix(nl)
+                stderrBuffer.removeSubrange(0...nl)
+                parseStderrLine(lineData)
+            }
+        }
+
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty { return }
             phaseLock.lock()
             stderrBuffer.append(data)
             stderrAccum.append(data)
-            while let nl = stderrBuffer.firstIndex(of: 0x0A) {
-                let lineData = stderrBuffer.prefix(nl)
-                stderrBuffer.removeSubrange(0...nl)
-                guard let line = String(data: lineData, encoding: .utf8) else { continue }
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if trimmed.isEmpty { continue }
-                Log.debug("applescript: tool=\(tool) stderr: \(trimmed)")
-                if let range = trimmed.range(of: "PHASE: ") {
-                    let phase = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespaces)
-                    lastPhase = phase
-                    if phase.hasPrefix("committed"), let idRange = phase.range(of: "id=") {
-                        committedID = String(phase[idRange.upperBound...]).trimmingCharacters(in: .whitespaces)
-                    }
-                    Log.info("applescript: tool=\(tool) phase=\(phase)")
-                }
-            }
+            drainCompleteStderrLines()
             phaseLock.unlock()
         }
 
@@ -244,12 +277,13 @@ public enum AppleScriptRunner {
             )
         }
 
-        stdinPipe.fileHandleForWriting.write(source.data(using: .utf8) ?? Data())
-        try? stdinPipe.fileHandleForWriting.close()
-
-        // Register for external cancellation. The registry maps the
-        // invocation ID — explicit or ambient — to this subprocess's
-        // pid; external callers can SIGKILL via `cancel(invocationID:)`.
+        // Register for external cancellation and arm the deadline BEFORE the
+        // stdin write. The write is bounded by the OS pipe buffer (~64KB): a
+        // script source larger than that fed to a wedged osascript would block
+        // the write indefinitely. Arming the deadline/cancel path first means
+        // that stall is still bounded — the deadline SIGKILL (or an external
+        // cancel) tears down osascript, the pipe breaks, and our SIGPIPE-safe
+        // write returns EPIPE instead of hanging `run()` forever.
         let effectiveID: String? = invocationID ?? Self.ambientInvocationID
         var activeEntry: ActiveInvocation? = nil
         if let id = effectiveID {
@@ -260,15 +294,32 @@ public enum AppleScriptRunner {
             activeEntry = entry
         }
 
+        // `killed` is written by the deadline work item (a background queue)
+        // and read on this thread after wait — guard it with a lock to avoid
+        // a data race (TSan) and torn reads.
+        let killLock = NSLock()
         var killed = false
         let deadlineWork = DispatchWorkItem {
             if proc.isRunning {
+                killLock.lock()
                 killed = true
+                killLock.unlock()
                 Log.error("applescript: tool=\(tool) deadline hit (\(deadline)s), sending SIGKILL to pid \(proc.processIdentifier)")
                 kill(proc.processIdentifier, SIGKILL)
             }
         }
         DispatchQueue.global().asyncAfter(deadline: .now() + deadline, execute: deadlineWork)
+
+        // SIGPIPE-safe stdin write. SIGPIPE is ignored process-wide (see
+        // `ignoreSIGPIPE`), so a dead osascript surfaces here as a thrown
+        // EPIPE rather than killing the host. We log and carry on — osascript
+        // is already gone, and the post-wait classification handles it.
+        do {
+            try stdinPipe.fileHandleForWriting.write(contentsOf: source.data(using: .utf8) ?? Data())
+        } catch {
+            Log.error("applescript: tool=\(tool) stdin write failed (osascript likely already exited): \(error)")
+        }
+        try? stdinPipe.fileHandleForWriting.close()
 
         proc.waitUntilExit()
         deadlineWork.cancel()
@@ -294,20 +345,48 @@ public enum AppleScriptRunner {
         stdoutLock.unlock()
         // Drain any remaining stdout that arrived after the readability handler stopped.
         stdoutData.append((try? stdoutPipe.fileHandleForReading.readToEnd()) ?? Data())
-        // Drain any remaining stderr that arrived after the readability handler stopped.
+        // Drain any remaining stderr that arrived after the readability handler
+        // stopped, and — critically — scan it for PHASE markers. A script that
+        // logs `PHASE: committed` and is SIGKILLed at the deadline before the
+        // handler callback fires would otherwise have that definitive marker
+        // silently dropped, misclassifying a landed mutation as outcome_unknown.
+        // We parse both any newline-terminated lines AND a trailing line with
+        // no final newline (osascript killed mid-line).
         let trailingStderr = (try? stderrPipe.fileHandleForReading.readToEnd()) ?? Data()
         phaseLock.lock()
         stderrAccum.append(trailingStderr)
+        stderrBuffer.append(trailingStderr)
+        drainCompleteStderrLines()
+        if !stderrBuffer.isEmpty {
+            // Final line never got its newline (process killed mid-write).
+            parseStderrLine(stderrBuffer)
+            stderrBuffer.removeAll()
+        }
         let phase = lastPhase
         let id = committedID
         let stderrStr = String(data: stderrAccum, encoding: .utf8) ?? ""
         phaseLock.unlock()
 
+        killLock.lock()
+        let didKill = killed
+        killLock.unlock()
+
         let elapsed = Date().timeIntervalSince(start)
         let stdoutStr = String(data: stdoutData, encoding: .utf8) ?? ""
 
+        // A process that exited cleanly (status 0, normal exit — not a signal)
+        // completed its work in full, even if the deadline fired or an external
+        // cancel arrived in the same instant. `killed`/`externallyCancelled`
+        // only mean we *sent* a signal; a clean termination status proves the
+        // signal lost the race and osascript finished first. Honor that before
+        // the kill-based classifications, otherwise a marker-less script that
+        // races the deadline is misreported as a timeout `.failed`.
+        let cleanExit = (proc.terminationStatus == 0 && proc.terminationReason == .exit)
+
         let outcome: Outcome
-        if externallyCancelled {
+        if cleanExit {
+            outcome = .success
+        } else if externallyCancelled {
             // External cancel — caller pulled the plug. We don't know
             // what the script did; let the post-verify hook decide.
             // Committed-phase scripts are the one case we can confidently
@@ -317,7 +396,7 @@ public enum AppleScriptRunner {
             } else {
                 outcome = .outcomeUnknown
             }
-        } else if killed {
+        } else if didKill {
             switch phase {
             case .none, "prepare":
                 outcome = .failed
@@ -361,9 +440,9 @@ public enum AppleScriptRunner {
         case .success:
             Log.info("applescript: tool=\(tool) ok elapsed=\(elapsedMs)ms phase=\(phase ?? "<none>") exit=\(proc.terminationStatus)")
         case .failed:
-            Log.error("applescript: tool=\(tool) failed elapsed=\(elapsedMs)ms phase=\(phase ?? "<none>") exit=\(proc.terminationStatus) killed=\(killed)")
+            Log.error("applescript: tool=\(tool) failed elapsed=\(elapsedMs)ms phase=\(phase ?? "<none>") exit=\(proc.terminationStatus) killed=\(didKill)")
         case .outcomeUnknown:
-            Log.error("applescript: tool=\(tool) outcome_unknown elapsed=\(elapsedMs)ms phase=\(phase ?? "<none>") killed=\(killed) — side effect may have occurred")
+            Log.error("applescript: tool=\(tool) outcome_unknown elapsed=\(elapsedMs)ms phase=\(phase ?? "<none>") killed=\(didKill) — side effect may have occurred")
         }
 
         return RunResult(
@@ -374,7 +453,7 @@ public enum AppleScriptRunner {
             stderr: stderrStr,
             exitCode: proc.terminationStatus,
             elapsed: elapsed,
-            killed: killed || externallyCancelled
+            killed: didKill || externallyCancelled
         )
     }
 
