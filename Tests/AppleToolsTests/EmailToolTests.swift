@@ -350,9 +350,9 @@ final class EmailToolTests: XCTestCase {
     func testClassifierClearsHumanSender() {
         // A real person on an apex domain must NOT be flagged.
         XCTAssertFalse(BulkSenderClassifier.isLikelyBulk(
-            address: "leonel.miranda@ucsc.cl", name: "Leonel Miranda"))
+            address: "leonel.miranda@example.org", name: "Leonel Miranda"))
         XCTAssertFalse(BulkSenderClassifier.isLikelyBulk(
-            address: "samiraquinn@gmail.com", name: "Samira Quinn"))
+            address: "samiraquinn@example.net", name: "Samira Quinn"))
     }
 
     func testClassifierDoesNotFlagGmailApex() {
@@ -387,7 +387,7 @@ final class EmailToolTests: XCTestCase {
 
     func testRollupGroupsAndSortsByCount() {
         let hits = [
-            makeHit("leonel@ucsc.cl", "Sandy Ford", "2025-05-03T00:00:00Z"),
+            makeHit("leonel@example.org", "Sandy Ford", "2025-05-03T00:00:00Z"),
             makeHit("pinbot@pinterest.com", "Sandy Ford", "2014-10-01T00:00:00Z"),
             makeHit("pinbot@pinterest.com", "Sandy Ford", "2014-11-01T00:00:00Z"),
             makeHit("postmaster@x.com", "Sandy Ford", "2015-06-01T00:00:00Z"),
