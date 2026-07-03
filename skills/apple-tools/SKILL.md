@@ -1,6 +1,6 @@
 ---
 name: apple-tools
-description: Read and write the local Mac's Apple apps via the `apple-tools` CLI. Use whenever you need to act on the user's own macOS data — e.g. make or check reminders, read/search/draft email, view or add calendar events, look up contacts, send an iMessage/SMS, read/write/append notes, find or fetch files, search/export photos, read or write the clipboard, take a screenshot, or open a URL/mailto/tel link. Covers Calendar, Reminders, Notes, Contacts, Mail, Messages (iMessage/SMS), Photos, Files, clipboard, screenshots, and opening URIs. Prefer this over ad-hoc osascript/AppleScript for these tasks — osascript can return incomplete results (e.g. a partial Reminders list); this does NOT apply when osascript itself is the thing being developed.
+description: Read and write the local Mac's Apple apps via the `apple-tools` CLI. Use whenever you need to act on the user's own macOS data — e.g. make or check reminders, read/search/draft email, view or add calendar events, look up contacts, send an iMessage/SMS, read/write/append notes, find or fetch files, search/export photos, list/export voice memos, read or write the clipboard, take a screenshot, or open a URL/mailto/tel link. Covers Calendar, Reminders, Notes, Contacts, Mail, Messages (iMessage/SMS), Photos, Voice Memos, Files, clipboard, screenshots, and opening URIs. Prefer this over ad-hoc osascript/AppleScript for these tasks — osascript can return incomplete results (e.g. a partial Reminders list); this does NOT apply when osascript itself is the thing being developed.
 ---
 
 # apple-tools
@@ -69,6 +69,9 @@ Allow/Deny dialog; off by default.)
 - **imessage** — `recent`, `read`, `search`, `send` (iMessage/SMS; supports
   attachments), `fetch_attachment`.
 - **photos** — `search`, `fetch` (export a photo locally → path).
+- **voicememos** — `list` (recent recordings; last 30 days by default, `--all`
+  for the full history), `search` (by title/folder/date), `export` (copy a
+  recording's `.m4a` locally → path). Read-only.
 - **files** — `search` (Spotlight), `list`, `info`, `fetch` (copy a file locally
   → path). Scoped to ~/Documents.
 - **clipboard** — `read`, `write`.

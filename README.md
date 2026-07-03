@@ -2,8 +2,8 @@
 
 Local macOS/Apple integrations as a single CLI, plus a Claude Code skill that
 drives it. Read and write Calendar, Reminders, Notes, Contacts, Mail, Messages
-(iMessage/SMS), Photos, files, the clipboard, screenshots, and open URIs — all
-on the machine it runs on, with no server.
+(iMessage/SMS), Photos, read Voice Memos, plus files, the clipboard,
+screenshots, and open URIs — all on the machine it runs on, with no server.
 
 ## Quick start
 

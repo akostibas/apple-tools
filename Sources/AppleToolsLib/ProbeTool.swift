@@ -55,6 +55,7 @@ public func allAppleTools(host: ToolHost) -> [ProbeTool] {
         ContactsTool(),
         ScreenshotTool(host: host),
         NotesTool(),
+        VoiceMemosTool(host: host),
         EmailTool(host: host),
         IMessageTool(host: host),
         OpenURITool(host: host),

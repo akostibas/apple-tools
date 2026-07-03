@@ -1,5 +1,10 @@
 # apple-tools — Claude instructions
 
+## Story Output
+
+New stories are filed as GitHub Issues in `akostibas/apple-tools`. Use the
+`story-writer` skill.
+
 ## Releases — new functionality means a new tag
 
 apple-tools is consumed two ways, and **they update on different triggers**:
