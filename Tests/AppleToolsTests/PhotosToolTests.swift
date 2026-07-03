@@ -178,6 +178,25 @@ final class PhotosToolTests: XCTestCase {
         XCTAssertTrue(result.contains("\"photos\""))
     }
 
+    func testContentMatchDoesNotFallBackToFilename() {
+        // `match: content` with a query that matches no ML label must return an
+        // empty ML-content result — never fall through to filename matching and
+        // return unrelated filename hits (#38.4a).
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("search"),
+            "query": AnyCodable("zzqqxnonsensequery0987654321"),
+            "match": AnyCodable("content"),
+            "limit": AnyCodable(5),
+        ])
+        if isError && result.contains("Photos access denied") { return }
+        XCTAssertFalse(isError)
+        // On the content path we always report the ml_labels method, never filename.
+        XCTAssertTrue(result.contains("\"search_method\":\"ml_labels\""),
+                      "content-match search must report ml_labels, got: \(result)")
+        XCTAssertFalse(result.contains("\"search_method\":\"filename\""),
+                       "content-match must not fall back to filename search")
+    }
+
     func testSearchWithInvalidStartDate() {
         let (result, isError) = tool.handle(params: [
             "action": AnyCodable("search"),

@@ -122,6 +122,20 @@ public struct PhotosTool: ProbeTool {
                 ]
                 return (jsonEncode(response), false)
             }
+
+            // PSI produced nothing. If the caller explicitly asked to match ML
+            // content, honor that: return an empty content result rather than
+            // silently falling through to filename matching (which would return
+            // unrelated filename hits the caller never asked for).
+            if match == "content" {
+                let response: [String: Any] = [
+                    "count": 0,
+                    "matched_labels": [],
+                    "search_method": "ml_labels",
+                    "photos": [],
+                ]
+                return (jsonEncode(response), false)
+            }
             // Fall through to filename search.
         }
 
@@ -231,9 +245,12 @@ public struct PhotosTool: ProbeTool {
             examined += 1
             let metadata = self.assetMetadata(asset)
             if let q = queryLower {
+                // Album keyword matching is filename-based (consistent with the
+                // top-level filename fallback). A prior `description` check was
+                // dead — assetMetadata never emits that field — so it only ever
+                // matched filenames while implying more; removed for honesty.
                 let filename = (metadata["filename"] as? String ?? "").lowercased()
-                let description = (metadata["description"] as? String ?? "").lowercased()
-                if !filename.contains(q) && !description.contains(q) { return }
+                if !filename.contains(q) { return }
             }
             results.append(metadata)
         }
