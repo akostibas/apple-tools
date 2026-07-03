@@ -59,6 +59,18 @@ public enum EmailIntegration {
         public let attachments: [AttachmentMeta]
     }
 
+    // MARK: - AppleScript text protocol
+
+    /// Field / section delimiters for the tab-free AppleScript text protocol.
+    /// ASCII control characters (Unit Separator 0x1F, Record Separator 0x1E)
+    /// that never occur in mail subjects, sender/display names, or message
+    /// bodies. The old `\t` field delimiter and `---ATTACHMENTS---` section
+    /// marker COULD appear in that text — a tab in a subject shifted every
+    /// later field, and a body line equal to the marker truncated the body
+    /// (issue #36). The AppleScript emits these via `character id 31/30`.
+    static let fieldSep = "\u{1F}"
+    static let sectionSep = "\u{1E}"
+
     // MARK: - Preflight
 
     public static func preflight() -> (ok: Bool, message: String) {
@@ -77,11 +89,13 @@ public enum EmailIntegration {
     // MARK: - Inbox
 
     /// Fetch recent messages from each account's INBOX (newest-first per
-    /// account). Caller is responsible for sorting/merging across accounts;
-    /// we trim to `limit` after the merge.
+    /// account), then merge-sort across accounts by date (newest first) and
+    /// trim to `limit`. Fetching up to `limit` per account guarantees the
+    /// global newest `limit` are contained in the union before trimming.
     public static func recentInboxMessages(limit: Int) throws -> [InboxEntry] {
         let script = """
         \(DateFormatting.appleScriptComponentsHandler)
+        set fieldSep to (character id 31)
         tell application "Mail"
             set output to ""
             set allAccounts to every account
@@ -101,7 +115,7 @@ public enum EmailIntegration {
                         set mDate to my atDateComponents(date received of m)
                         set mRead to read status of m
                         set mAttCount to count of mail attachments of m
-                        set output to output & mID & "\\t" & mSubject & "\\t" & mFrom & "\\t" & mDate & "\\t" & mRead & "\\t" & mAttCount & linefeed
+                        set output to output & mID & fieldSep & mSubject & fieldSep & mFrom & fieldSep & mDate & fieldSep & mRead & fieldSep & mAttCount & linefeed
                     end repeat
                 end try
             end repeat
@@ -112,9 +126,20 @@ public enum EmailIntegration {
         let (out, err) = runAppleScript(script, [:], nil)
         if let err = err { throw EmailError.scriptFailed(err) }
 
+        return mergeInboxRows(out, limit: limit)
+    }
+
+    /// Parse the tab-delimited inbox rows the AppleScript emits (grouped by
+    /// account, newest-first within each account), merge-sort the union
+    /// newest-first by date, and trim to `limit`.
+    ///
+    /// Extracted for testability: the AppleScript can't run under XCTest, but
+    /// the merge/sort/trim — where the "only the first account's mail is
+    /// visible" bug lived — is pure and does have coverage.
+    static func mergeInboxRows(_ out: String, limit: Int) -> [InboxEntry] {
         var messages: [InboxEntry] = []
         for line in out.components(separatedBy: "\n") where !line.isEmpty {
-            let parts = line.components(separatedBy: "\t")
+            let parts = line.components(separatedBy: fieldSep)
             guard parts.count >= 5 else { continue }
             let attCount = (parts.count >= 6) ? (Int(parts[5]) ?? 0) : 0
             messages.append(InboxEntry(
@@ -127,6 +152,19 @@ public enum EmailIntegration {
             ))
         }
 
+        // Merge across accounts: the AppleScript emits messages grouped by
+        // account, so sort the union newest-first by parsed date before
+        // trimming — otherwise account 2's mail is invisible whenever account
+        // 1 already fills `limit`. Entries whose date failed to parse sort
+        // last rather than jumping to the top.
+        let isoParser = ISO8601DateFormatter()
+        isoParser.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone]
+        messages.sort { a, b in
+            let da = isoParser.date(from: a.date) ?? .distantPast
+            let db = isoParser.date(from: b.date) ?? .distantPast
+            return da > db
+        }
+
         if messages.count > limit {
             messages = Array(messages.prefix(limit))
         }
@@ -135,11 +173,24 @@ public enum EmailIntegration {
 
     // MARK: - Read
 
+    /// Strip the surrounding angle brackets from an RFC Message-ID before it
+    /// goes into `whose message id is …` comparisons. Mail's AppleScript
+    /// `message id` property is *bare* (`abc@host`), but IDs reach these
+    /// fallbacks in both forms — `search` surfaces the bracketed header value
+    /// (`<abc@host>`), and LLMs echo IDs back either way. Without stripping,
+    /// a bracketed ID never matches the bare property → spurious "not found".
+    /// Mirrors `EmailSearch.resolveMessageID`'s bracket-insensitive lookup.
+    static func bareMessageID(_ id: String) -> String {
+        return id.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
+    }
+
     public static func readMessageViaAppleScript(id: String) throws -> MessageRead {
-        let env = ["APPLE_TOOLS_EMAIL_MSG_ID": id]
+        let env = ["APPLE_TOOLS_EMAIL_MSG_ID": bareMessageID(id)]
         let script = """
         set theMsgID to do shell script "printenv APPLE_TOOLS_EMAIL_MSG_ID"
         \(DateFormatting.appleScriptComponentsHandler)
+        set fieldSep to (character id 31)
+        set sectionSep to (character id 30)
         tell application "Mail"
             set allAccounts to every account
             repeat with acct in allAccounts
@@ -175,10 +226,10 @@ public enum EmailIntegration {
                                 set attMIME to MIME type of att
                                 set attSize to file size of att
                                 if attachStr is not "" then set attachStr to attachStr & linefeed
-                                set attachStr to attachStr & attName & "\\t" & attMIME & "\\t" & attSize
+                                set attachStr to attachStr & attName & fieldSep & attMIME & fieldSep & attSize
                             end try
                         end repeat
-                        return mID & "\\t" & mSubject & "\\t" & mFrom & "\\t" & toStr & "\\t" & ccStr & "\\t" & mDate & "\\t" & (count of atts) & "\\n" & mContent & "\\n---ATTACHMENTS---\\n" & attachStr
+                        return mID & fieldSep & mSubject & fieldSep & mFrom & fieldSep & toStr & fieldSep & ccStr & fieldSep & mDate & fieldSep & (count of atts) & "\\n" & mContent & sectionSep & attachStr
                     end if
                 end try
             end repeat
@@ -193,12 +244,13 @@ public enum EmailIntegration {
             throw EmailError.notFound
         }
 
-        // Split body from attachment section.
-        let sections = out.components(separatedBy: "\n---ATTACHMENTS---\n")
+        // Split body from attachment section (a control char that can't occur
+        // in the body — see fieldSep/sectionSep).
+        let sections = out.components(separatedBy: sectionSep)
         let mainPart = sections[0]
         let attachmentPart = sections.count > 1 ? sections[1] : ""
 
-        // Header line: id \t subject \t from \t to \t cc \t date \t attachCount
+        // Header line: id <FS> subject <FS> from <FS> to <FS> cc <FS> date <FS> attachCount
         // Body follows after the first newline.
         let firstNewline = mainPart.range(of: "\n")
         let headerLine: String
@@ -211,7 +263,7 @@ public enum EmailIntegration {
             bodyText = ""
         }
 
-        let parts = headerLine.components(separatedBy: "\t")
+        let parts = headerLine.components(separatedBy: fieldSep)
         guard parts.count >= 7 else {
             throw EmailError.parseFailure("failed to parse message data")
         }
@@ -220,7 +272,7 @@ public enum EmailIntegration {
         var attachments: [AttachmentMeta] = []
         if attachCount > 0 && !attachmentPart.isEmpty {
             for line in attachmentPart.components(separatedBy: "\n") where !line.isEmpty {
-                let attParts = line.components(separatedBy: "\t")
+                let attParts = line.components(separatedBy: fieldSep)
                 guard !attParts.isEmpty else { continue }
                 let mime = attParts.count >= 2 ? attParts[1] : ""
                 let size = attParts.count >= 3 ? (Int(attParts[2]) ?? 0) : 0
@@ -247,9 +299,10 @@ public enum EmailIntegration {
     /// Throws `.notFound` if the message isn't in any inbox, `.noAttachments`
     /// if it has none.
     public static func listAttachmentsViaAppleScript(id: String) throws -> [AttachmentMeta] {
-        let env = ["APPLE_TOOLS_EMAIL_MSG_ID": id]
+        let env = ["APPLE_TOOLS_EMAIL_MSG_ID": bareMessageID(id)]
         let script = """
         set theMsgID to do shell script "printenv APPLE_TOOLS_EMAIL_MSG_ID"
+        set fieldSep to (character id 31)
         tell application "Mail"
             set allAccounts to every account
             repeat with acct in allAccounts
@@ -268,7 +321,7 @@ public enum EmailIntegration {
                                 set attMIME to MIME type of att
                                 set attSize to file size of att
                                 if output is not "" then set output to output & linefeed
-                                set output to output & attName & "\\t" & attMIME & "\\t" & attSize
+                                set output to output & attName & fieldSep & attMIME & fieldSep & attSize
                             end try
                         end repeat
                         return output
@@ -287,7 +340,7 @@ public enum EmailIntegration {
 
         var attachments: [AttachmentMeta] = []
         for line in out.components(separatedBy: "\n") where !line.isEmpty {
-            let parts = line.components(separatedBy: "\t")
+            let parts = line.components(separatedBy: fieldSep)
             guard !parts.isEmpty, !parts[0].isEmpty else { continue }
             let mime = parts.count >= 2 ? parts[1] : ""
             let size = parts.count >= 3 ? (Int(parts[2]) ?? 0) : 0
@@ -313,7 +366,7 @@ public enum EmailIntegration {
         defer { try? FileManager.default.removeItem(atPath: tmpDir) }
 
         let env = [
-            "APPLE_TOOLS_EMAIL_MSG_ID": id,
+            "APPLE_TOOLS_EMAIL_MSG_ID": bareMessageID(id),
             "APPLE_TOOLS_EMAIL_ATT_NAME": filename,
             "APPLE_TOOLS_EMAIL_TMP_DIR": tmpDir,
         ]
