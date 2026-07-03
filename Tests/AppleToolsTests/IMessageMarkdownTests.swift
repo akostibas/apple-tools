@@ -127,6 +127,16 @@ final class IMessageMarkdownTests: XCTestCase {
                        "see https://x.com/a_b_c/d_e")
     }
 
+    /// Underscores flanked by `/` (a non-word char) used to slip past the
+    /// emphasis word-edge guards and get stripped, mangling the link. The bare
+    /// URL is now stashed before the emphasis pass (issue #35).
+    func testUnderscoresAdjacentToSlashInBareURLPreserved() {
+        XCTAssertEqual(strip("see https://x.com/_private_/page"),
+                       "see https://x.com/_private_/page")
+        XCTAssertEqual(strip("go to http://a.io/_x_ now"),
+                       "go to http://a.io/_x_ now")
+    }
+
     func testUnderscoresInLinkURLPreserved() {
         XCTAssertEqual(strip("see [docs](https://x.com/a_b_c)"),
                        "see docs (https://x.com/a_b_c)")

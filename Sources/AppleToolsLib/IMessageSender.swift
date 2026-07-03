@@ -122,7 +122,16 @@ public enum IMessageSender {
     /// rather than a phone number or email. Group chats use identifiers like
     /// `iMessage;+;chat123@icloud.com` or `chat12345678`.
     static func isGroupChatID(_ recipient: String) -> Bool {
-        return recipient.hasPrefix("iMessage;") || recipient.hasPrefix("chat")
+        if recipient.hasPrefix("iMessage;") { return true }
+        // A real group identifier is `chat` followed by digits (e.g.
+        // `chat6711433889022879`). Requiring the digit avoids misclassifying
+        // an email local-part like `chatter@example.com` as a group chat,
+        // which routed it down the group path and failed with a misleading
+        // "group chat not found" instead of a normal buddy send (issue #35).
+        if recipient.hasPrefix("chat") {
+            return recipient.dropFirst(4).first?.isNumber == true
+        }
+        return false
     }
 
     /// Body of `send` that runs inside the serial queue. All AppleScript
@@ -168,7 +177,7 @@ public enum IMessageSender {
             : ""
         let sendTarget = useFirstContact ? "targetChat" : "targetBuddy"
         let imessageScript = """
-        set theText to do shell script "printenv APPLE_TOOLS_IMSG_TEXT"
+        set theText to do shell script "printenv APPLE_TOOLS_IMSG_TEXT" without altering line endings
         log "PHASE: prepare"
         tell application "Messages"
             set iMessageService to first service whose service type = iMessage
@@ -331,7 +340,7 @@ public enum IMessageSender {
         // keys on. No viable post-verify for groups until a chat-keyed lookup
         // exists. Same scope decision as the post-send poll skip below.
         let script = """
-        set theText to do shell script "printenv APPLE_TOOLS_IMSG_TEXT"
+        set theText to do shell script "printenv APPLE_TOOLS_IMSG_TEXT" without altering line endings
         log "PHASE: prepare"
         tell application "Messages"
             set targetChat to chat id "\(escapedGUID)"
@@ -375,7 +384,7 @@ public enum IMessageSender {
     private static func sendViaSMS(recipient: String, escapedRecipient: String, text: String, iMessageError: Int) -> SendResult {
         let env = ["APPLE_TOOLS_IMSG_TEXT": text]
         let smsScript = """
-        set theText to do shell script "printenv APPLE_TOOLS_IMSG_TEXT"
+        set theText to do shell script "printenv APPLE_TOOLS_IMSG_TEXT" without altering line endings
         log "PHASE: prepare"
         tell application "Messages"
             set smsService to first service whose service type = SMS
