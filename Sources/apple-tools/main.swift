@@ -165,6 +165,11 @@ let host = ToolHost(
 )
 let tools = allAppleTools(host: host)
 
+// Best-effort weekly "you're behind" nudge to stderr (never stdout — the JSON
+// tool contract). CLI-only: library/API hosts embedding AppleToolsLib never
+// reach this call, so they see no output and make no network call.
+UpdateCheck.maybeNudge()
+
 guard let first = argv.first else {
     printTopUsage()
     exit(0)
