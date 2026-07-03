@@ -5,9 +5,6 @@ drives it. Read and write Calendar, Reminders, Notes, Contacts, Mail, Messages
 (iMessage/SMS), Photos, files, the clipboard, screenshots, and open URIs — all
 on the machine it runs on, with no server.
 
-Derived from an internal macOS probe: the same tool implementations, with the
-server/networking layer removed and the file handling pointed at the local disk.
-
 ## Quick start
 
 ```bash
@@ -107,7 +104,7 @@ skills/apple-tools/  # the Claude skill (SKILL.md)
 ```
 
 `AppleToolsLib` is a published `.library` product: this CLI is one consumer,
-and a server-backed host (Shannon's `probe-macos`) is another. Both depend on
+and a server-backed host can be another. All consumers depend on
 the same tool implementations and inject their own backend through a small
 **`ToolHost`** (`Sources/AppleToolsLib/ToolHost.swift`):
 
