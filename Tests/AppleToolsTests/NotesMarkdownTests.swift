@@ -21,6 +21,15 @@ final class NotesMarkdownTests: XCTestCase {
         XCTAssertEqual(NotesMarkdown.inlineToHTML("**bold**"), "<b>bold</b>")
     }
 
+    func testWriteCodeSpanContentsNotReinterpreted() {
+        // `__init__` must stay literal inside the code span — the underscores
+        // must not be read as bold (issue #37).
+        XCTAssertEqual(NotesMarkdown.inlineToHTML("`__init__`"), "<tt>__init__</tt>")
+        // Emphasis outside the span still applies; the span is untouched.
+        XCTAssertEqual(NotesMarkdown.inlineToHTML("**b** `*x*` *i*"),
+                       "<b>b</b> <tt>*x*</tt> <i>i</i>")
+    }
+
     func testWriteLinksDegradeToText() {
         // Notes strips href, so the URL is preserved as plain text.
         XCTAssertEqual(NotesMarkdown.inlineToHTML("see [here](https://x.com)"),
@@ -91,6 +100,13 @@ final class NotesMarkdownTests: XCTestCase {
     func testReadDecodesEntities() {
         let html = "<div>a &lt; b &amp; c</div>"
         XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html), "a < b & c")
+    }
+
+    func testReadDoesNotDoubleDecodeEntities() {
+        // Visible text `&lt;` is stored doubly-escaped as `&amp;lt;`. Decoding
+        // `&amp;` last (never first) keeps it as `&lt;`, not `<` (issue #29).
+        let html = "<div>&amp;lt;script&amp;gt;</div>"
+        XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html), "&lt;script&gt;")
     }
 
     func testReadChecklistOverlay() {
@@ -165,6 +181,18 @@ final class NotesMarkdownTests: XCTestCase {
         let md = "no match here"
         let out = NotesMarkdown.overlayLinks(md, links: [("absent", "https://x.com")])
         XCTAssertEqual(out, "no match here")
+    }
+
+    func testOverlaySameURLDifferentDisplayTextBothLinked() {
+        // Two spans share a URL but have different display text. A global
+        // "already linked" guard would skip the second once the first wrapped
+        // it; the cursor-scoped guard links both (issue #37).
+        let md = "See docs and also guide."
+        let out = NotesMarkdown.overlayLinks(md, links: [
+            ("docs", "https://x.com/d"),
+            ("guide", "https://x.com/d"),
+        ])
+        XCTAssertEqual(out, "See [docs](https://x.com/d) and also [guide](https://x.com/d).")
     }
 
     // MARK: - Round-trip (pure, no Notes)

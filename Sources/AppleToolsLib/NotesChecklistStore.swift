@@ -66,10 +66,17 @@ public enum NotesChecklistStore {
         }
         defer { sqlite3_close(db) }
 
+        // Exclude Recently-Deleted rows and prefer the most recently modified
+        // match, mirroring NotesStoreSearch. Without this, a deleted note and a
+        // freshly recreated note sharing a title collide and the arbitrary
+        // LIMIT 1 row can be the stale deleted one (issue #31).
         let sql = """
         SELECT d.ZDATA FROM ZICNOTEDATA d
         JOIN ZICCLOUDSYNCINGOBJECT o ON o.ZNOTEDATA = d.Z_PK
-        WHERE o.ZTITLE1 = ? LIMIT 1
+        WHERE o.ZTITLE1 = ?
+          AND (o.ZMARKEDFORDELETION = 0 OR o.ZMARKEDFORDELETION IS NULL)
+        ORDER BY o.ZMODIFICATIONDATE1 DESC
+        LIMIT 1
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
@@ -97,16 +104,30 @@ public enum NotesChecklistStore {
               data[data.startIndex + 3] == 0x00 else { return nil }
 
         let deflate = data.subdata(in: (data.startIndex + 10)..<data.endIndex)
-        let capacity = max(deflate.count * 8, 64 * 1024)
-        let dst = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
-        defer { dst.deallocate() }
 
-        let written = deflate.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> Int in
-            guard let base = src.bindMemory(to: UInt8.self).baseAddress else { return 0 }
-            return compression_decode_buffer(dst, capacity, base, deflate.count, nil, COMPRESSION_ZLIB)
+        // `compression_decode_buffer` gives no way to distinguish "filled the
+        // buffer exactly" from "ran out of room and truncated": in both cases it
+        // returns `capacity`. Repetitive notes compress far better than the 8×
+        // guess, so a fixed buffer silently drops the tail (issue #30). Grow and
+        // retry whenever the output exactly fills the buffer.
+        var capacity = max(deflate.count * 8, 64 * 1024)
+        let maxCapacity = 128 * 1024 * 1024   // hard ceiling to bound memory
+        while true {
+            let dst = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
+            defer { dst.deallocate() }
+
+            let written = deflate.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> Int in
+                guard let base = src.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+                return compression_decode_buffer(dst, capacity, base, deflate.count, nil, COMPRESSION_ZLIB)
+            }
+            guard written > 0 else { return nil }
+            // A full buffer is ambiguous (possibly truncated) — grow and retry.
+            if written == capacity, capacity < maxCapacity {
+                capacity = min(capacity * 2, maxCapacity)
+                continue
+            }
+            return Data(bytes: dst, count: written)
         }
-        guard written > 0 else { return nil }
-        return Data(bytes: dst, count: written)
     }
 
     // MARK: - Protobuf
@@ -137,7 +158,11 @@ public enum NotesChecklistStore {
 
         guard let textBytes = fieldBytes(note, field: 2),
               let text = String(bytes: textBytes, encoding: .utf8) else { return [] }
-        let scalars = Array(text)
+        // Run lengths are NSAttributedString ranges (UTF-16 code units), so we
+        // must partition the text by code units — not grapheme clusters. Slicing
+        // by Character shifts every segment past the first emoji/flag/combining
+        // mark (issue #28).
+        let units = Array(text.utf16)
 
         let runs = allFieldBytes(note, field: 5)
         var items: [Item] = []
@@ -160,8 +185,8 @@ public enum NotesChecklistStore {
 
         for run in runs {
             let length = (fieldVarint(run, field: 1)).map { Int($0) } ?? 0
-            let end = min(pos + length, scalars.count)
-            let segment = String(scalars[pos..<end])
+            let end = min(pos + length, units.count)
+            let segment = String(decoding: units[pos..<end], as: UTF16.self)
             pos = end
 
             var isCheck = false
@@ -194,7 +219,9 @@ public enum NotesChecklistStore {
 
         guard let textBytes = fieldBytes(note, field: 2),
               let text = String(bytes: textBytes, encoding: .utf8) else { return [] }
-        let scalars = Array(text)
+        // Partition by UTF-16 code units to match NSAttributedString run lengths
+        // (issue #28) — see parseChecklist.
+        let units = Array(text.utf16)
 
         let runs = allFieldBytes(note, field: 5)
         var links: [Link] = []
@@ -213,8 +240,8 @@ public enum NotesChecklistStore {
 
         for run in runs {
             let length = (fieldVarint(run, field: 1)).map { Int($0) } ?? 0
-            let end = min(pos + length, scalars.count)
-            let segment = String(scalars[pos..<end])
+            let end = min(pos + length, units.count)
+            let segment = String(decoding: units[pos..<end], as: UTF16.self)
             pos = end
 
             var url: String? = nil

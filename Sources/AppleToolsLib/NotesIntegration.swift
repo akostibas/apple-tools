@@ -10,6 +10,19 @@ import Foundation
 /// parsing are encapsulated; callers receive typed values.
 public enum NotesIntegration {
 
+    // MARK: - Field protocol
+
+    /// Field/record separators for the AppleScript output records that this
+    /// module parses. Note titles and folder names can legitimately contain
+    /// tabs and linefeeds; a tab-delimited protocol silently shifts the
+    /// folder/date fields and truncates the title used for the checklist/link
+    /// lookups (issue #37). ASCII Unit Separator (0x1F) and Record Separator
+    /// (0x1E) are control codes that cannot occur in Notes titles, folder
+    /// names, or bodies, so they delimit unambiguously. The AppleScript side
+    /// emits them via `character id 31` / `character id 30`.
+    static let fieldSep = "\u{001F}"
+    static let recordSep = "\u{001E}"
+
     // MARK: - Types
 
     public enum NotesError: Error, CustomStringConvertible {
@@ -81,20 +94,22 @@ public enum NotesIntegration {
     public static func listFolders() throws -> [Folder] {
         let script = """
         tell application "Notes"
+            set fs to (character id 31)
+            set rs to (character id 30)
             set output to ""
             -- First, emit all folders with their note counts
             repeat with f in (every folder)
                 set fName to name of f
                 set fID to id of f
                 set nCount to count of notes of f
-                set output to output & "F" & "\\t" & fID & "\\t" & fName & "\\t" & (nCount as string) & linefeed
+                set output to output & "F" & fs & fID & fs & fName & fs & (nCount as string) & rs
             end repeat
             -- Then, emit parent->child edges
             repeat with f in (every folder)
                 set fID to id of f
                 set subs to every folder of f
                 repeat with s in subs
-                    set output to output & "E" & "\\t" & fID & "\\t" & (id of s) & linefeed
+                    set output to output & "E" & fs & fID & fs & (id of s) & rs
                 end repeat
             end repeat
             return output
@@ -108,8 +123,8 @@ public enum NotesIntegration {
         var folderOrder: [String] = []
         var childToParent: [String: String] = [:]
 
-        for line in out.components(separatedBy: "\n") where !line.isEmpty {
-            let parts = line.components(separatedBy: "\t")
+        for line in out.components(separatedBy: recordSep) where !line.isEmpty {
+            let parts = line.components(separatedBy: fieldSep)
             guard parts.count >= 2 else { continue }
 
             if parts[0] == "F" && parts.count >= 4 {
@@ -187,6 +202,7 @@ public enum NotesIntegration {
         set theKey to do shell script "printenv APPLE_TOOLS_NOTES_ID_OR_TITLE"
         \(DateFormatting.appleScriptComponentsHandler)
         tell application "Notes"
+            set fs to (character id 31)
             set theNote to \(whereClause)
             set nID to id of theNote
             set nName to name of theNote
@@ -200,7 +216,7 @@ public enum NotesIntegration {
             set nDate to my atDateComponents(modification date of theNote)
             set nCreated to my atDateComponents(creation date of theNote)
             set nHTML to body of theNote
-            return nID & "\\t" & nName & "\\t" & nFolder & "\\t" & nDate & "\\t" & nCreated & "\\t" & nHTML
+            return nID & fs & nName & fs & nFolder & fs & nDate & fs & nCreated & fs & nHTML
         end tell
         """
 
@@ -210,12 +226,12 @@ public enum NotesIntegration {
             throw NotesError.scriptFailed(err)
         }
 
-        let parts = out.components(separatedBy: "\t")
+        let parts = out.components(separatedBy: fieldSep)
         guard parts.count >= 6 else {
             throw NotesError.parseFailure("failed to parse note data")
         }
         let noteTitle = parts[1]
-        let htmlBody = parts[5...].joined(separator: "\t")
+        let htmlBody = parts[5...].joined(separator: fieldSep)
         // AppleScript flattens checklists; recover checked state from the
         // protobuf store (best-effort, possibly stale — see NotesChecklistStore).
         let checklist = checklistLookup(noteTitle).map { (text: $0.text, done: $0.done) }
@@ -317,11 +333,12 @@ public enum NotesIntegration {
         \(folderBinding)
         log "PHASE: prepare"
         tell application "Notes"
+            set fs to (character id 31)
             log "PHASE: pre-commit"
             \(atClause)
             set noteID to id of newNote as string
             log "PHASE: committed id=" & noteID
-            return noteID & "\\t" & (name of newNote)
+            return noteID & fs & (name of newNote)
         end tell
         """
 
@@ -334,7 +351,7 @@ public enum NotesIntegration {
         let (out, err) = runAppleScript(script, env, verifyHook)
         if let err = err { throw NotesError.scriptFailed(err) }
 
-        let parts = out.components(separatedBy: "\t")
+        let parts = out.components(separatedBy: fieldSep)
         guard parts.count >= 2 else {
             throw NotesError.parseFailure("note created but failed to parse response")
         }
@@ -385,6 +402,7 @@ public enum NotesIntegration {
         set theContent to do shell script "printenv APPLE_TOOLS_NOTES_CONTENT"
         log "PHASE: prepare"
         tell application "Notes"
+            set fs to (character id 31)
             set theNote to \(whereClause)
             set existingBody to body of theNote
             log "PHASE: pre-commit"
@@ -393,7 +411,7 @@ public enum NotesIntegration {
             log "PHASE: committed id=" & noteID
             set nPlain to plaintext of theNote
             set charCount to length of nPlain
-            return noteID & "\\t" & (name of theNote) & "\\t" & charCount
+            return noteID & fs & (name of theNote) & fs & charCount
         end tell
         """
 
@@ -411,7 +429,7 @@ public enum NotesIntegration {
             throw NotesError.scriptFailed(err)
         }
 
-        let parts = out.components(separatedBy: "\t")
+        let parts = out.components(separatedBy: fieldSep)
         guard parts.count >= 3 else {
             throw NotesError.parseFailure("content appended but failed to parse response")
         }
