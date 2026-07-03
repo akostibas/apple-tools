@@ -113,6 +113,63 @@ final class MailDraftVerifierTests: XCTestCase {
         }
     }
 
+    /// Stored subject carries surrounding whitespace (Mail preserves what the
+    /// caller passed); the verify subject is trimmed. Symmetric TRIM in the SQL
+    /// must still confirm (issue #36) — before the fix this never matched.
+    func testVerifyConfirmsDespiteStoredSubjectWhitespace() {
+        insertDraft(rowid: 400, subject: "  hello world  ", recipient: "alice@example.com",
+                    mailboxURL: "imap://acct@imap/[Gmail]/Drafts")
+
+        let result = MailDraftVerifier.verify(
+            recipient: "alice@example.com",
+            subject: "hello world",
+            sinceROWID: 0,
+            deadline: 1.0
+        )
+        if case .confirmed = result { /* ok */ } else {
+            XCTFail("whitespace-padded stored subject must still confirm; got \(result)")
+        }
+    }
+
+    /// A `_` in the recipient is a LIKE single-char wildcard. Unescaped, a
+    /// verify for `john_doe@` would confirm off a draft to `johnXdoe@` (issue
+    /// #33). Escaped, the near-miss row must NOT satisfy the verify.
+    func testVerifyRecipientUnderscoreIsLiteralNotWildcard() {
+        insertDraft(rowid: 500, subject: "hi", recipient: "johnXdoe@example.com",
+                    mailboxURL: "imap://acct@imap/[Gmail]/Drafts")
+
+        let result = MailDraftVerifier.verify(
+            recipient: "john_doe@example.com",
+            subject: "hi",
+            sinceROWID: 0,
+            deadline: 0.4,
+            pollInterval: 0.1
+        )
+        if case .inconclusive = result { /* ok */ } else {
+            XCTFail("`_` must match literally, not as a wildcard; got \(result)")
+        }
+    }
+
+    /// The exact recipient (with a literal underscore) still confirms.
+    func testVerifyRecipientLiteralUnderscoreMatches() {
+        insertDraft(rowid: 600, subject: "hi", recipient: "john_doe@example.com",
+                    mailboxURL: "imap://acct@imap/[Gmail]/Drafts")
+
+        let result = MailDraftVerifier.verify(
+            recipient: "john_doe@example.com",
+            subject: "hi",
+            sinceROWID: 0,
+            deadline: 1.0
+        )
+        if case .confirmed = result { /* ok */ } else {
+            XCTFail("exact address with a literal underscore must confirm; got \(result)")
+        }
+    }
+
+    func testEscapeLIKEEscapesWildcardsAndBackslash() {
+        XCTAssertEqual(MailDraftVerifier.escapeLIKE("a_b%c\\d"), "a\\_b\\%c\\\\d")
+    }
+
     // MARK: - Fixture builder
 
     /// Build a minimal Envelope-Index-shaped SQLite file with just the tables

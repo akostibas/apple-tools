@@ -356,11 +356,21 @@ enum EmailMessage {
     }
 
     /// Parse Content-Disposition: returns disposition ("attachment"/"inline") and filename.
+    ///
+    /// Handles both filename encodings and their precedence:
+    ///   - `filename` — a plain (optionally quoted) value, possibly carrying
+    ///     RFC 2047 encoded-words (`=?UTF-8?B?…?=`).
+    ///   - `filename*` — RFC 2231 extended syntax (`charset'lang'pct-encoded`),
+    ///     which is percent-decoding, NOT RFC 2047. Running decodeRFC2047 on it
+    ///     leaves the raw `UTF-8''na%C3%AFve.pdf` garbage (issue #27).
+    /// Per RFC 6266, `filename*` wins over `filename` when both are present —
+    /// but only after each is decoded with the correct scheme.
     static func parseDisposition(_ raw: String?) -> (disposition: String?, filename: String?) {
         guard let raw = raw, !raw.isEmpty else { return (nil, nil) }
         let parts = raw.components(separatedBy: ";")
         let dispo = parts.first?.trimmingCharacters(in: .whitespaces).lowercased()
-        var filename: String?
+        var plainFilename: String?
+        var extFilename: String?
         for part in parts.dropFirst() {
             let kv = part.components(separatedBy: "=")
             guard kv.count >= 2 else { continue }
@@ -369,11 +379,54 @@ enum EmailMessage {
             if v.hasPrefix("\"") && v.hasSuffix("\"") && v.count >= 2 {
                 v = String(v.dropFirst().dropLast())
             }
-            if k == "filename" || k == "filename*" {
-                filename = decodeRFC2047(v)
+            if k == "filename*" {
+                extFilename = decodeRFC2231Value(v)
+            } else if k == "filename" {
+                plainFilename = decodeRFC2047(v)
             }
         }
-        return (dispo, filename)
+        return (dispo, extFilename ?? plainFilename)
+    }
+
+    /// Decode an RFC 2231 extended-parameter value: `charset'lang'pct-encoded`
+    /// (the `lang` field is optional and ignored). A bare percent-encoded value
+    /// with no `charset'lang'` prefix is also accepted (defaults to UTF-8).
+    /// Continuation segments (`filename*0*`, `filename*1*`) are not handled —
+    /// rare in practice; such a value falls back to the plain `filename`.
+    static func decodeRFC2231Value(_ raw: String) -> String {
+        var charset = "utf-8"
+        var encoded = raw
+        // Extended syntax has exactly two single-quotes delimiting charset and
+        // lang. Only treat it as such when both are present.
+        if let firstQuote = raw.firstIndex(of: "'") {
+            let afterFirst = raw.index(after: firstQuote)
+            if let secondQuote = raw[afterFirst...].firstIndex(of: "'") {
+                let cs = String(raw[raw.startIndex..<firstQuote])
+                if !cs.isEmpty { charset = cs }
+                encoded = String(raw[raw.index(after: secondQuote)...])
+            }
+        }
+
+        // Percent-decode to raw bytes, then interpret with the declared charset.
+        let chars = Array(encoded.utf8)
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(chars.count)
+        var i = 0
+        while i < chars.count {
+            if chars[i] == 0x25 /* % */, i + 2 < chars.count,
+               let h1 = hexNibble(chars[i + 1]), let h2 = hexNibble(chars[i + 2]) {
+                bytes.append(UInt8(h1 << 4 | h2))
+                i += 3
+            } else {
+                bytes.append(chars[i])
+                i += 1
+            }
+        }
+        let data = Data(bytes)
+        let enc = encodingFor(charset: charset)
+        return String(data: data, encoding: enc)
+            ?? String(data: data, encoding: .utf8)
+            ?? encoded
     }
 
     /// Recursive MIME tree walker. Collects decoded text parts, html parts, and attachments.
@@ -490,10 +543,20 @@ enum EmailMessage {
         var searchStart = 0
         let len = data.count
         var partStart: Int?
+        var sawClose = false
 
         while searchStart < len {
             guard let range = data.range(of: bdata, in: searchStart..<len) else { break }
             let hit = range.lowerBound
+            // A real boundary delimiter occupies its own line: it must sit at
+            // the very start of the body or be immediately preceded by a LF
+            // (CRLF ends in LF too). A bare `--boundary` mid-line — e.g. a text
+            // part QUOTING a previous MIME message — is not a delimiter; skip
+            // it and let it stay part of the current part's body (issue #36).
+            if hit != 0 && data[hit - 1] != 0x0A {
+                searchStart = range.upperBound
+                continue
+            }
             if let ps = partStart {
                 // Part body ends just before `\r\n--boundary` (strip trailing CRLF before boundary).
                 var pe = hit
@@ -502,11 +565,13 @@ enum EmailMessage {
                 if pe >= ps {
                     parts.append(data.subdata(in: ps..<pe))
                 }
+                partStart = nil
             }
             // Advance past the boundary line. Check for closing "--" marker.
             var next = range.upperBound
             if next + 1 < len, data[next] == 0x2D, data[next + 1] == 0x2D {
                 // "--boundary--" end marker. Stop.
+                sawClose = true
                 break
             }
             // Skip to end of line.
@@ -514,6 +579,18 @@ enum EmailMessage {
             if next < len { next += 1 }
             partStart = next
             searchStart = next
+        }
+
+        // Truncated message: the closing `--boundary--` never arrived, but a
+        // final part is still open. Parse it to EOF rather than dropping it
+        // (issue #36) — a truncated multipart otherwise loses its last part.
+        if !sawClose, let ps = partStart, ps < len {
+            var pe = len
+            if pe > ps && data[pe - 1] == 0x0A { pe -= 1 }
+            if pe > ps && data[pe - 1] == 0x0D { pe -= 1 }
+            if pe > ps {
+                parts.append(data.subdata(in: ps..<pe))
+            }
         }
         return parts
     }
@@ -679,11 +756,15 @@ enum EmailMessage {
         if let re = try? NSRegularExpression(pattern: "<[^>]+>", options: []) {
             s = re.stringByReplacingMatches(in: s, range: NSRange(location: 0, length: (s as NSString).length), withTemplate: "")
         }
-        // Decode a few common entities.
+        // Decode a few common entities in a FIXED order, with `&amp;` LAST.
+        // The ampersand must be decoded after every other entity, otherwise a
+        // literal, already-escaped sequence like `&amp;lt;` decodes twice into
+        // `<` (issue #29). Named/numeric entities first; `&amp;` -> `&` last.
         let entities: [(String, String)] = [
-            ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+            ("&lt;", "<"), ("&gt;", ">"),
             ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
             ("&nbsp;", " "),
+            ("&amp;", "&"),
         ]
         for (e, r) in entities { s = s.replacingOccurrences(of: e, with: r) }
         // Collapse runs of blank lines.

@@ -432,4 +432,116 @@ final class EmailMessageTests: XCTestCase {
         XCTAssertNil(EmailMessage.emlxPath(rowID: 42, mailboxURL: ""))
         XCTAssertNil(EmailMessage.emlxPath(rowID: 42, mailboxURL: "not a url"))
     }
+
+    // MARK: - RFC 2231 filename* (issue #27)
+
+    func testParseDispositionRFC2231ExtendedFilename() {
+        // filename* is RFC 2231 (charset'lang'pct-encoded), NOT RFC 2047.
+        let (dispo, filename) = EmailMessage.parseDisposition(
+            "attachment; filename*=UTF-8''na%C3%AFve%20plan.pdf")
+        XCTAssertEqual(dispo, "attachment")
+        XCTAssertEqual(filename, "naïve plan.pdf")
+    }
+
+    func testParseDispositionRFC2231NoCharsetDefaultsUTF8() {
+        // Bare percent-encoded value with empty charset field.
+        let (_, filename) = EmailMessage.parseDisposition(
+            "attachment; filename*=''caf%C3%A9.txt")
+        XCTAssertEqual(filename, "café.txt")
+    }
+
+    func testParseDispositionExtendedWinsOverPlain() {
+        // RFC 6266: filename* takes precedence over filename — but only after
+        // each is decoded with the correct scheme. Order in the header must not
+        // matter.
+        let (_, f1) = EmailMessage.parseDisposition(
+            "attachment; filename=\"fallback.pdf\"; filename*=UTF-8''na%C3%AFve.pdf")
+        XCTAssertEqual(f1, "naïve.pdf")
+        let (_, f2) = EmailMessage.parseDisposition(
+            "attachment; filename*=UTF-8''na%C3%AFve.pdf; filename=\"fallback.pdf\"")
+        XCTAssertEqual(f2, "naïve.pdf")
+    }
+
+    func testParseDispositionPlainFilenameStillWorks() {
+        let (dispo, filename) = EmailMessage.parseDisposition(
+            "attachment; filename=\"report.pdf\"")
+        XCTAssertEqual(dispo, "attachment")
+        XCTAssertEqual(filename, "report.pdf")
+    }
+
+    func testParseDispositionPlainFilenameRFC2047StillDecodes() {
+        // A plain `filename` carrying RFC 2047 encoded-words still decodes.
+        let (_, filename) = EmailMessage.parseDisposition(
+            "attachment; filename==?UTF-8?B?bmHDr3ZlLnBkZg==?=")
+        XCTAssertEqual(filename, "naïve.pdf")
+    }
+
+    func testRFC2231ExtendedFilenameEndToEnd() throws {
+        // "hello" base64 = "aGVsbG8=". Attachment named via filename*.
+        let raw = """
+        Subject: 2231
+        Content-Type: multipart/mixed; boundary="B"
+
+        --B
+        Content-Type: text/plain
+
+        see attached
+        --B
+        Content-Type: application/pdf
+        Content-Disposition: attachment; filename*=UTF-8''na%C3%AFve%20plan.pdf
+        Content-Transfer-Encoding: base64
+
+        aGVsbG8=
+        --B--
+        """
+        let parsed = try EmailMessage.parseRFC822(raw.data(using: .utf8)!)
+        XCTAssertEqual(parsed.attachments.count, 1)
+        XCTAssertEqual(parsed.attachments.first?.filename, "naïve plan.pdf")
+    }
+
+    // MARK: - stripHTML entity decoding (issue #29)
+
+    func testStripHTMLDecodesBasicEntities() {
+        XCTAssertEqual(EmailMessage.stripHTML("a &amp; b &lt;c&gt;"), "a & b <c>")
+    }
+
+    func testStripHTMLDoesNotDoubleDecodeEscapedEntity() {
+        // Literal displayed text `&lt;script&gt;` is stored as `&amp;lt;script&amp;gt;`.
+        // Decoding &amp; LAST must yield the literal, not an executable tag.
+        XCTAssertEqual(
+            EmailMessage.stripHTML("&amp;lt;script&amp;gt;"),
+            "&lt;script&gt;")
+    }
+
+    // MARK: - splitMultipart robustness (issue #36)
+
+    /// Reassemble the plain-text parts a multipart body decodes to, for
+    /// asserting on split behavior without depending on charset details.
+    private func splitText(_ raw: String, boundary: String) -> [String] {
+        let parts = EmailMessage.splitMultipart(raw.data(using: .utf8)!, boundary: boundary)
+        return parts.map { String(data: $0, encoding: .utf8) ?? "" }
+    }
+
+    func testSplitMultipartIgnoresBoundaryQuotedMidLine() {
+        // A text part quoting `--B` mid-line must NOT be treated as a delimiter.
+        let raw = "--B\r\nplain: not --B a boundary\r\n--B--\r\n"
+        let parts = splitText(raw, boundary: "B")
+        XCTAssertEqual(parts.count, 1)
+        XCTAssertEqual(parts.first, "plain: not --B a boundary")
+    }
+
+    func testSplitMultipartParsesFinalPartWhenClosingBoundaryMissing() {
+        // Truncated message: no closing --B-- . The final part must survive.
+        let raw = "--B\r\nfirst part\r\n--B\r\nsecond part truncated"
+        let parts = splitText(raw, boundary: "B")
+        XCTAssertEqual(parts.count, 2)
+        XCTAssertEqual(parts[0], "first part")
+        XCTAssertEqual(parts[1], "second part truncated")
+    }
+
+    func testSplitMultipartNormalTwoParts() {
+        let raw = "--B\r\nalpha\r\n--B\r\nbeta\r\n--B--\r\n"
+        let parts = splitText(raw, boundary: "B")
+        XCTAssertEqual(parts, ["alpha", "beta"])
+    }
 }

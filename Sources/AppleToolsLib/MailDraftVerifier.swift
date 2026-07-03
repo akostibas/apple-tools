@@ -92,7 +92,11 @@ public enum MailDraftVerifier {
     ) -> AppleScriptRunner.VerifyResult {
         let start = Date()
         let normalizedSubject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
-        let recipientPattern = "%\(recipient)%"
+        // Escape LIKE metacharacters in the recipient so an address containing
+        // `_` (common — `john_doe@x.com`) or `%` isn't treated as a wildcard,
+        // which let a near-miss draft row falsely confirm (issue #33). Paired
+        // with the `ESCAPE '\'` clause in the query.
+        let recipientPattern = "%\(escapeLIKE(recipient))%"
 
         while Date().timeIntervalSince(start) < deadline {
             if let rowid = findMatchingDraft(
@@ -105,6 +109,14 @@ public enum MailDraftVerifier {
             Thread.sleep(forTimeInterval: pollInterval)
         }
         return .inconclusive
+    }
+
+    /// Escape LIKE wildcards in user input so a query containing %, _ or \ is
+    /// matched literally (paired with `ESCAPE '\'` in the SQL).
+    static func escapeLIKE(_ s: String) -> String {
+        return s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "%", with: "\\%")
+                .replacingOccurrences(of: "_", with: "\\_")
     }
 
     // MARK: - SQLite query
@@ -128,12 +140,16 @@ public enum MailDraftVerifier {
         WHERE m.ROWID > ?
           AND m.deleted = 0
           AND mb.url LIKE '%/Drafts%'
-          AND s.subject = ? COLLATE NOCASE
+          -- TRIM both sides: the bound subject is already trimmed, and Mail may
+          -- store the draft subject with the caller's leading/trailing
+          -- whitespace intact. Comparing trimmed==untrimmed meant a draft whose
+          -- subject had surrounding whitespace could never confirm (issue #36).
+          AND TRIM(s.subject) = ? COLLATE NOCASE
           AND EXISTS (
             SELECT 1 FROM recipients r
             JOIN addresses a ON a.ROWID = r.address
             WHERE r.message = m.ROWID
-              AND a.address LIKE ? COLLATE NOCASE
+              AND a.address LIKE ? ESCAPE '\\' COLLATE NOCASE
           )
         ORDER BY m.ROWID DESC
         LIMIT 1
