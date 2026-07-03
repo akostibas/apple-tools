@@ -87,6 +87,22 @@ final class DateFormattingTests: XCTestCase {
         )
     }
 
+    func testRFC2822WithTrailingZoneComment() {
+        // A trailing `(PST)` comment is common in real headers; it must be
+        // stripped so the numeric offset still parses (#38).
+        XCTAssertEqual(
+            DateFormatting.isoFromRFC2822("Thu, 15 Jan 2026 09:30:00 -0800 (PST)"),
+            "2026-01-15T17:30:00Z"
+        )
+    }
+
+    func testRFC2822WithTrailingZoneCommentNoWeekday() {
+        XCTAssertEqual(
+            DateFormatting.isoFromRFC2822("15 Jan 2026 09:30:00 +0000 (UTC)"),
+            "2026-01-15T09:30:00Z"
+        )
+    }
+
     func testRFC2822ReturnsRawOnGarbage() {
         XCTAssertEqual(DateFormatting.isoFromRFC2822("not a date"), "not a date")
     }
