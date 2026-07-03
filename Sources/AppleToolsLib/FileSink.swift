@@ -56,8 +56,9 @@ public struct LocalFileSink: FileSink {
     public func deliver(filename: String, data: Data) -> Result<FileReference, FileSinkError> {
         let fm = FileManager.default
         do {
-            // 0700 so the dir (and thus the files we drop in it) is owner-only,
-            // even if APPLE_TOOLS_OUTPUT_DIR points somewhere world-traversable.
+            // 0700 on creation so the dir (and thus the files we drop in it) is
+            // owner-only, even if APPLE_TOOLS_OUTPUT_DIR points somewhere
+            // world-traversable.
             try fm.createDirectory(
                 atPath: outputDir,
                 withIntermediateDirectories: true,
@@ -67,33 +68,84 @@ public struct LocalFileSink: FileSink {
             return .failure(.message("failed to create output dir \(outputDir): \(error.localizedDescription)"))
         }
 
-        // Sanitize to a bare filename, then avoid clobbering existing files.
+        // `createDirectory(attributes:)` only applies the mode to dirs it
+        // actually creates; a pre-existing (e.g. 0755/1777) output dir keeps its
+        // looser mode. Tighten to 0700 unconditionally so the documented
+        // owner-only guarantee holds for the configured dir too. Best-effort: if
+        // we don't own it we can't chmod it, but then it was never ours.
+        _ = chmod(outputDir, 0o700)
+
+        // Sanitize to a bare filename.
         let base = (filename as NSString).lastPathComponent
         let safe = base.isEmpty ? "file" : base
-        let dest = uniquePath(in: outputDir, filename: safe)
 
-        do {
-            try data.write(to: URL(fileURLWithPath: dest))
-        } catch {
-            return .failure(.message("failed to write \(dest): \(error.localizedDescription)"))
+        // Atomically create a brand-new, owner-only regular file. `O_CREAT|O_EXCL`
+        // never follows a symlink at the final component (POSIX: fails EEXIST),
+        // which closes the planted-symlink arbitrary-write hole, and makes the
+        // uniqueness check race-free (no check-then-write TOCTOU) — a concurrent
+        // creator of the same name loses the exclusive create and we move on.
+        guard let created = exclusiveCreate(in: outputDir, filename: safe) else {
+            return .failure(.message("failed to create a unique output file in \(outputDir)"))
         }
+        let (fd, dest) = created
+
+        if !writeAll(fd: fd, data: data) {
+            close(fd)
+            unlink(dest)
+            return .failure(.message("failed to write \(dest)"))
+        }
+        close(fd)
         return .success(FileReference(key: "path", value: dest))
     }
 
-    private func uniquePath(in dir: String, filename: String) -> String {
-        let fm = FileManager.default
+    /// Exclusively create the next non-colliding filename (`name`, `name-1`, …)
+    /// as a fresh 0600 regular file. Returns the open fd and path, or nil if no
+    /// slot could be created (collision storm or an unrecoverable open error).
+    private func exclusiveCreate(in dir: String, filename: String) -> (fd: Int32, path: String)? {
         let dirURL = URL(fileURLWithPath: dir)
-        var candidate = dirURL.appendingPathComponent(filename)
-        guard fm.fileExists(atPath: candidate.path) else { return candidate.path }
-
         let ext = (filename as NSString).pathExtension
         let stem = (filename as NSString).deletingPathExtension
-        var n = 1
-        repeat {
-            let next = ext.isEmpty ? "\(stem)-\(n)" : "\(stem)-\(n).\(ext)"
-            candidate = dirURL.appendingPathComponent(next)
-            n += 1
-        } while fm.fileExists(atPath: candidate.path)
-        return candidate.path
+
+        var n = 0
+        while n < 10_000 {
+            let name: String
+            if n == 0 {
+                name = filename
+            } else {
+                name = ext.isEmpty ? "\(stem)-\(n)" : "\(stem)-\(n).\(ext)"
+            }
+            let path = dirURL.appendingPathComponent(name).path
+            let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+            if fd >= 0 {
+                // Enforce 0600 exactly (open mode is masked by umask).
+                _ = fchmod(fd, 0o600)
+                return (fd, path)
+            }
+            if errno == EEXIST {
+                n += 1
+                continue
+            }
+            return nil
+        }
+        return nil
+    }
+
+    /// Write the full buffer to `fd`, retrying short writes and EINTR.
+    private func writeAll(fd: Int32, data: Data) -> Bool {
+        if data.isEmpty { return true }
+        return data.withUnsafeBytes { raw -> Bool in
+            guard let base = raw.baseAddress else { return false }
+            var offset = 0
+            let total = raw.count
+            while offset < total {
+                let n = write(fd, base.advanced(by: offset), total - offset)
+                if n < 0 {
+                    if errno == EINTR { continue }
+                    return false
+                }
+                offset += n
+            }
+            return true
+        }
     }
 }
