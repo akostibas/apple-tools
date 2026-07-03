@@ -72,17 +72,36 @@ public enum IMessageIntegration {
     /// rather than risk duplicate-chat creation. `style = 45` restricts
     /// to 1:1 — group threads use SendToChat by GUID.
     public static func hasOneToOneChatForHandle(_ handle: String) -> Bool? {
-        let escaped = handle.replacingOccurrences(of: "'", with: "''")
         let sql = """
             SELECT 1 FROM chat c
             JOIN chat_handle_join chj ON c.ROWID = chj.chat_id
             JOIN handle h ON chj.handle_id = h.ROWID
-            WHERE h.id = '\(escaped)' AND c.style = 45
+            WHERE \(handleMatchClause(column: "h.id", handle: handle)) AND c.style = 45
             LIMIT 1
             """
         let (rows, err) = queryChatDB(sql)
         if err != nil { return nil }
         return !rows.isEmpty
+    }
+
+    /// Build a SQL boolean predicate matching a stored message handle in
+    /// `column` against a caller-supplied recipient. chat.db stores phone
+    /// handles canonically in E.164 (`+16502530000`), but callers routinely
+    /// pass national or formatted numbers (`6502530000`, `(650) 253-0000`) —
+    /// a verbatim `= handle` match then finds no row, breaking first-contact
+    /// detection and delivery confirmation (issue #21). So when the handle
+    /// parses as a phone number we match its E.164 form as well. Emails and
+    /// short codes (PhoneFormatting returns nil) match verbatim only. All
+    /// candidate values are single-quote-escaped for SQL.
+    static func handleMatchClause(column: String, handle: String) -> String {
+        var candidates = [handle]
+        if let e164 = PhoneFormatting.e164(handle), !candidates.contains(e164) {
+            candidates.append(e164)
+        }
+        let list = candidates
+            .map { "'\($0.replacingOccurrences(of: "'", with: "''"))'" }
+            .joined(separator: ", ")
+        return "\(column) IN (\(list))"
     }
 
     /// Look up the Messages.app guid for a chat_identifier (e.g. "chat6711433889022879"
@@ -273,7 +292,6 @@ public enum IMessageIntegration {
     /// cursor immediately before invoking the AppleScript send so this
     /// query only sees rows created by *this* send.
     public static func outgoingStatus(toHandle handle: String, sinceROWID: Int64) -> OutgoingStatus {
-        let escaped = handle.replacingOccurrences(of: "'", with: "''")
         let sql = """
             SELECT m.ROWID,
                    COALESCE(m.is_sent, 0),
@@ -283,7 +301,7 @@ public enum IMessageIntegration {
             LEFT JOIN handle h ON m.handle_id = h.ROWID
             WHERE m.ROWID > \(sinceROWID)
               AND m.is_from_me = 1
-              AND h.id = '\(escaped)'
+              AND \(handleMatchClause(column: "h.id", handle: handle))
             ORDER BY m.ROWID DESC
             LIMIT 1
             """
@@ -527,13 +545,63 @@ public enum IMessageIntegration {
         return Int64(appleSeconds * 1_000_000_000)
     }
 
+    /// UTC date-only / space-separated fallback formats accepted for `since`
+    /// and `before` filters, in addition to full ISO-8601. Agents routinely
+    /// pass `2026-07-03` or `2026-07-03 12:00:00`, which `isoToAppleNanos`
+    /// rejects (issue #23).
+    private static let dateFilterFallbackFormatters: [DateFormatter] = {
+        ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-dd"].map { format in
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.timeZone = TimeZone(identifier: "UTC")
+            f.calendar = Calendar(identifier: .gregorian)
+            f.dateFormat = format
+            return f
+        }
+    }()
+
+    /// Parse a `since`/`before` filter (or a `next_before` pagination cursor)
+    /// into chat.db apple-nanos. Accepts, in order:
+    ///   - a raw apple-nanos integer — the exact, lossless cursor we emit as
+    ///     `next_before`, so pagination round-trips without flooring
+    ///     same-second messages (issue #20);
+    ///   - full ISO-8601, with or without fractional seconds;
+    ///   - date-only `YYYY-MM-DD` and `YYYY-MM-DD HH:MM[:SS]` in UTC (issue #23).
+    /// Returns nil ONLY when the value matches none of these, so callers can
+    /// surface a tool error instead of silently dropping the filter and
+    /// looping on page 1 forever (issue #23).
+    public static func parseDateFilterToAppleNanos(_ input: String) -> Int64? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // Raw apple-nanos cursor. 15+ digits is far outside the range of any
+        // date string a caller would type (a bare year is 4), so this is
+        // unambiguous.
+        if trimmed.count >= 15, trimmed.allSatisfy({ $0.isNumber }), let nanos = Int64(trimmed) {
+            return nanos
+        }
+
+        if let nanos = isoToAppleNanos(trimmed) { return nanos }
+
+        for fmt in dateFilterFallbackFormatters {
+            if let date = fmt.date(from: trimmed) {
+                let appleSeconds = date.timeIntervalSince1970 - Double(appleEpochOffset)
+                return Int64(appleSeconds * 1_000_000_000)
+            }
+        }
+        return nil
+    }
+
     // MARK: - AttributedBody decoding
 
     /// Decode text from an NSKeyedArchiver attributedBody blob (hex-encoded).
     ///
     /// Layout: ... "NSString" <5-byte preamble> <length> <UTF-8 text> ...
-    /// Length encoding: if first byte == 0x81, next 2 bytes are little-endian uint16;
-    /// otherwise the first byte itself is the length.
+    /// Length encoding (typedstream varint): a first byte < 0x81 is the length
+    /// itself; 0x81 means the next 2 bytes are a little-endian uint16; 0x82
+    /// means the next 4 bytes are a little-endian uint32 (needed once the text
+    /// exceeds 65535 bytes — without it a long message decodes to garbage,
+    /// issue #35).
     public static func decodeAttributedBody(hex: String) -> String? {
         guard let data = dataFromHex(hex) else { return nil }
 
@@ -551,6 +619,13 @@ public enum IMessageIntegration {
             guard preambleEnd + 2 < data.count else { return nil }
             textLength = Int(data[preambleEnd + 1]) + Int(data[preambleEnd + 2]) * 256
             textStart = preambleEnd + 3
+        } else if lengthByte == 0x82 {
+            guard preambleEnd + 4 < data.count else { return nil }
+            textLength = Int(data[preambleEnd + 1])
+                | Int(data[preambleEnd + 2]) << 8
+                | Int(data[preambleEnd + 3]) << 16
+                | Int(data[preambleEnd + 4]) << 24
+            textStart = preambleEnd + 5
         } else {
             textLength = Int(lengthByte)
             textStart = preambleEnd + 1

@@ -24,8 +24,8 @@ public struct IMessageTool: ProbeTool {
                 "chat": PropertySchema(type_: "string", description: "Phone number, email, group name, or chat_id (for read; optional filter for search)"),
                 "query": PropertySchema(type_: "string", description: "Text to search for (for search)"),
                 "limit": PropertySchema(type_: "integer", description: "Max results (default 5 for recent, 10 for read and stats, 20 for search)"),
-                "before": PropertySchema(type_: "string", description: "ISO 8601 timestamp — return messages/conversations before this time (for read, search)"),
-                "since": PropertySchema(type_: "string", description: "ISO 8601 timestamp — only include activity/messages after this time (for recent, stats, search)"),
+                "before": PropertySchema(type_: "string", description: "Return messages/conversations before this time (for read, search). Accepts an ISO 8601 timestamp, a date (2026-07-03), or the opaque next_before cursor from a prior read page. An unparseable value is rejected, not ignored."),
+                "since": PropertySchema(type_: "string", description: "Only include activity/messages after this time (for recent, stats, search). Accepts an ISO 8601 timestamp or a date (2026-07-03). An unparseable value is rejected, not ignored."),
                 "message_id": PropertySchema(type_: "integer", description: "Message ROWID from read/search results (for fetch_attachment)"),
                 "filename": PropertySchema(type_: "string", description: "Attachment filename to select when a message has multiple attachments (for fetch_attachment, optional)"),
                 "exclude_spam": PropertySchema(type_: "boolean", description: "Drop likely-spam senders — SMS-filtered (smsfp)/(smsft) chats and 5-6 digit marketing short codes — keeping real contacts. Default false; never drops by default (for recent, stats)"),
@@ -118,6 +118,26 @@ public struct IMessageTool: ProbeTool {
             || (params?["humans_only"]?.value as? Bool) == true
     }
 
+    /// Uniform tool error for an unparseable `since`/`before` value. Returning
+    /// an error (rather than silently dropping the filter) stops an agent from
+    /// paginating page 1 forever when it passes a malformed cursor (issue #23).
+    static func dateFilterError(field: String, value: String) -> String {
+        return "invalid '\(field)' value: '\(value)' — use ISO 8601 (e.g. 2026-07-03T12:00:00Z), a date (2026-07-03), or a next_before cursor from a prior page"
+    }
+
+    /// Escape a user-supplied substring for safe use inside a SQL `LIKE`
+    /// pattern, so wildcard metacharacters are matched literally. `%`, `_`, and
+    /// the escape char `\` itself are backslash-escaped; the query must pair
+    /// this with an `ESCAPE '\'` clause. Without it, searching `100%` matches
+    /// any message containing `100`, and `is_a` matches `isla` (issue #33).
+    /// Kept deliberately textually simple so it can be lifted into a single
+    /// shared helper at integration.
+    static func escapeLIKE(_ s: String) -> String {
+        return s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "%", with: "\\%")
+                .replacingOccurrences(of: "_", with: "\\_")
+    }
+
     // MARK: - Preflight
 
     public func preflight() -> (ok: Bool, message: String) {
@@ -130,13 +150,17 @@ public struct IMessageTool: ProbeTool {
         let (resolved, attachErr) = resolveAttachments(attachments)
         if let attachErr = attachErr { return (attachErr, true) }
 
+        // Snapshot the max ROWID before the send so the async delivery check
+        // only ever inspects the row THIS send creates — not a concurrent
+        // send's row to the same recipient (issue #35).
+        let sinceROWID = IMessageIntegration.currentMaxROWID()
         let result = IMessageIntegration.send(to: recipient, text: text, attachments: resolved)
         if result.isError {
             return (result.message, true)
         }
 
         // Send was accepted. Schedule async delivery check.
-        scheduleDeliveryCheck(recipient: recipient, text: text)
+        scheduleDeliveryCheck(recipient: recipient, sinceROWID: sinceROWID)
 
         var response: [String: Any] = [
             "status": "sending",
@@ -192,13 +216,19 @@ public struct IMessageTool: ProbeTool {
     private static let maxAttachmentCount = 10
     private static let maxAttachmentBytes: Int64 = 100 * 1_048_576
 
-    /// Check chat.db after a delay to verify the message was delivered.
-    private func scheduleDeliveryCheck(recipient: String, text: String) {
+    /// Check chat.db after a delay to surface a genuine send failure via the
+    /// async notify channel. Scoped to the row created after `sinceROWID` so a
+    /// concurrent send to the same recipient can't be misattributed to this one
+    /// (issue #35). Only a non-zero `error` column is reported: `is_delivered = 0`
+    /// a few seconds after send merely means no delivery receipt yet (recipient's
+    /// device asleep, read-receipts off, network lag) — NOT a failure — so we no
+    /// longer prompt a duplicate SMS on it.
+    private func scheduleDeliveryCheck(recipient: String, sinceROWID: Int64) {
         guard notify != nil else { return }
         Log.info("Delivery check: scheduling for \(recipient) in 4s")
 
         DispatchQueue.global().asyncAfter(deadline: .now() + 4.0) { [self] in
-            let escapedRecipient = recipient.replacingOccurrences(of: "'", with: "''")
+            let recipientMatch = "(\(IMessageIntegration.handleMatchClause(column: "c.chat_identifier", handle: recipient)) OR \(IMessageIntegration.handleMatchClause(column: "h.id", handle: recipient)))"
 
             let sql = """
                 SELECT m.is_delivered, m.is_sent, m.error, m.service
@@ -207,8 +237,9 @@ public struct IMessageTool: ProbeTool {
                 JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
                 JOIN chat c ON cmj.chat_id = c.ROWID
                 WHERE m.is_from_me = 1
-                  AND (c.chat_identifier = '\(escapedRecipient)' OR h.id = '\(escapedRecipient)')
-                ORDER BY m.date DESC
+                  AND m.ROWID > \(sinceROWID)
+                  AND \(recipientMatch)
+                ORDER BY m.ROWID DESC
                 LIMIT 1
                 """
 
@@ -218,15 +249,8 @@ public struct IMessageTool: ProbeTool {
             let row = rows[0]
             guard row.count >= 4 else { return }
 
-            let isDelivered = row[0] == "1"
-            let isSent = row[1] == "1"
             let errorCode = Int(row[2]) ?? 0
             let service = row[3]
-
-            if isDelivered {
-                Log.info("Delivery check: message to \(recipient) confirmed delivered via \(service)")
-                return
-            }
 
             if errorCode != 0 {
                 Log.info("Delivery check: message to \(recipient) failed with error \(errorCode)")
@@ -234,10 +258,7 @@ public struct IMessageTool: ProbeTool {
                 return
             }
 
-            if isSent && !isDelivered && service == "iMessage" {
-                Log.info("Delivery check: message to \(recipient) sent but not delivered (service: \(service))")
-                notify?("Message to \(recipient) was sent via iMessage but delivery has not been confirmed. The recipient may not use iMessage. You may want to retry via SMS or check with the user.", nil)
-            }
+            Log.info("Delivery check: message to \(recipient) recorded (service: \(service), error: 0) — no delivery receipt yet is not treated as a failure")
         }
     }
 
@@ -245,7 +266,10 @@ public struct IMessageTool: ProbeTool {
 
     private func recent(limit: Int, since: String?, excludeSpam: Bool) -> (String, Bool) {
         var sinceFilter = ""
-        if let since = since, let nanos = IMessageIntegration.isoToAppleNanos(since) {
+        if let since = since {
+            guard let nanos = IMessageIntegration.parseDateFilterToAppleNanos(since) else {
+                return (Self.dateFilterError(field: "since", value: since), true)
+            }
             sinceFilter = "HAVING MAX(m.date) > \(nanos)"
         }
 
@@ -484,7 +508,7 @@ public struct IMessageTool: ProbeTool {
                    COALESCE(h.id, '') AS handle,
                    m.date,
                    CASE WHEN m.text IS NULL OR m.text = '' THEN hex(m.attributedBody) ELSE '' END AS body_hex,
-                   COALESCE(GROUP_CONCAT(a.mime_type || ':' || a.transfer_name, ', '), '') AS attachments
+                   COALESCE(GROUP_CONCAT(COALESCE(a.mime_type, '') || ':' || COALESCE(a.transfer_name, ''), char(31)), '') AS attachments
             FROM message m
             LEFT JOIN handle h ON m.handle_id = h.ROWID
             JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
@@ -494,7 +518,10 @@ public struct IMessageTool: ProbeTool {
               AND (m.text IS NOT NULL AND m.text != '' OR m.attributedBody IS NOT NULL OR a.ROWID IS NOT NULL)
             """
 
-        if let before = before, let nanos = IMessageIntegration.isoToAppleNanos(before) {
+        if let before = before {
+            guard let nanos = IMessageIntegration.parseDateFilterToAppleNanos(before) else {
+                return (Self.dateFilterError(field: "before", value: before), true)
+            }
             sql += "\n  AND m.date < \(nanos)"
         }
 
@@ -518,8 +545,14 @@ public struct IMessageTool: ProbeTool {
             "count": messages.count,
             "messages": messages,
         ]
-        if hasMore, let oldest = pageRows.last, oldest.count > 7 {
-            response["next_before"] = IMessageIntegration.appleNanosToISO(oldest[7])
+        if hasMore, let oldest = pageRows.last, oldest.count > 7, !oldest[7].isEmpty {
+            // Emit the RAW apple-nanos of the boundary row as an opaque cursor.
+            // A whole-second ISO string floors the timestamp, so the next page
+            // (filtering `m.date < cursor`) would skip any same-second message
+            // older than the boundary — a lossy cursor drops rapid-fire bursts
+            // (issue #20). The raw nanos round-trip exactly through
+            // parseDateFilterToAppleNanos.
+            response["next_before"] = oldest[7]
         }
         return (IMessageIntegration.jsonEncode(response), false)
     }
@@ -527,7 +560,10 @@ public struct IMessageTool: ProbeTool {
     // MARK: - Search
 
     private func search(query: String, chat: String?, limit: Int, since: String?, before: String?) -> (String, Bool) {
-        let escaped = query.replacingOccurrences(of: "'", with: "''")
+        // Escape single quotes for the SQL string literal, and LIKE wildcards
+        // so `%`/`_` in the query match literally (issue #33). The LIKE below
+        // carries a matching `ESCAPE '\'` clause.
+        let escaped = Self.escapeLIKE(query).replacingOccurrences(of: "'", with: "''")
 
         var extraFilters = ""
         if let chat = chat {
@@ -541,10 +577,16 @@ public struct IMessageTool: ProbeTool {
                 extraFilters += " AND cmj.chat_id = \(chatID)"
             }
         }
-        if let since = since, let nanos = IMessageIntegration.isoToAppleNanos(since) {
+        if let since = since {
+            guard let nanos = IMessageIntegration.parseDateFilterToAppleNanos(since) else {
+                return (Self.dateFilterError(field: "since", value: since), true)
+            }
             extraFilters += " AND m.date > \(nanos)"
         }
-        if let before = before, let nanos = IMessageIntegration.isoToAppleNanos(before) {
+        if let before = before {
+            guard let nanos = IMessageIntegration.parseDateFilterToAppleNanos(before) else {
+                return (Self.dateFilterError(field: "before", value: before), true)
+            }
             extraFilters += " AND m.date < \(nanos)"
         }
 
@@ -556,14 +598,14 @@ public struct IMessageTool: ProbeTool {
                    m.date,
                    c.chat_identifier, c.display_name, c.style, c.ROWID AS chat_rowid,
                    CASE WHEN m.text IS NULL OR m.text = '' THEN hex(m.attributedBody) ELSE '' END AS body_hex,
-                   COALESCE(GROUP_CONCAT(a.mime_type || ':' || a.transfer_name, ', '), '') AS attachments
+                   COALESCE(GROUP_CONCAT(COALESCE(a.mime_type, '') || ':' || COALESCE(a.transfer_name, ''), char(31)), '') AS attachments
             FROM message m
             LEFT JOIN handle h ON m.handle_id = h.ROWID
             JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
             JOIN chat c ON cmj.chat_id = c.ROWID
             LEFT JOIN message_attachment_join maj ON m.ROWID = maj.message_id
             LEFT JOIN attachment a ON maj.attachment_id = a.ROWID
-            WHERE m.text LIKE '%\(escaped)%'
+            WHERE m.text LIKE '%\(escaped)%' ESCAPE '\\'
               AND m.text IS NOT NULL AND m.text != ''\(extraFilters)
             GROUP BY m.ROWID
             ORDER BY m.date DESC
@@ -619,7 +661,10 @@ public struct IMessageTool: ProbeTool {
     private func stats(limit: Int, since: String?, excludeSpam: Bool) -> (String, Bool) {
         var sinceFilter = ""
         var sinceISO: String?
-        if let since = since, let nanos = IMessageIntegration.isoToAppleNanos(since) {
+        if let since = since {
+            guard let nanos = IMessageIntegration.parseDateFilterToAppleNanos(since) else {
+                return (Self.dateFilterError(field: "since", value: since), true)
+            }
             sinceFilter = "AND m.date > \(nanos)"
             sinceISO = IMessageIntegration.appleNanosToISO(String(nanos))
         }
@@ -816,16 +861,34 @@ public struct IMessageTool: ProbeTool {
         if !row[7].isEmpty { msg["date"] = IMessageIntegration.appleNanosToISO(row[7]) }
 
         if row.count > attachmentsIndex, !row[attachmentsIndex].isEmpty {
-            let attachments = row[attachmentsIndex].split(separator: ",").map { entry -> [String: String] in
-                let parts = entry.trimmingCharacters(in: .whitespaces).split(separator: ":", maxSplits: 1)
-                if parts.count == 2 {
-                    return ["type": String(parts[0]), "filename": String(parts[1])]
+            // Entries are joined by the unit-separator (char 31) rather than
+            // ", " so a transfer_name containing a comma isn't split into bogus
+            // entries; each entry is "mime:transfer_name" with the mime/name
+            // fields split on the FIRST colon only, since a transfer_name may
+            // itself contain ':' (issue #22). An empty mime (NULL in chat.db)
+            // yields no `type` key rather than leaking a bare colon.
+            let attachments = row[attachmentsIndex]
+                .split(separator: Self.attachmentEntrySeparator, omittingEmptySubsequences: true)
+                .map { entry -> [String: String] in
+                    let e = String(entry)
+                    if let colon = e.firstIndex(of: ":") {
+                        let mime = String(e[e.startIndex..<colon])
+                        let name = String(e[e.index(after: colon)...])
+                        var dict = ["filename": name]
+                        if !mime.isEmpty { dict["type"] = mime }
+                        return dict
+                    }
+                    return ["filename": e]
                 }
-                return ["filename": String(entry.trimmingCharacters(in: .whitespaces))]
-            }
             msg["attachments"] = attachments
         }
 
         return msg
     }
+
+    /// Delimiter joining attachment entries in the read/search `GROUP_CONCAT`
+    /// (SQL `char(31)`). The ASCII unit separator can't appear in a mime type
+    /// or a macOS filename, so it's a safe entry boundary — unlike the previous
+    /// ", " which collided with commas in transfer names (issue #22).
+    static let attachmentEntrySeparator: Character = "\u{1F}"
 }
