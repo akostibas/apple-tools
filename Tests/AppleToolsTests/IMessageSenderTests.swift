@@ -103,6 +103,29 @@ final class IMessageSenderTests: XCTestCase {
         XCTAssertFalse(IMessageSender.isGroupChatID("+15551234567"))
         XCTAssertFalse(IMessageSender.isGroupChatID("user@example.com"))
         XCTAssertFalse(IMessageSender.isGroupChatID("5551234567"))
+
+        // Email local-parts that merely START with "chat" must not be
+        // misrouted to the group path (issue #35) — the real form is
+        // `chat` + digits.
+        XCTAssertFalse(IMessageSender.isGroupChatID("chatter@example.com"))
+        XCTAssertFalse(IMessageSender.isGroupChatID("chatty.person@icloud.com"))
+        XCTAssertFalse(IMessageSender.isGroupChatID("chat"))
+    }
+
+    /// Multi-line bodies must reach Messages with their LFs intact. `do shell
+    /// script` converts LF→CR unless invoked `without altering line endings`,
+    /// so the script that reads the payload from the environment must carry
+    /// that phrase (issue #35).
+    func testPayloadShellReadPreservesLineEndings() {
+        var capturedScript: String?
+        IMessageSender.runAppleScript = { script, _, _ in
+            capturedScript = script
+            return ("", nil)
+        }
+        _ = IMessageSender.send(to: "+15551234567", text: "line one\nline two")
+        guard let s = capturedScript else { return XCTFail("no script captured") }
+        XCTAssertTrue(s.contains(#"do shell script "printenv APPLE_TOOLS_IMSG_TEXT" without altering line endings"#),
+            "payload read must preserve LFs: \(s)")
     }
 
     /// When sending to a group chat ID, the AppleScript should use `chat id`

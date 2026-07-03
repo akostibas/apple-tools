@@ -10,6 +10,19 @@ import Foundation
 /// parsing are encapsulated; callers receive typed values.
 public enum NotesIntegration {
 
+    // MARK: - Field protocol
+
+    /// Field/record separators for the AppleScript output records that this
+    /// module parses. Note titles and folder names can legitimately contain
+    /// tabs and linefeeds; a tab-delimited protocol silently shifts the
+    /// folder/date fields and truncates the title used for the checklist/link
+    /// lookups (issue #37). ASCII Unit Separator (0x1F) and Record Separator
+    /// (0x1E) are control codes that cannot occur in Notes titles, folder
+    /// names, or bodies, so they delimit unambiguously. The AppleScript side
+    /// emits them via `character id 31` / `character id 30`.
+    static let fieldSep = "\u{001F}"
+    static let recordSep = "\u{001E}"
+
     // MARK: - Types
 
     public enum NotesError: Error, CustomStringConvertible {
@@ -78,24 +91,106 @@ public enum NotesIntegration {
 
     // MARK: - Folders
 
+    /// AppleScript handlers shared by the folder-enumerating scripts.
+    ///
+    /// `isDeletedFolder` walks a folder's `container` chain and reports whether
+    /// it lives under (or is) the "Recently Deleted" system folder — the only
+    /// stable discriminator Notes exposes for the trash container. Deleted
+    /// folders linger there ~30 days and `exists folder X` still returns true
+    /// for them, so a plain name/existence check can't tell them apart (issue
+    /// #15). Every coercion is wrapped in `try`: a deleted *parent* becomes a
+    /// zombie reference that raises -1700 (errAECoercionFail) on `name`/`class`,
+    /// which would otherwise abort the whole enumeration — here it's treated as
+    /// deleted so one bad ref can't sink the walk.
+    ///
+    /// `liveFolderByName` / `liveChildByName` resolve a folder by name to a
+    /// *live* match only, returning `missing value` when the sole match is in
+    /// the trash — so a create can't land a note in a deleted folder.
+    ///
+    /// NOTE: "Recently Deleted" is localized by macOS; non-English systems name
+    /// the container differently, which this exact-string match won't catch.
+    /// That's a known limitation tracked separately.
+    static let folderScriptHandlers = """
+    on isDeletedFolder(f)
+        tell application "Notes"
+            set cur to f
+            repeat
+                try
+                    set cls to class of cur
+                on error
+                    return true
+                end try
+                if cls is not folder then return false
+                try
+                    set cname to name of cur
+                on error
+                    return true
+                end try
+                if cname is "Recently Deleted" then return true
+                try
+                    set cur to container of cur
+                on error
+                    return true
+                end try
+            end repeat
+        end tell
+    end isDeletedFolder
+
+    on liveFolderByName(nm)
+        tell application "Notes"
+            repeat with f in (every folder)
+                try
+                    if (name of f) is nm and not (my isDeletedFolder(f)) then return f
+                end try
+            end repeat
+        end tell
+        return missing value
+    end liveFolderByName
+
+    on liveChildByName(parentRef, nm)
+        tell application "Notes"
+            repeat with s in (every folder of parentRef)
+                try
+                    if (name of s) is nm and not (my isDeletedFolder(s)) then return s
+                end try
+            end repeat
+        end tell
+        return missing value
+    end liveChildByName
+    """
+
     public static func listFolders() throws -> [Folder] {
         let script = """
+        \(folderScriptHandlers)
         tell application "Notes"
+            set fs to (character id 31)
+            set rs to (character id 30)
             set output to ""
-            -- First, emit all folders with their note counts
+            -- First, emit every folder with its note count and a deleted flag.
+            -- Each coercion is guarded so a zombie folder ref can't abort the
+            -- listing; the Swift side filters out flagged (Recently-Deleted)
+            -- folders so the decision stays unit-testable.
             repeat with f in (every folder)
-                set fName to name of f
-                set fID to id of f
-                set nCount to count of notes of f
-                set output to output & "F" & "\\t" & fID & "\\t" & fName & "\\t" & (nCount as string) & linefeed
+                try
+                    set isDel to my isDeletedFolder(f)
+                    set fName to name of f
+                    set fID to id of f
+                    set nCount to count of notes of f
+                    set delFlag to "0"
+                    if isDel then set delFlag to "1"
+                    set output to output & "F" & fs & fID & fs & fName & fs & (nCount as string) & fs & delFlag & rs
+                end try
             end repeat
-            -- Then, emit parent->child edges
+            -- Then, emit parent->child edges (guarded against zombie children).
             repeat with f in (every folder)
-                set fID to id of f
-                set subs to every folder of f
-                repeat with s in subs
-                    set output to output & "E" & "\\t" & fID & "\\t" & (id of s) & linefeed
-                end repeat
+                try
+                    set fID to id of f
+                    repeat with s in (every folder of f)
+                        try
+                            set output to output & "E" & fs & fID & fs & (id of s) & rs
+                        end try
+                    end repeat
+                end try
             end repeat
             return output
         end tell
@@ -108,11 +203,15 @@ public enum NotesIntegration {
         var folderOrder: [String] = []
         var childToParent: [String: String] = [:]
 
-        for line in out.components(separatedBy: "\n") where !line.isEmpty {
-            let parts = line.components(separatedBy: "\t")
+        for line in out.components(separatedBy: recordSep) where !line.isEmpty {
+            let parts = line.components(separatedBy: fieldSep)
             guard parts.count >= 2 else { continue }
 
             if parts[0] == "F" && parts.count >= 4 {
+                // Field 5 (deleted flag) is "1" for Recently-Deleted folders;
+                // exclude them so they neither list nor act as path parents.
+                // Absent flag (older protocol / partial record) => treat live.
+                if parts.count >= 5 && parts[4] == "1" { continue }
                 let id = parts[1]
                 folderMeta[id] = (name: parts[2], count: Int(parts[3]))
                 folderOrder.append(id)
@@ -187,6 +286,7 @@ public enum NotesIntegration {
         set theKey to do shell script "printenv APPLE_TOOLS_NOTES_ID_OR_TITLE"
         \(DateFormatting.appleScriptComponentsHandler)
         tell application "Notes"
+            set fs to (character id 31)
             set theNote to \(whereClause)
             set nID to id of theNote
             set nName to name of theNote
@@ -200,7 +300,7 @@ public enum NotesIntegration {
             set nDate to my atDateComponents(modification date of theNote)
             set nCreated to my atDateComponents(creation date of theNote)
             set nHTML to body of theNote
-            return nID & "\\t" & nName & "\\t" & nFolder & "\\t" & nDate & "\\t" & nCreated & "\\t" & nHTML
+            return nID & fs & nName & fs & nFolder & fs & nDate & fs & nCreated & fs & nHTML
         end tell
         """
 
@@ -210,12 +310,12 @@ public enum NotesIntegration {
             throw NotesError.scriptFailed(err)
         }
 
-        let parts = out.components(separatedBy: "\t")
+        let parts = out.components(separatedBy: fieldSep)
         guard parts.count >= 6 else {
             throw NotesError.parseFailure("failed to parse note data")
         }
         let noteTitle = parts[1]
-        let htmlBody = parts[5...].joined(separator: "\t")
+        let htmlBody = parts[5...].joined(separator: fieldSep)
         // AppleScript flattens checklists; recover checked state from the
         // protobuf store (best-effort, possibly stale — see NotesChecklistStore).
         let checklist = checklistLookup(noteTitle).map { (text: $0.text, done: $0.done) }
@@ -275,11 +375,15 @@ public enum NotesIntegration {
             //      flattened; also covers folder names that contain "/")
             //   2. "/"-separated path walk, creating missing segments nested
             //   3. plain name with no "/": create at top level
+            // Resolution uses live-only folder lookups (my liveFolderByName /
+            // liveChildByName): `exists folder X` / `folder X` also match
+            // Recently-Deleted folders, so a plain lookup could land the note in
+            // the trash (issue #15). A name that matches only a deleted folder
+            // resolves to missing value and falls through to creating a fresh
+            // live folder.
             atClause = """
-            set targetFolder to missing value
-                    if exists folder theFolder then
-                        set targetFolder to folder theFolder
-                    else
+            set targetFolder to my liveFolderByName(theFolder)
+                    if targetFolder is missing value then
                         set AppleScript's text item delimiters to "/"
                         set segs to text items of theFolder
                         set AppleScript's text item delimiters to ""
@@ -288,14 +392,16 @@ public enum NotesIntegration {
                             set seg to (item i of segs) as string
                             if seg is not "" then
                                 if targetFolder is missing value then
-                                    if exists folder seg of acct then
-                                        set targetFolder to folder seg of acct
+                                    set existing to my liveChildByName(acct, seg)
+                                    if existing is not missing value then
+                                        set targetFolder to existing
                                     else
                                         set targetFolder to (make new folder at acct with properties {name:seg})
                                     end if
                                 else
-                                    if exists folder seg of targetFolder then
-                                        set targetFolder to folder seg of targetFolder
+                                    set existing to my liveChildByName(targetFolder, seg)
+                                    if existing is not missing value then
+                                        set targetFolder to existing
                                     else
                                         set targetFolder to (make new folder at targetFolder with properties {name:seg})
                                     end if
@@ -312,16 +418,21 @@ public enum NotesIntegration {
             """
         }
 
+        // Handlers are only needed when resolving into a folder; the no-folder
+        // path never calls them.
+        let handlers = usableFolder != nil ? folderScriptHandlers : ""
         let script = """
+        \(handlers)
         set theBody to do shell script "printenv APPLE_TOOLS_NOTES_BODY"
         \(folderBinding)
         log "PHASE: prepare"
         tell application "Notes"
+            set fs to (character id 31)
             log "PHASE: pre-commit"
             \(atClause)
             set noteID to id of newNote as string
             log "PHASE: committed id=" & noteID
-            return noteID & "\\t" & (name of newNote)
+            return noteID & fs & (name of newNote)
         end tell
         """
 
@@ -334,7 +445,7 @@ public enum NotesIntegration {
         let (out, err) = runAppleScript(script, env, verifyHook)
         if let err = err { throw NotesError.scriptFailed(err) }
 
-        let parts = out.components(separatedBy: "\t")
+        let parts = out.components(separatedBy: fieldSep)
         guard parts.count >= 2 else {
             throw NotesError.parseFailure("note created but failed to parse response")
         }
@@ -385,6 +496,7 @@ public enum NotesIntegration {
         set theContent to do shell script "printenv APPLE_TOOLS_NOTES_CONTENT"
         log "PHASE: prepare"
         tell application "Notes"
+            set fs to (character id 31)
             set theNote to \(whereClause)
             set existingBody to body of theNote
             log "PHASE: pre-commit"
@@ -393,7 +505,7 @@ public enum NotesIntegration {
             log "PHASE: committed id=" & noteID
             set nPlain to plaintext of theNote
             set charCount to length of nPlain
-            return noteID & "\\t" & (name of theNote) & "\\t" & charCount
+            return noteID & fs & (name of theNote) & fs & charCount
         end tell
         """
 
@@ -411,7 +523,7 @@ public enum NotesIntegration {
             throw NotesError.scriptFailed(err)
         }
 
-        let parts = out.components(separatedBy: "\t")
+        let parts = out.components(separatedBy: fieldSep)
         guard parts.count >= 3 else {
             throw NotesError.parseFailure("content appended but failed to parse response")
         }

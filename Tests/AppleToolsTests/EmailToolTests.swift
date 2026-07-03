@@ -337,7 +337,30 @@ final class EmailToolTests: XCTestCase {
     }
 
     func testClassifierFlagsBot() {
-        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(address: "pinbot@pinterest.com", name: "Pinterest"))
+        // `bot` is a short/ambiguous needle, matched only as a BOUNDED token
+        // (issue #36): a whole local-part `bot@` and a separator-delimited
+        // `weekly-bot@` are still flagged.
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(address: "bot@pinterest.com"))
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(address: "weekly-bot@updates.example.com"))
+    }
+
+    func testClassifierDoesNotFlagHumanSurnamesContainingNeedles() {
+        // The reported false positives: `bot` substring in human surnames.
+        // Precision matters because --humans-only hides anyone flagged.
+        XCTAssertFalse(BulkSenderClassifier.isLikelyBulk(address: "talbot@example.com", name: "Sam Talbot"))
+        XCTAssertFalse(BulkSenderClassifier.isLikelyBulk(address: "abbot@example.com", name: "Ada Abbot"))
+    }
+
+    func testClassifierUsesDisplayNameSignal() {
+        // The `name` parameter is now read (issue #36): an ESP "via" name or a
+        // "No Reply" display name is a bulk signal even on an innocuous address.
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(
+            address: "hello@somebrand.com", name: "Acme via Mailchimp"))
+        XCTAssertTrue(BulkSenderClassifier.isLikelyBulk(
+            address: "hello@somebrand.com", name: "No Reply"))
+        // …but a plain human name is still not flagged.
+        XCTAssertFalse(BulkSenderClassifier.isLikelyBulk(
+            address: "sam@somebrand.com", name: "Sam Talbot"))
     }
 
     func testClassifierFlagsNoReplyVariants() {
@@ -409,6 +432,71 @@ final class EmailToolTests: XCTestCase {
         ]
         XCTAssertTrue(EmailSearch.senderRollup(hits).isEmpty,
                       "case-variant addresses collapse to one distinct sender")
+    }
+
+    // MARK: - Inbox cross-account merge (issue #25)
+
+    /// Build one inbox row in the AppleScript wire format: fields joined by the
+    /// Unit Separator, date as raw `y,mo,d,h,mi,s` components.
+    private func inboxRow(id: String, subject: String, from: String, comps: String,
+                          read: Bool = false, att: Int = 0) -> String {
+        let fs = EmailIntegration.fieldSep
+        return [id, subject, from, comps, read ? "true" : "false", String(att)].joined(separator: fs)
+    }
+
+    func testMergeInboxRowsSortsAcrossAccountsNewestFirst() {
+        // Two accounts, each newest-first internally, concatenated (account 1
+        // then account 2 — the order the AppleScript emits them). The global
+        // order must interleave by date, not stay grouped by account.
+        let lf = "\n"
+        let out = [
+            // account 1 (older)
+            inboxRow(id: "a1", subject: "A-newest", from: "x@a.com", comps: "2026,6,1,9,0,0"),
+            inboxRow(id: "a2", subject: "A-older", from: "x@a.com", comps: "2026,1,1,9,0,0"),
+            // account 2 (newer than account 1's newest)
+            inboxRow(id: "b1", subject: "B-newest", from: "y@b.com", comps: "2026,7,1,9,0,0"),
+            inboxRow(id: "b2", subject: "B-mid", from: "y@b.com", comps: "2026,3,1,9,0,0"),
+        ].joined(separator: lf)
+
+        let merged = EmailIntegration.mergeInboxRows(out, limit: 10)
+        XCTAssertEqual(merged.map { $0.id }, ["b1", "a1", "b2", "a2"],
+                       "rows must be globally newest-first, not grouped by account")
+    }
+
+    func testMergeInboxRowsTrimsAfterMerge() {
+        // With limit 2, account 2's newest mail must survive the trim even
+        // though it was emitted after account 1's — the pre-fix bug dropped it.
+        let out = [
+            inboxRow(id: "a1", subject: "A", from: "x@a.com", comps: "2026,6,1,9,0,0"),
+            inboxRow(id: "a2", subject: "A2", from: "x@a.com", comps: "2026,5,1,9,0,0"),
+            inboxRow(id: "b1", subject: "B", from: "y@b.com", comps: "2026,7,1,9,0,0"),
+        ].joined(separator: "\n")
+
+        let merged = EmailIntegration.mergeInboxRows(out, limit: 2)
+        XCTAssertEqual(merged.map { $0.id }, ["b1", "a1"],
+                       "newest across ALL accounts survives trimming to limit")
+    }
+
+    func testMergeInboxRowsPreservesTabInSubject() {
+        // A subject containing a literal tab must not shift later fields, since
+        // the wire format uses a control-char delimiter, not tab (issue #36).
+        let out = inboxRow(id: "a1", subject: "quarterly\treport", from: "x@a.com",
+                           comps: "2026,6,1,9,0,0", att: 3)
+        let merged = EmailIntegration.mergeInboxRows(out, limit: 10)
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.subject, "quarterly\treport")
+        XCTAssertEqual(merged.first?.from, "x@a.com")
+        XCTAssertEqual(merged.first?.attachmentCount, 3)
+    }
+
+    // MARK: - Message-ID bracket stripping (issue #26)
+
+    func testBareMessageIDStripsAngleBrackets() {
+        XCTAssertEqual(EmailIntegration.bareMessageID("<abc@host>"), "abc@host")
+    }
+
+    func testBareMessageIDLeavesBareIDUnchanged() {
+        XCTAssertEqual(EmailIntegration.bareMessageID("abc@host"), "abc@host")
     }
 
     func testClassifierHeadersStrengthenSignal() {

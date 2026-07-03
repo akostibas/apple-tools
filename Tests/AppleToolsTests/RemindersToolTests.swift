@@ -86,6 +86,18 @@ final class RemindersToolTests: XCTestCase {
         XCTAssertTrue(result.contains("search requires at least one of"))
     }
 
+    func testSearchDueDateEndAloneNotRejectedAsNoFilters() {
+        // `due_date_end` alone is a valid filter ("everything due at or before
+        // X"); it must not be rejected as having no filters (#38). This holds
+        // whether or not Reminders access is granted, since the no-filters
+        // guard runs before the access request.
+        let (result, _) = tool.handle(params: [
+            "action": AnyCodable("search"),
+            "due_date_end": AnyCodable("2099-12-31T23:59:59Z"),
+        ])
+        XCTAssertFalse(result.contains("search requires at least one"))
+    }
+
     func testGetMissingID() {
         let (result, isError) = tool.handle(params: [
             "action": AnyCodable("get"),
@@ -337,6 +349,38 @@ final class RemindersToolTests: XCTestCase {
         let json = parseJSON(result)
         XCTAssertNotNil(json["count"])
         XCTAssertNotNil(json["reminders"])
+    }
+
+    func testSearchWithDueDateEndOnly() throws {
+        // An upper bound with no lower bound runs a real bounded search rather
+        // than erroring or running unbounded (#38).
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("search"),
+            "due_date_end": AnyCodable("2099-12-31T23:59:59Z"),
+        ])
+
+        if isError && result.contains("access denied") {
+            throw XCTSkip("Reminders access not granted")
+        }
+
+        XCTAssertFalse(isError, result)
+        let json = parseJSON(result)
+        XCTAssertNotNil(json["count"])
+        XCTAssertNotNil(json["reminders"])
+    }
+
+    func testSearchWithInvalidDueDateEndOnly() throws {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("search"),
+            "due_date_end": AnyCodable("garbage"),
+        ])
+
+        if isError && result.contains("access denied") {
+            throw XCTSkip("Reminders access not granted")
+        }
+
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("invalid due_date_end"))
     }
 
     func testSearchWithInvalidDueDate() throws {

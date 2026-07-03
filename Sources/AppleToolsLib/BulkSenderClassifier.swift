@@ -35,15 +35,57 @@ public enum BulkSenderClassifier {
         }
     }
 
-    /// Local-part tokens that mark an address as a non-human / automated
-    /// sender. Matched as whole tokens OR substrings of the local-part
-    /// (role addresses like `no-reply+123@` and `bounce-foo@` are common).
-    static let bulkLocalPartNeedles: [String] = [
-        "postmaster", "mailer-daemon", "mailerdaemon", "mailer",
-        "noreply", "no-reply", "no_reply", "donotreply", "do-not-reply", "do_not_reply",
-        "bounce", "bounces", "bot", "notification", "notifications", "notify",
-        "newsletter", "marketing", "no.reply", "auto-confirm", "automailer",
+    /// Distinctive local-part tokens that mark an address as a non-human /
+    /// automated sender. Long/specific enough to match as bare SUBSTRINGS
+    /// without colliding with human names (role addresses like `no-reply+123@`
+    /// and `bounce-foo@` append suffixes, so substring matching is intended).
+    static let bulkSubstringNeedles: [String] = [
+        "postmaster", "mailer-daemon", "mailerdaemon",
+        "noreply", "no-reply", "no_reply", "no.reply",
+        "donotreply", "do-not-reply", "do_not_reply",
+        "bounces", "notification", "notifications",
+        "newsletter", "marketing", "auto-confirm", "automailer",
     ]
+
+    /// SHORT / ambiguous local-part tokens that are substrings of common human
+    /// surnames (`bot` in `talbot`/`abbot`, `mailer` in a name, `bounce`).
+    /// Matched only as bounded tokens — the character on each side must be the
+    /// string edge or a non-letter (a separator or digit), so `bounce-123@` and
+    /// `weekly-bot@` still trip while `talbot@` no longer does (issue #36).
+    /// The deliberate cost: a letter-concatenated form like `pinbot@` won't
+    /// match on `bot` alone — precision over recall, since `--humans-only`
+    /// hiding real people was the reported harm.
+    static let bulkBoundaryNeedles: [String] = [
+        "bot", "mailer", "bounce", "notify",
+    ]
+
+    /// Display-name tokens that signal automated / list mail. Kept to strings
+    /// that don't appear in ordinary personal names; ` via ` catches the
+    /// ESP "Sender via Mailchimp" shape (RFC 5322 on-behalf-of).
+    static let bulkNameNeedles: [String] = [
+        "no-reply", "noreply", "no reply", "do not reply", "donotreply",
+        "newsletter", "notification", "notifications", " via ", "automated",
+    ]
+
+    /// True if `needle` occurs in `haystack` bounded on both sides by the
+    /// string edge or a non-letter character. Both are assumed lowercased.
+    static func containsBoundedNeedle(_ haystack: String, _ needle: String) -> Bool {
+        guard !needle.isEmpty else { return false }
+        let h = Array(haystack)
+        let n = Array(needle)
+        guard h.count >= n.count else { return false }
+        var i = 0
+        while i <= h.count - n.count {
+            if Array(h[i..<(i + n.count)]) == n {
+                let beforeOK = (i == 0) || !h[i - 1].isLetter
+                let afterIdx = i + n.count
+                let afterOK = (afterIdx == h.count) || !h[afterIdx].isLetter
+                if beforeOK && afterOK { return true }
+            }
+            i += 1
+        }
+        return false
+    }
 
     /// ESP / bulk-mail infrastructure domains. Matched as substrings of the
     /// domain — these tokens are specific enough not to collide with normal
@@ -90,10 +132,17 @@ public enum BulkSenderClassifier {
             domain = ""
         }
 
-        // Local-part signals (substring — role addresses append suffixes).
-        for needle in bulkLocalPartNeedles where local.contains(needle) {
-            score += 2
-            break
+        // Local-part signals: distinctive tokens match as substrings; short,
+        // name-colliding tokens (`bot`, `mailer`, …) only as bounded tokens.
+        let localHit = bulkSubstringNeedles.contains { local.contains($0) }
+            || bulkBoundaryNeedles.contains { containsBoundedNeedle(local, $0) }
+        if localHit { score += 2 }
+
+        // Display-name signals (the documented `name` parameter — previously
+        // accepted but never read). A "… via Mailchimp" or "No Reply" display
+        // name is a bulk signal even when the address looks innocuous.
+        if let nm = name?.lowercased(), bulkNameNeedles.contains(where: { nm.contains($0) }) {
+            score += 1
         }
 
         // Domain-shape signals (ESP infra / marketing subdomains).

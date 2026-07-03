@@ -68,7 +68,7 @@ public enum NotesStoreSearch {
 
         var bindIdx: Int32 = 1
         if !fullText {
-            sqlite3_bind_text(stmt, bindIdx, "%\(escapeLike(query))%", -1, transient)
+            sqlite3_bind_text(stmt, bindIdx, "%\(SQLEscaping.escapeLIKE(query))%", -1, transient)
             bindIdx += 1
         }
         if let folder = folder {
@@ -113,14 +113,6 @@ public enum NotesStoreSearch {
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_step(stmt) == SQLITE_ROW, let c = sqlite3_column_text(stmt, 0) else { return nil }
         return String(cString: c)
-    }
-
-    /// Escape LIKE wildcards in user input so a query containing %, _ or \ is
-    /// matched literally (paired with `ESCAPE '\'` in the SQL).
-    private static func escapeLike(_ s: String) -> String {
-        return s.replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "%", with: "\\%")
-                .replacingOccurrences(of: "_", with: "\\_")
     }
 
     /// Build a snippet the same way the old AppleScript path did: drop the

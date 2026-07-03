@@ -73,6 +73,49 @@ final class CLIArgumentMapperTests: XCTestCase {
     /// The new `imessage stats` interface (#3) rides the generic dispatch: the
     /// real tool schema must map `stats --since … --limit …` with no per-tool
     /// argument code, coercing limit to Int.
+    // MARK: - `--flag=value` inline form (#34)
+
+    func testInlineEqualsValueMaps() throws {
+        let p = try CLIArgumentMapper.buildParams(
+            tokens: ["--calendar-name=Work", "--limit=5"], schema: schema(), action: nil)
+        XCTAssertEqual(p["calendar_name"]?.value as? String, "Work")
+        XCTAssertEqual(p["limit"]?.value as? Int, 5)
+    }
+
+    func testInlineEqualsAllowsDashPrefixedValue() throws {
+        // The whole point: a value that begins with `--` is unexpressible in the
+        // space-separated form (it's read as the next flag), but the inline form
+        // carries it verbatim.
+        let p = try CLIArgumentMapper.buildParams(
+            tokens: ["--calendar-name=--confirm"], schema: schema(), action: nil)
+        XCTAssertEqual(p["calendar_name"]?.value as? String, "--confirm")
+    }
+
+    func testInlineEqualsBooleanCoerces() throws {
+        let p = try CLIArgumentMapper.buildParams(
+            tokens: ["--verbose=false"], schema: schema(), action: nil)
+        XCTAssertEqual(p["verbose"]?.value as? Bool, false)
+    }
+
+    func testInlineEqualsArraySplits() throws {
+        let p = try CLIArgumentMapper.buildParams(
+            tokens: ["--attachments=a.txt,b.txt"], schema: schema(), action: nil)
+        let arr = (p["attachments"]?.value as? [Any])?.compactMap { $0 as? String }
+        XCTAssertEqual(arr, ["a.txt", "b.txt"])
+    }
+
+    func testInlineEqualsEmptyValueIsEmptyString() throws {
+        let p = try CLIArgumentMapper.buildParams(
+            tokens: ["--calendar-name="], schema: schema(), action: nil)
+        XCTAssertEqual(p["calendar_name"]?.value as? String, "")
+    }
+
+    func testInlineEqualsPreservesValueContainingEquals() throws {
+        let p = try CLIArgumentMapper.buildParams(
+            tokens: ["--calendar-name=a=b=c"], schema: schema(), action: nil)
+        XCTAssertEqual(p["calendar_name"]?.value as? String, "a=b=c")
+    }
+
     func testImessageStatsActionMapsAgainstToolSchema() throws {
         let imsg = IMessageTool(host: .test())
         let p = try CLIArgumentMapper.buildParams(

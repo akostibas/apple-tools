@@ -22,6 +22,14 @@ import SQLite3
 // degrades to showing reminders without subtask info.
 enum RemindersDB {
 
+    /// SQLite's `SQLITE_TRANSIENT` sentinel: instructs SQLite to copy the bound
+    /// bytes immediately, so the caller need not keep the source buffer alive.
+    /// The SQLite3 module map doesn't surface the C macro, so we reconstruct it
+    /// (as `PhotosIntegration` does). Required here because we bind
+    /// `(id as NSString).utf8String` — an autoreleased inner pointer that would
+    /// be a use-after-free under `SQLITE_STATIC` (nil destructor).
+    private static let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
     /// A minimal reminder reference used for subtask lists and parent links.
     struct LiteReminder {
         let id: String       // ZDACALENDARITEMUNIQUEIDENTIFIER (= EK calendarItemExternalIdentifier)
@@ -55,7 +63,7 @@ enum RemindersDB {
         }
         defer { sqlite3_finalize(stmt) }
 
-        sqlite3_bind_text(stmt, 1, (parentEKID as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 1, (parentEKID as NSString).utf8String, -1, SQLITE_TRANSIENT)
 
         var results: [LiteReminder] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -89,7 +97,7 @@ enum RemindersDB {
         }
         defer { sqlite3_finalize(stmt) }
 
-        sqlite3_bind_text(stmt, 1, (childEKID as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 1, (childEKID as NSString).utf8String, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_ROW,
               let id = columnString(stmt, 0),
@@ -126,7 +134,7 @@ enum RemindersDB {
         defer { sqlite3_finalize(stmt) }
 
         for (i, id) in childEKIDs.enumerated() {
-            sqlite3_bind_text(stmt, Int32(i + 1), (id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, Int32(i + 1), (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
         }
 
         var results: [String: LiteReminder] = [:]
@@ -165,7 +173,7 @@ enum RemindersDB {
         defer { sqlite3_finalize(stmt) }
 
         for (i, id) in parentEKIDs.enumerated() {
-            sqlite3_bind_text(stmt, Int32(i + 1), (id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, Int32(i + 1), (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
         }
 
         var results: [String: [LiteReminder]] = [:]

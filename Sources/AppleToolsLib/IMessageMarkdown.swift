@@ -145,10 +145,24 @@ public enum IMessageMarkdown {
         var s = protectEscapes(line)
         s = protectCodeSpans(s, &store)
         s = transformLinks(s, &store)
+        s = protectBareURLs(s, &store)
         s = stripEmphasis(s)
         s = restorePlaceholders(s, store)
         s = restoreEscapes(s)
         return s
+    }
+
+    /// Stash bare (unbracketed) `http(s)://…` URLs so the emphasis pass can't
+    /// touch them. The word-edge guards on `_`/`*` treat `/`, `:`, `.` as
+    /// non-word, so a URL like `https://x.com/_private_/page` would otherwise
+    /// have its underscores stripped to `/private/`, breaking the link
+    /// (issue #35). Markdown-link and image URLs are already stashed by
+    /// `transformLinks`, so this only catches URLs that appear inline as plain
+    /// text.
+    private static func protectBareURLs(_ s: String, _ store: inout [String]) -> String {
+        return replaceMatches(s, #"https?://[^\s]+"#) { groups in
+            stash(groups[0], &store)
+        }
     }
 
     private static func protectEscapes(_ s: String) -> String {

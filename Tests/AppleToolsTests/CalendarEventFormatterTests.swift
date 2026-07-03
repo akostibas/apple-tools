@@ -20,6 +20,8 @@ final class CalendarEventFormatterTests: XCTestCase {
         externalID: String?,
         calendar: String,
         title: String = "Standup",
+        start: String = "2026-06-10T17:00:00Z",
+        end: String = "2026-06-10T17:30:00Z",
         attendees: [CalendarAttendee] = [],
         organizer: CalendarAttendee? = nil,
         isOrganizer: Bool = false,
@@ -30,8 +32,8 @@ final class CalendarEventFormatterTests: XCTestCase {
             externalID: externalID,
             title: title,
             calendar: calendar,
-            start: "2026-06-10T17:00:00Z",
-            end: "2026-06-10T17:30:00Z",
+            start: start,
+            end: end,
             allDay: false,
             attendees: attendees,
             organizer: organizer,
@@ -147,6 +149,32 @@ final class CalendarEventFormatterTests: XCTestCase {
         ]
         let rows = CalendarEventFormatter.dedupeByID(records)
         XCTAssertEqual(rows.count, 2, "rows with no id must not collapse together")
+    }
+
+    func testDedupeKeepsRecurringOccurrencesSeparate() {
+        // A daily standup: every occurrence shares one externalID + eventIdentifier,
+        // differing only by start. They must NOT collapse into a single row (#24).
+        let records = [
+            record(id: "rec", externalID: "google-standup", calendar: "Alexi", start: "2026-06-08T17:00:00Z"),
+            record(id: "rec", externalID: "google-standup", calendar: "Alexi", start: "2026-06-09T17:00:00Z"),
+            record(id: "rec", externalID: "google-standup", calendar: "Alexi", start: "2026-06-10T17:00:00Z"),
+        ]
+        let rows = CalendarEventFormatter.dedupeByID(records)
+        XCTAssertEqual(rows.count, 3, "each occurrence of a recurring event is its own row")
+        XCTAssertEqual(rows.map { $0["start"] as? String },
+                       ["2026-06-08T17:00:00Z", "2026-06-09T17:00:00Z", "2026-06-10T17:00:00Z"])
+    }
+
+    func testDedupeMergesSameOccurrenceAcrossCalendars() {
+        // The same occurrence (same externalID AND same start) found on two
+        // calendars still collapses to one row.
+        let records = [
+            record(id: "a", externalID: "google-standup", calendar: "Alexi", start: "2026-06-10T17:00:00Z"),
+            record(id: "b", externalID: "google-standup", calendar: "Samantha Piell", start: "2026-06-10T17:00:00Z"),
+        ]
+        let rows = CalendarEventFormatter.dedupeByID(records)
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0]["calendars"] as? [String], ["Alexi", "Samantha Piell"])
     }
 
     func testDedupeDoesNotDuplicateSameCalendar() {

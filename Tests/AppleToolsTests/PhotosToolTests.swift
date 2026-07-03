@@ -81,6 +81,45 @@ final class PhotosToolTests: XCTestCase {
         XCTAssertEqual(PhotosIntegration.NamedPerson(pk: 1, fullName: "Tim Smith", displayName: "Tim").label, "Tim Smith")
     }
 
+    // MARK: - End-date parsing (date-only widening) (#32)
+
+    func testParseEndDateWidensDateOnlyToEndOfDay() {
+        guard let d = PhotosIntegration.parseEndDate("2019-12-31") else {
+            return XCTFail("expected a parsed date")
+        }
+        let comps = Calendar.current.dateComponents([.hour, .minute, .second], from: d)
+        XCTAssertEqual(comps.hour, 23)
+        XCTAssertEqual(comps.minute, 59)
+        XCTAssertEqual(comps.second, 59)
+    }
+
+    func testParseEndDateKeepsExplicitTimestampExact() {
+        // A full timestamp must be taken as the exact instant, not widened.
+        guard let d = PhotosIntegration.parseEndDate("2019-12-31T15:00:00Z") else {
+            return XCTFail("expected a parsed date")
+        }
+        let expected = ISO8601DateFormatter().date(from: "2019-12-31T15:00:00Z")
+        XCTAssertEqual(d, expected)
+    }
+
+    func testParseEndDateRejectsGarbage() {
+        XCTAssertNil(PhotosIntegration.parseEndDate("not-a-date"))
+    }
+
+    // MARK: - LIKE escaping (#33)
+
+    func testEscapeLIKEEscapesWildcards() {
+        XCTAssertEqual(SQLEscaping.escapeLIKE("100%"), "100\\%")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("is_a"), "is\\_a")
+        XCTAssertEqual(SQLEscaping.escapeLIKE("a\\b"), "a\\\\b")
+        // Escape the backslash first so it doesn't double-escape the % it precedes.
+        XCTAssertEqual(SQLEscaping.escapeLIKE("%_\\"), "\\%\\_\\\\")
+    }
+
+    func testEscapeLIKELeavesPlainTextUntouched() {
+        XCTAssertEqual(SQLEscaping.escapeLIKE("dog"), "dog")
+    }
+
     // MARK: - Parameter validation
 
     func testNilParams() {
@@ -137,6 +176,25 @@ final class PhotosToolTests: XCTestCase {
         }
         XCTAssertTrue(result.contains("\"count\""))
         XCTAssertTrue(result.contains("\"photos\""))
+    }
+
+    func testContentMatchDoesNotFallBackToFilename() {
+        // `match: content` with a query that matches no ML label must return an
+        // empty ML-content result — never fall through to filename matching and
+        // return unrelated filename hits (#38.4a).
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("search"),
+            "query": AnyCodable("zzqqxnonsensequery0987654321"),
+            "match": AnyCodable("content"),
+            "limit": AnyCodable(5),
+        ])
+        if isError && result.contains("Photos access denied") { return }
+        XCTAssertFalse(isError)
+        // On the content path we always report the ml_labels method, never filename.
+        XCTAssertTrue(result.contains("\"search_method\":\"ml_labels\""),
+                      "content-match search must report ml_labels, got: \(result)")
+        XCTAssertFalse(result.contains("\"search_method\":\"filename\""),
+                       "content-match must not fall back to filename search")
     }
 
     func testSearchWithInvalidStartDate() {

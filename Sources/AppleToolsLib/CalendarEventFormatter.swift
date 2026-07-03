@@ -109,11 +109,17 @@ public enum CalendarEventFormatter {
         return entry
     }
 
-    /// Collapse records that refer to the same underlying event into a single
-    /// row. Identity is `externalID` when present (the cross-calendar Google
-    /// id), else `id`. First-seen order is preserved; the surviving row carries
-    /// a `calendars` array (replacing the singular `calendar`) listing every
-    /// calendar the event was found on, in first-seen order, de-duplicated.
+    /// Collapse records that refer to the same underlying event *occurrence*
+    /// into a single row. Identity is `externalID` when present (the
+    /// cross-calendar Google id), else `id` — **plus the occurrence `start`**.
+    /// EventKit gives every occurrence of a recurring event the same
+    /// `eventIdentifier`/`externalID`; they differ only by date, so the start
+    /// must be part of the key or a daily standup queried Mon–Fri collapses to
+    /// one row. Including `start` still merges the same occurrence found on
+    /// multiple calendars (identical id/ext *and* start). First-seen order is
+    /// preserved; the surviving row carries a `calendars` array (replacing the
+    /// singular `calendar`) listing every calendar the occurrence was found on,
+    /// in first-seen order, de-duplicated.
     public static func dedupeByID(_ records: [CalendarEventRecord]) -> [[String: Any]] {
         var order: [String] = []
         var firstRecord: [String: CalendarEventRecord] = [:]
@@ -122,9 +128,9 @@ public enum CalendarEventFormatter {
         for (idx, r) in records.enumerated() {
             let key: String
             if let ext = r.externalID, !ext.isEmpty {
-                key = "ext:" + ext
+                key = "ext:" + ext + "\u{1F}" + r.start
             } else if !r.id.isEmpty {
-                key = "id:" + r.id
+                key = "id:" + r.id + "\u{1F}" + r.start
             } else {
                 // No stable identity — never merge; treat each as unique.
                 key = "row:\(idx)"
