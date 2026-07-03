@@ -91,26 +91,106 @@ public enum NotesIntegration {
 
     // MARK: - Folders
 
+    /// AppleScript handlers shared by the folder-enumerating scripts.
+    ///
+    /// `isDeletedFolder` walks a folder's `container` chain and reports whether
+    /// it lives under (or is) the "Recently Deleted" system folder — the only
+    /// stable discriminator Notes exposes for the trash container. Deleted
+    /// folders linger there ~30 days and `exists folder X` still returns true
+    /// for them, so a plain name/existence check can't tell them apart (issue
+    /// #15). Every coercion is wrapped in `try`: a deleted *parent* becomes a
+    /// zombie reference that raises -1700 (errAECoercionFail) on `name`/`class`,
+    /// which would otherwise abort the whole enumeration — here it's treated as
+    /// deleted so one bad ref can't sink the walk.
+    ///
+    /// `liveFolderByName` / `liveChildByName` resolve a folder by name to a
+    /// *live* match only, returning `missing value` when the sole match is in
+    /// the trash — so a create can't land a note in a deleted folder.
+    ///
+    /// NOTE: "Recently Deleted" is localized by macOS; non-English systems name
+    /// the container differently, which this exact-string match won't catch.
+    /// That's a known limitation tracked separately.
+    static let folderScriptHandlers = """
+    on isDeletedFolder(f)
+        tell application "Notes"
+            set cur to f
+            repeat
+                try
+                    set cls to class of cur
+                on error
+                    return true
+                end try
+                if cls is not folder then return false
+                try
+                    set cname to name of cur
+                on error
+                    return true
+                end try
+                if cname is "Recently Deleted" then return true
+                try
+                    set cur to container of cur
+                on error
+                    return true
+                end try
+            end repeat
+        end tell
+    end isDeletedFolder
+
+    on liveFolderByName(nm)
+        tell application "Notes"
+            repeat with f in (every folder)
+                try
+                    if (name of f) is nm and not (my isDeletedFolder(f)) then return f
+                end try
+            end repeat
+        end tell
+        return missing value
+    end liveFolderByName
+
+    on liveChildByName(parentRef, nm)
+        tell application "Notes"
+            repeat with s in (every folder of parentRef)
+                try
+                    if (name of s) is nm and not (my isDeletedFolder(s)) then return s
+                end try
+            end repeat
+        end tell
+        return missing value
+    end liveChildByName
+    """
+
     public static func listFolders() throws -> [Folder] {
         let script = """
+        \(folderScriptHandlers)
         tell application "Notes"
             set fs to (character id 31)
             set rs to (character id 30)
             set output to ""
-            -- First, emit all folders with their note counts
+            -- First, emit every folder with its note count and a deleted flag.
+            -- Each coercion is guarded so a zombie folder ref can't abort the
+            -- listing; the Swift side filters out flagged (Recently-Deleted)
+            -- folders so the decision stays unit-testable.
             repeat with f in (every folder)
-                set fName to name of f
-                set fID to id of f
-                set nCount to count of notes of f
-                set output to output & "F" & fs & fID & fs & fName & fs & (nCount as string) & rs
+                try
+                    set isDel to my isDeletedFolder(f)
+                    set fName to name of f
+                    set fID to id of f
+                    set nCount to count of notes of f
+                    set delFlag to "0"
+                    if isDel then set delFlag to "1"
+                    set output to output & "F" & fs & fID & fs & fName & fs & (nCount as string) & fs & delFlag & rs
+                end try
             end repeat
-            -- Then, emit parent->child edges
+            -- Then, emit parent->child edges (guarded against zombie children).
             repeat with f in (every folder)
-                set fID to id of f
-                set subs to every folder of f
-                repeat with s in subs
-                    set output to output & "E" & fs & fID & fs & (id of s) & rs
-                end repeat
+                try
+                    set fID to id of f
+                    repeat with s in (every folder of f)
+                        try
+                            set output to output & "E" & fs & fID & fs & (id of s) & rs
+                        end try
+                    end repeat
+                end try
             end repeat
             return output
         end tell
@@ -128,6 +208,10 @@ public enum NotesIntegration {
             guard parts.count >= 2 else { continue }
 
             if parts[0] == "F" && parts.count >= 4 {
+                // Field 5 (deleted flag) is "1" for Recently-Deleted folders;
+                // exclude them so they neither list nor act as path parents.
+                // Absent flag (older protocol / partial record) => treat live.
+                if parts.count >= 5 && parts[4] == "1" { continue }
                 let id = parts[1]
                 folderMeta[id] = (name: parts[2], count: Int(parts[3]))
                 folderOrder.append(id)
@@ -291,11 +375,15 @@ public enum NotesIntegration {
             //      flattened; also covers folder names that contain "/")
             //   2. "/"-separated path walk, creating missing segments nested
             //   3. plain name with no "/": create at top level
+            // Resolution uses live-only folder lookups (my liveFolderByName /
+            // liveChildByName): `exists folder X` / `folder X` also match
+            // Recently-Deleted folders, so a plain lookup could land the note in
+            // the trash (issue #15). A name that matches only a deleted folder
+            // resolves to missing value and falls through to creating a fresh
+            // live folder.
             atClause = """
-            set targetFolder to missing value
-                    if exists folder theFolder then
-                        set targetFolder to folder theFolder
-                    else
+            set targetFolder to my liveFolderByName(theFolder)
+                    if targetFolder is missing value then
                         set AppleScript's text item delimiters to "/"
                         set segs to text items of theFolder
                         set AppleScript's text item delimiters to ""
@@ -304,14 +392,16 @@ public enum NotesIntegration {
                             set seg to (item i of segs) as string
                             if seg is not "" then
                                 if targetFolder is missing value then
-                                    if exists folder seg of acct then
-                                        set targetFolder to folder seg of acct
+                                    set existing to my liveChildByName(acct, seg)
+                                    if existing is not missing value then
+                                        set targetFolder to existing
                                     else
                                         set targetFolder to (make new folder at acct with properties {name:seg})
                                     end if
                                 else
-                                    if exists folder seg of targetFolder then
-                                        set targetFolder to folder seg of targetFolder
+                                    set existing to my liveChildByName(targetFolder, seg)
+                                    if existing is not missing value then
+                                        set targetFolder to existing
                                     else
                                         set targetFolder to (make new folder at targetFolder with properties {name:seg})
                                     end if
@@ -328,7 +418,11 @@ public enum NotesIntegration {
             """
         }
 
+        // Handlers are only needed when resolving into a folder; the no-folder
+        // path never calls them.
+        let handlers = usableFolder != nil ? folderScriptHandlers : ""
         let script = """
+        \(handlers)
         set theBody to do shell script "printenv APPLE_TOOLS_NOTES_BODY"
         \(folderBinding)
         log "PHASE: prepare"
