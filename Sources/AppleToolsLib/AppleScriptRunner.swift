@@ -195,6 +195,19 @@ public enum AppleScriptRunner {
         var stderrBuffer = Data()
         var stderrAccum = Data()
 
+        // Drain stdout concurrently: osascript blocks writing once the 64KB
+        // pipe buffer fills, and waitUntilExit() would then deadlock until
+        // the deadline SIGKILL.
+        let stdoutLock = NSLock()
+        var stdoutAccum = Data()
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty { return }
+            stdoutLock.lock()
+            stdoutAccum.append(data)
+            stdoutLock.unlock()
+        }
+
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty { return }
@@ -260,6 +273,7 @@ public enum AppleScriptRunner {
         proc.waitUntilExit()
         deadlineWork.cancel()
         stderrPipe.fileHandleForReading.readabilityHandler = nil
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
 
         // Read the external-cancel flag and unregister. The flag must be read
         // before unregistering so a concurrent cancel() that arrives at
@@ -275,7 +289,11 @@ public enum AppleScriptRunner {
             externallyCancelled = false
         }
 
-        let stdoutData = (try? stdoutPipe.fileHandleForReading.readToEnd()) ?? Data()
+        stdoutLock.lock()
+        var stdoutData = stdoutAccum
+        stdoutLock.unlock()
+        // Drain any remaining stdout that arrived after the readability handler stopped.
+        stdoutData.append((try? stdoutPipe.fileHandleForReading.readToEnd()) ?? Data())
         // Drain any remaining stderr that arrived after the readability handler stopped.
         let trailingStderr = (try? stderrPipe.fileHandleForReading.readToEnd()) ?? Data()
         phaseLock.lock()

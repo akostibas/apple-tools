@@ -98,6 +98,36 @@ final class FilesToolTests: XCTestCase {
         XCTAssertTrue(result.contains("path escapes"))
     }
 
+    // A sibling of ~/Documents whose name shares the "Documents" prefix
+    // (e.g. "~/Documents Backup") must be rejected — a bare hasPrefix
+    // check on the string form would accept it.
+    func testListSiblingPrefixEscape() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("list"),
+            "path": AnyCodable("../Documents Backup"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("path escapes"), result)
+    }
+
+    func testFetchSiblingPrefixEscape() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("fetch"),
+            "path": AnyCodable("../Documents_backup/secret.txt"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("path escapes"), result)
+    }
+
+    func testInfoSiblingPrefixEscape() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("info"),
+            "path": AnyCodable("../DocumentsX"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("path escapes"), result)
+    }
+
     // MARK: - Info
 
     func testInfoFile() {

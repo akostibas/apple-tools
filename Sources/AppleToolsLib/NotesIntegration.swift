@@ -155,7 +155,9 @@ public enum NotesIntegration {
     /// the output schema is unchanged.
     public static func searchNotes(query: String, folder: String?, offset: Int, limit: Int, fullText: Bool = false) throws -> (total: Int, notes: [NoteSummary]) {
         let hits = searchLookup(query, folder, fullText)
-        let page = hits.dropFirst(offset).prefix(limit)
+        // Clamp: dropFirst/prefix trap on negative counts, and library callers
+        // bypass NotesTool's parameter validation.
+        let page = hits.dropFirst(max(0, offset)).prefix(max(0, limit))
         let notes = page.map {
             NoteSummary(id: $0.id, title: $0.title, modified: $0.modified, snippet: $0.snippet)
         }

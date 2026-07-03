@@ -13,6 +13,26 @@ final class AppleScriptRunnerTests: XCTestCase {
         XCTAssertNil(r.committedID)
     }
 
+    func testLargeStdoutDoesNotDeadlock() {
+        // A result larger than the 64KB pipe buffer must not deadlock
+        // waitUntilExit() (osascript blocks writing until someone reads).
+        // 16 chars doubled 13 times = 131,072 chars.
+        let source = """
+        set s to "0123456789abcdef"
+        repeat 13 times
+            set s to s & s
+        end repeat
+        return s
+        """
+        let r = AppleScriptRunner.run(source: source, tool: "test", deadline: 20)
+        XCTAssertEqual(r.outcome, .success)
+        XCTAssertFalse(r.killed, "large output must complete, not hit the deadline")
+        XCTAssertGreaterThanOrEqual(
+            r.stdout.trimmingCharacters(in: .whitespacesAndNewlines).count, 131_072,
+            "stdout must be complete, not truncated at the pipe buffer"
+        )
+    }
+
     func testNonZeroExitIsFailed() {
         // `error number -2700` causes osascript to exit non-zero.
         let r = AppleScriptRunner.run(source: "error \"boom\" number -2700", tool: "test")
