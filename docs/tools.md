@@ -16,7 +16,7 @@ Read/write status is noted per tool; file-producing actions return a local
 | **email** (Mail) | read + draft | `inbox`, `search`, `read`, `fetch_attachment`, `draft` (does NOT send; supports attachments) |
 | **imessage** (Messages, iMessage/SMS) | read/write | `recent`, `read`, `search`, `send` (supports attachments), `fetch_attachment` |
 | **photos** | read | `search`, `fetch` (export a photo locally → path) |
-| **voicememos** | read | `list` (recent recordings; last 30 days by default, `--all` for full history), `search` (by title/folder/date), `export` (copy a recording's `.m4a` → path), `transcribe` (on-device transcript, cached per recording; `--timestamps`, `--save`; macOS 26+) |
+| **voicememos** | read | `list` (recent recordings; last 30 days by default, `--all` for full history), `search` (by title/folder/date), `export` (copy a recording's `.m4a` → path), `transcribe` (on-device transcript → `.txt` path + preview, cached per recording; `--timestamps` for a `.json` segment sidecar, `--inline` for full text in the response; macOS 26+) |
 | **files** | read | `search` (Spotlight), `list`, `info`, `fetch` (copy a file locally → path). Scoped to `~/Documents` |
 | **clipboard** | read/write | `read`, `write` |
 | **screenshot** | read | capture the screen → local PNG path |
