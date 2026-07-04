@@ -1,9 +1,10 @@
 # apple-tools
 
 Local macOS/Apple integrations as a single CLI, plus a Claude Code skill that
-drives it. Read and write Calendar, Reminders, Notes, Contacts, Mail, Messages
-(iMessage/SMS), Photos, read Voice Memos, plus files, the clipboard,
-screenshots, and open URIs — all on the machine it runs on, with no server.
+drives it. Read and write Calendar, Reminders, Notes, Contacts, Mail, and
+Messages (iMessage/SMS); search Photos; list, export, and transcribe Voice
+Memos; plus files, the clipboard, screenshots, and open URIs — all on the
+machine it runs on, with no server.
 
 ## Quick start
 
@@ -13,6 +14,21 @@ apple-tools permissions    # grant macOS access (Calendar, Contacts, Photos, Ful
 apple-tools list           # see the tools
 apple-tools calendar list --start 2026-06-15T00:00:00Z --end 2026-06-16T00:00:00Z
 ```
+
+## Tools
+
+| App | CLI tool | App | CLI tool |
+|-----|----------|-----|----------|
+| Calendar | `calendar` | Photos | `photos` |
+| Reminders | `reminders` | Voice Memos | `voicememos` |
+| Notes | `notes` | Files | `files` |
+| Contacts | `contacts` | Clipboard | `clipboard` |
+| Mail | `email` | Screenshots | `screenshot` |
+| Messages (iMessage/SMS) | `imessage` | Open URIs | `open_uri` |
+
+See **[docs/tools.md](docs/tools.md)** for every tool's actions and access level
+at a glance, or run `apple-tools list` (and `apple-tools <tool> --help`) for the
+set built into your installed version.
 
 ## Upgrading
 
