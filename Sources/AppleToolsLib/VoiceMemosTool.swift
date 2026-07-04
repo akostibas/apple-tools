@@ -12,7 +12,7 @@ import Foundation
 public struct VoiceMemosTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "voicememos",
-        description: "Read Apple Voice Memos (read-only). Actions: 'list' (recent recordings, last 30 days by default), 'search' (filter all recordings by title/folder/date), 'export' (copy a recording's .m4a audio into the local output dir; returns its path), 'transcribe' (on-device transcript of a recording; cached per recording; macOS 26+).",
+        description: "Read Apple Voice Memos (read-only). Actions: 'list' (recent recordings, last 30 days by default), 'search' (filter all recordings by title/folder/date), 'export' (copy a recording's .m4a audio into the local output dir; returns its path), 'transcribe' (on-device transcript of a recording; writes a .txt to the output dir and returns its path plus a preview; cached per recording; macOS 26+).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
@@ -27,8 +27,8 @@ public struct VoiceMemosTool: ProbeTool {
                 "with_waveform": PropertySchema(type_: "boolean", description: "Also export the .waveform sidecar if present (for export, default false)"),
                 "locale": PropertySchema(type_: "string", description: "BCP-47 locale for the speech model, e.g. en-US (for transcribe, default en-US)"),
                 "refresh": PropertySchema(type_: "boolean", description: "Bypass the transcript cache and re-transcribe (for transcribe, default false)"),
-                "timestamps": PropertySchema(type_: "boolean", description: "Include per-segment {start,end,text} time ranges (for transcribe, default false)"),
-                "save": PropertySchema(type_: "boolean", description: "Also write the transcript to a .txt file in the output dir; returns its path (for transcribe, default false)"),
+                "timestamps": PropertySchema(type_: "boolean", description: "Also write a .json sidecar of per-segment {start,end,text} time ranges (for transcribe, default false)"),
+                "inline": PropertySchema(type_: "boolean", description: "Return the full transcript text in the response instead of only a preview; for short memos or piping (for transcribe, default false)"),
             ],
             required: ["action"]
         )
@@ -80,8 +80,8 @@ public struct VoiceMemosTool: ProbeTool {
             let locale = (params?["locale"]?.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "en-US"
             let refresh = params?["refresh"]?.value as? Bool ?? false
             let timestamps = params?["timestamps"]?.value as? Bool ?? false
-            let save = params?["save"]?.value as? Bool ?? false
-            return transcribe(id: id, locale: locale, refresh: refresh, timestamps: timestamps, save: save)
+            let inline = params?["inline"]?.value as? Bool ?? false
+            return transcribe(id: id, locale: locale, refresh: refresh, timestamps: timestamps, inline: inline)
         default:
             return ("unknown action: \(action) (use list, search, export, or transcribe)", true)
         }
@@ -197,7 +197,7 @@ public struct VoiceMemosTool: ProbeTool {
 
     // MARK: - Transcribe
 
-    private func transcribe(id: String, locale: String, refresh: Bool, timestamps: Bool, save: Bool) -> (String, Bool) {
+    private func transcribe(id: String, locale: String, refresh: Bool, timestamps: Bool, inline: Bool) -> (String, Bool) {
         guard let rec = VoiceMemosIntegration.find(id: id) else {
             return ("no recording found with id: \(id)", true)
         }
@@ -211,7 +211,7 @@ public struct VoiceMemosTool: ProbeTool {
         if !refresh, let cached = VoiceMemosTranscriptCache.read(id: id, digestHex: digestHex, locale: locale) {
             let segs = cached.segments.map { (start: $0.start, end: $0.end, text: $0.text) }
             return transcriptResponse(rec: rec, locale: locale, text: cached.text,
-                                      segments: segs, cached: true, timestamps: timestamps, save: save)
+                                      segments: segs, cached: true, timestamps: timestamps, inline: inline)
         }
 
         // Cold path: transcribe on-device. Requires macOS 26+.
@@ -252,14 +252,24 @@ public struct VoiceMemosTool: ProbeTool {
 
             let segs = transcript.segments.map { (start: $0.start, end: $0.end, text: $0.text) }
             return transcriptResponse(rec: rec, locale: locale, text: transcript.text,
-                                      segments: segs, cached: false, timestamps: timestamps, save: save)
+                                      segments: segs, cached: false, timestamps: timestamps, inline: inline)
         }
     }
 
+    /// Characters of transcript to inline as a preview when the full text is
+    /// written to a file. Enough to identify the memo without flooding context.
+    private static let previewChars = 280
+
     /// Build the transcribe JSON response (shared by cache-hit and fresh paths).
+    ///
+    /// The transcript is written to a `.txt` in the output dir by default and
+    /// only a preview comes back inline — a long memo is tens of KB and has no
+    /// business landing in an agent's context on every call. `--inline` forces
+    /// the full text back; `--timestamps` also writes a `.json` segment sidecar.
     private func transcriptResponse(rec: Recording, locale: String, text: String,
                                     segments: [(start: Double, end: Double, text: String)],
-                                    cached: Bool, timestamps: Bool, save: Bool) -> (String, Bool) {
+                                    cached: Bool, timestamps: Bool, inline: Bool) -> (String, Bool) {
+        let preview = String(text.prefix(Self.previewChars))
         var response: [String: Any] = [
             "id": rec.id,
             "title": rec.title,
@@ -268,26 +278,48 @@ public struct VoiceMemosTool: ProbeTool {
             "locale": locale,
             "cached": cached,
             "word_count": text.split(whereSeparator: { $0 == " " || $0 == "\n" }).count,
-            "text": text,
+            "char_count": text.count,
+            "preview": preview,
+            "preview_truncated": text.count > preview.count,
         ]
+
+        // Write the full transcript to a .txt and return its path (default).
+        let base = "\(sanitize(rec.title)) \(DateFormatting.localDateOnly(rec.date))"
+        switch host.fileSink.deliver(filename: "\(base).txt", data: Data(text.utf8)) {
+        case .success(let ref):
+            response[ref.key] = ref.value
+        case .failure(let error):
+            // Files are the whole point, but don't strand the caller — fall
+            // back to inlining the text so the transcript isn't lost.
+            response["save_error"] = "\(error)"
+            response["text"] = text
+        }
+
+        // Escape hatch: caller explicitly wants the full text in the response.
+        if inline {
+            response["text"] = text
+        }
+
         if timestamps {
-            response["segments"] = segments.map { seg in
+            let segObjects: [[String: Any]] = segments.map { seg in
                 [
                     "start": (seg.start * 100).rounded() / 100,
                     "end": (seg.end * 100).rounded() / 100,
                     "text": seg.text,
                 ]
             }
-        }
-        if save {
-            let name = "\(sanitize(rec.title)) \(DateFormatting.localDateOnly(rec.date)).txt"
-            switch host.fileSink.deliver(filename: name, data: Data(text.utf8)) {
+            switch host.fileSink.deliver(filename: "\(base).segments.json",
+                                         data: Data(jsonEncode(segObjects).utf8)) {
             case .success(let ref):
-                response["text_\(ref.key)"] = ref.value
+                response["segments_\(ref.key)"] = ref.value
             case .failure(let error):
-                response["save_error"] = "\(error)"
+                response["segments_error"] = "\(error)"
+            }
+            if inline {
+                response["segments"] = segObjects
             }
         }
+
         return (jsonEncode(response), false)
     }
 
