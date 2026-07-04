@@ -12,19 +12,23 @@ import Foundation
 public struct VoiceMemosTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "voicememos",
-        description: "Read Apple Voice Memos (read-only). Actions: 'list' (recent recordings, last 30 days by default), 'search' (filter all recordings by title/folder/date), 'export' (copy a recording's .m4a audio into the local output dir; returns its path).",
+        description: "Read Apple Voice Memos (read-only). Actions: 'list' (recent recordings, last 30 days by default), 'search' (filter all recordings by title/folder/date), 'export' (copy a recording's .m4a audio into the local output dir; returns its path), 'transcribe' (on-device transcript of a recording; cached per recording; macOS 26+).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "list, search, or export"),
+                "action": PropertySchema(type_: "string", description: "list, search, export, or transcribe"),
                 "query": PropertySchema(type_: "string", description: "Title substring, case-insensitive (for search)"),
                 "folder": PropertySchema(type_: "string", description: "Restrict to a named Voice Memos folder, case-insensitive (for list/search)"),
                 "start_date": PropertySchema(type_: "string", description: "Only recordings on/after this date, ISO 8601 e.g. 2026-01-15 (for list/search)"),
                 "end_date": PropertySchema(type_: "string", description: "Only recordings on/before this date, ISO 8601 (for list/search)"),
                 "limit": PropertySchema(type_: "integer", description: "Max recordings to return (for list/search)"),
                 "all": PropertySchema(type_: "boolean", description: "List the full history instead of just the last 30 days (for list, default false)"),
-                "id": PropertySchema(type_: "string", description: "Recording id from list/search results (for export)"),
+                "id": PropertySchema(type_: "string", description: "Recording id from list/search results (for export/transcribe)"),
                 "with_waveform": PropertySchema(type_: "boolean", description: "Also export the .waveform sidecar if present (for export, default false)"),
+                "locale": PropertySchema(type_: "string", description: "BCP-47 locale for the speech model, e.g. en-US (for transcribe, default en-US)"),
+                "refresh": PropertySchema(type_: "boolean", description: "Bypass the transcript cache and re-transcribe (for transcribe, default false)"),
+                "timestamps": PropertySchema(type_: "boolean", description: "Include per-segment {start,end,text} time ranges (for transcribe, default false)"),
+                "save": PropertySchema(type_: "boolean", description: "Also write the transcript to a .txt file in the output dir; returns its path (for transcribe, default false)"),
             ],
             required: ["action"]
         )
@@ -33,9 +37,12 @@ public struct VoiceMemosTool: ProbeTool {
     public let host: ToolHost
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
-        "list":   .read,
-        "search": .read,
-        "export": .read,
+        "list":       .read,
+        "search":     .read,
+        "export":     .read,
+        // Reads audio + writes only our own derived transcript cache, never any
+        // Apple-owned data — classified read.
+        "transcribe": .read,
     ])
 
     public init(host: ToolHost) {
@@ -66,8 +73,17 @@ public struct VoiceMemosTool: ProbeTool {
             }
             let withWaveform = params?["with_waveform"]?.value as? Bool ?? false
             return export(id: id, withWaveform: withWaveform)
+        case "transcribe":
+            guard let id = params?["id"]?.value as? String, !id.isEmpty else {
+                return ("missing required parameter: id", true)
+            }
+            let locale = (params?["locale"]?.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "en-US"
+            let refresh = params?["refresh"]?.value as? Bool ?? false
+            let timestamps = params?["timestamps"]?.value as? Bool ?? false
+            let save = params?["save"]?.value as? Bool ?? false
+            return transcribe(id: id, locale: locale, refresh: refresh, timestamps: timestamps, save: save)
         default:
-            return ("unknown action: \(action) (use list, search, or export)", true)
+            return ("unknown action: \(action) (use list, search, export, or transcribe)", true)
         }
     }
 
@@ -177,6 +193,102 @@ public struct VoiceMemosTool: ProbeTool {
             out = out.replacingOccurrences(of: ch, with: "-")
         }
         return out.trimmingCharacters(in: .whitespaces)
+    }
+
+    // MARK: - Transcribe
+
+    private func transcribe(id: String, locale: String, refresh: Bool, timestamps: Bool, save: Bool) -> (String, Bool) {
+        guard let rec = VoiceMemosIntegration.find(id: id) else {
+            return ("no recording found with id: \(id)", true)
+        }
+        guard rec.available else {
+            return ("recording '\(rec.title)' is not downloaded locally (cloud-only/evicted). Open it in Voice Memos to download it first.", true)
+        }
+
+        let digestHex = rec.digestHex
+
+        // Cache hit? (Validated by audio digest + locale.)
+        if !refresh, let cached = VoiceMemosTranscriptCache.read(id: id, digestHex: digestHex, locale: locale) {
+            let segs = cached.segments.map { (start: $0.start, end: $0.end, text: $0.text) }
+            return transcriptResponse(rec: rec, locale: locale, text: cached.text,
+                                      segments: segs, cached: true, timestamps: timestamps, save: save)
+        }
+
+        // Cold path: transcribe on-device. Requires macOS 26+.
+        guard #available(macOS 26.0, *) else {
+            return ("voicememos transcribe requires macOS 26 or later (on-device SpeechTranscriber). This system is older.", true)
+        }
+        guard VoiceMemosTranscriber.isAvailable else {
+            return ("on-device speech transcription is unavailable on this system.", true)
+        }
+
+        // Bridge the async transcriber into the synchronous tool contract. The
+        // wait blocks a background/global-queue thread (see main.swift), while
+        // the transcription runs on the Swift concurrency pool — no deadlock.
+        let url = URL(fileURLWithPath: rec.audioPath)
+        let semaphore = DispatchSemaphore(value: 0)
+        var outcome: Result<VoiceMemosTranscriber.Transcript, Error>?
+        Task {
+            do { outcome = .success(try await VoiceMemosTranscriber.transcribe(url: url, localeIdentifier: locale)) }
+            catch { outcome = .failure(error) }
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        switch outcome! {
+        case .failure(let error):
+            return ("transcription failed: \(error)", true)
+        case .success(let transcript):
+            // Persist to cache for instant repeat calls.
+            let entry = VoiceMemosTranscriptCache.Entry(
+                id: id,
+                digestHex: digestHex,
+                locale: locale,
+                text: transcript.text,
+                segments: transcript.segments.map { .init(start: $0.start, end: $0.end, text: $0.text) },
+                transcribedAt: Date()
+            )
+            VoiceMemosTranscriptCache.write(entry)
+
+            let segs = transcript.segments.map { (start: $0.start, end: $0.end, text: $0.text) }
+            return transcriptResponse(rec: rec, locale: locale, text: transcript.text,
+                                      segments: segs, cached: false, timestamps: timestamps, save: save)
+        }
+    }
+
+    /// Build the transcribe JSON response (shared by cache-hit and fresh paths).
+    private func transcriptResponse(rec: Recording, locale: String, text: String,
+                                    segments: [(start: Double, end: Double, text: String)],
+                                    cached: Bool, timestamps: Bool, save: Bool) -> (String, Bool) {
+        var response: [String: Any] = [
+            "id": rec.id,
+            "title": rec.title,
+            "date": DateFormatting.iso(rec.date),
+            "duration_seconds": roundedDuration(rec.duration),
+            "locale": locale,
+            "cached": cached,
+            "word_count": text.split(whereSeparator: { $0 == " " || $0 == "\n" }).count,
+            "text": text,
+        ]
+        if timestamps {
+            response["segments"] = segments.map { seg in
+                [
+                    "start": (seg.start * 100).rounded() / 100,
+                    "end": (seg.end * 100).rounded() / 100,
+                    "text": seg.text,
+                ]
+            }
+        }
+        if save {
+            let name = "\(sanitize(rec.title)) \(DateFormatting.localDateOnly(rec.date)).txt"
+            switch host.fileSink.deliver(filename: name, data: Data(text.utf8)) {
+            case .success(let ref):
+                response["text_\(ref.key)"] = ref.value
+            case .failure(let error):
+                response["save_error"] = "\(error)"
+            }
+        }
+        return (jsonEncode(response), false)
     }
 
     // MARK: - Formatting

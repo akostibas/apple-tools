@@ -35,11 +35,11 @@ final class VoiceMemosIntegrationTests: XCTestCase {
             INSERT INTO ZFOLDER (Z_PK, ZENCRYPTEDNAME) VALUES (1, 'Amelia');
             CREATE TABLE ZCLOUDRECORDING (
                 Z_PK INTEGER PRIMARY KEY, ZFOLDER INTEGER, ZDATE FLOAT, ZDURATION FLOAT,
-                ZENCRYPTEDTITLE VARCHAR, ZPATH VARCHAR, ZUNIQUEID VARCHAR
+                ZENCRYPTEDTITLE VARCHAR, ZPATH VARCHAR, ZUNIQUEID VARCHAR, ZAUDIODIGEST BLOB
             );
-            INSERT INTO ZCLOUDRECORDING VALUES (1, 1, \(FixtureDate.alpha), 12.4, 'Alpha memo', 'alpha.m4a', 'AAA');
-            INSERT INTO ZCLOUDRECORDING VALUES (2, NULL, \(FixtureDate.beta), 61.6, 'Beta note', 'beta.m4a', 'BBB');
-            INSERT INTO ZCLOUDRECORDING VALUES (3, 1, \(FixtureDate.gamma), 5.0, 'Gamma', 'gamma.m4a', 'CCC');
+            INSERT INTO ZCLOUDRECORDING VALUES (1, 1, \(FixtureDate.alpha), 12.4, 'Alpha memo', 'alpha.m4a', 'AAA', x'0a0b0c');
+            INSERT INTO ZCLOUDRECORDING VALUES (2, NULL, \(FixtureDate.beta), 61.6, 'Beta note', 'beta.m4a', 'BBB', NULL);
+            INSERT INTO ZCLOUDRECORDING VALUES (3, 1, \(FixtureDate.gamma), 5.0, 'Gamma', 'gamma.m4a', 'CCC', NULL);
             """
         try runSQLite(dbPath: dir.appendingPathComponent("CloudRecordings.db").path, sql: sql)
 
@@ -139,6 +139,14 @@ final class VoiceMemosIntegrationTests: XCTestCase {
     func testFindUnknownIDReturnsNil() throws {
         let fx = try makeFixture(); defer { cleanup(fx) }
         XCTAssertNil(VoiceMemosIntegration.find(id: "NOPE", dbPath: fx.dbPath))
+    }
+
+    func testAudioDigestDecodesToHex() throws {
+        let fx = try makeFixture(); defer { cleanup(fx) }
+        let alpha = try XCTUnwrap(VoiceMemosIntegration.find(id: "AAA", dbPath: fx.dbPath))
+        XCTAssertEqual(alpha.digestHex, "0a0b0c", "blob decodes to lowercase hex")
+        let beta = try XCTUnwrap(VoiceMemosIntegration.find(id: "BBB", dbPath: fx.dbPath))
+        XCTAssertNil(beta.digestHex, "NULL digest → nil hex")
     }
 
     // MARK: - Graceful degradation

@@ -50,9 +50,11 @@ public enum VoiceMemosIntegration {
         public let filename: String      // ZPATH — bare .m4a filename
         public let audioPath: String     // absolute path to the audio file (may not exist)
         public let available: Bool       // audio file present locally (false = cloud-only/evicted)
+        public let audioDigest: Data?    // ZAUDIODIGEST — per-recording audio hash (cache validator)
 
         public init(id: String, title: String, date: Date, duration: Double,
-                    folder: String?, filename: String, audioPath: String, available: Bool) {
+                    folder: String?, filename: String, audioPath: String, available: Bool,
+                    audioDigest: Data? = nil) {
             self.id = id
             self.title = title
             self.date = date
@@ -61,6 +63,14 @@ public enum VoiceMemosIntegration {
             self.filename = filename
             self.audioPath = audioPath
             self.available = available
+            self.audioDigest = audioDigest
+        }
+
+        /// Lowercase hex of the audio digest — a stable content key that changes
+        /// when the recording is trimmed/re-recorded. Used to validate cached
+        /// transcripts. Nil if the store has no digest for this recording.
+        public var digestHex: String? {
+            audioDigest.map { $0.map { String(format: "%02x", $0) }.joined() }
         }
 
         /// Absolute path to the `.waveform` sidecar, if any (existence not checked).
@@ -133,7 +143,7 @@ public enum VoiceMemosIntegration {
         let audioDirectory = audioDir(forDB: path)
 
         var sql = """
-            SELECT r.ZUNIQUEID, r.ZENCRYPTEDTITLE, r.ZDATE, r.ZDURATION, r.ZPATH, f.ZENCRYPTEDNAME
+            SELECT r.ZUNIQUEID, r.ZENCRYPTEDTITLE, r.ZDATE, r.ZDURATION, r.ZPATH, f.ZENCRYPTEDNAME, r.ZAUDIODIGEST
             FROM ZCLOUDRECORDING r
             LEFT JOIN ZFOLDER f ON r.ZFOLDER = f.Z_PK
             WHERE r.ZUNIQUEID IS NOT NULL AND r.ZPATH IS NOT NULL
@@ -183,11 +193,13 @@ public enum VoiceMemosIntegration {
             let date = Date(timeIntervalSinceReferenceDate: sqlite3_column_double(stmt, 2))
             let duration = sqlite3_column_double(stmt, 3)
             let folderName = columnString(stmt, 5).flatMap { $0.isEmpty ? nil : $0 }
+            let digest = columnBlob(stmt, 6)
             let audioPath = "\(audioDirectory)/\(filename)"
             let available = fm.fileExists(atPath: audioPath)
             results.append(Recording(id: id, title: title, date: date, duration: duration,
                                      folder: folderName, filename: filename,
-                                     audioPath: audioPath, available: available))
+                                     audioPath: audioPath, available: available,
+                                     audioDigest: digest))
         }
         return results
     }
@@ -202,7 +214,7 @@ public enum VoiceMemosIntegration {
         let audioDirectory = audioDir(forDB: path)
 
         let sql = """
-            SELECT r.ZUNIQUEID, r.ZENCRYPTEDTITLE, r.ZDATE, r.ZDURATION, r.ZPATH, f.ZENCRYPTEDNAME
+            SELECT r.ZUNIQUEID, r.ZENCRYPTEDTITLE, r.ZDATE, r.ZDURATION, r.ZPATH, f.ZENCRYPTEDNAME, r.ZAUDIODIGEST
             FROM ZCLOUDRECORDING r
             LEFT JOIN ZFOLDER f ON r.ZFOLDER = f.Z_PK
             WHERE r.ZUNIQUEID = ?
@@ -225,11 +237,13 @@ public enum VoiceMemosIntegration {
         let date = Date(timeIntervalSinceReferenceDate: sqlite3_column_double(stmt, 2))
         let duration = sqlite3_column_double(stmt, 3)
         let folderName = columnString(stmt, 5).flatMap { $0.isEmpty ? nil : $0 }
+        let digest = columnBlob(stmt, 6)
         let audioPath = "\(audioDirectory)/\(filename)"
         let available = FileManager.default.fileExists(atPath: audioPath)
         return Recording(id: rid, title: title, date: date, duration: duration,
                          folder: folderName, filename: filename,
-                         audioPath: audioPath, available: available)
+                         audioPath: audioPath, available: available,
+                         audioDigest: digest)
     }
 
     // MARK: - Date parsing (input)
@@ -313,5 +327,12 @@ public enum VoiceMemosIntegration {
     private static func columnString(_ stmt: OpaquePointer, _ idx: Int32) -> String? {
         guard let cStr = sqlite3_column_text(stmt, idx) else { return nil }
         return String(cString: cStr)
+    }
+
+    private static func columnBlob(_ stmt: OpaquePointer, _ idx: Int32) -> Data? {
+        guard let ptr = sqlite3_column_blob(stmt, idx) else { return nil }
+        let n = sqlite3_column_bytes(stmt, idx)
+        guard n > 0 else { return nil }
+        return Data(bytes: ptr, count: Int(n))
     }
 }
