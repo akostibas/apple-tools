@@ -4,7 +4,7 @@ import Foundation
 public struct ContactsTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "contacts",
-        description: "Access Apple Contacts. Actions: 'search' (find contacts by name, email, phone, or group name), 'get' (full details for a contact by ID).",
+        description: "Access Apple Contacts. Actions: 'search' (find contacts by name, email, phone, or group name; returns summaries only — street addresses, birthdays, and any additional emails/phones are NOT included), 'get' (full details for a contact by ID; the only way to see addresses and other non-summary fields).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
