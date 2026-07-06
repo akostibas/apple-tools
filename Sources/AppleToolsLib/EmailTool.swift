@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 public struct EmailTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "email",
-        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date), 'read' (get full message by ID), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a draft message — does NOT send; supports file attachments by absolute path).",
+        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a draft message — does NOT send; supports file attachments by absolute path).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
