@@ -9,18 +9,34 @@ public struct PhotosTool: ProbeTool {
             type_: "object",
             properties: [
                 "action": PropertySchema(type_: "string", description: "search or fetch"),
-                "query": PropertySchema(type_: "string", description: "Search keyword — matches ML-recognized content (car, dog, beach), people, and filenames (for search). Each result is tagged `matched: person|content|filename`."),
-                "person": PropertySchema(type_: "string", description: "Restrict results to photos OF a recognized person by name (e.g. 'Sandy Ford'). Uses Photos face recognition. Results are tagged `matched: person` (for search)"),
-                "match": PropertySchema(type_: "string", description: "Constrain match type for --query: people | content | filename. With 'people' and no --query/--person, lists recognized people in the library (for search)"),
-                "album": PropertySchema(type_: "string", description: "Album name to filter by (for search)"),
-                "start_date": PropertySchema(type_: "string", description: "Start date, ISO 8601 e.g. 2026-01-15 (for search)"),
-                "end_date": PropertySchema(type_: "string", description: "End date, ISO 8601 (for search)"),
-                "limit": PropertySchema(type_: "integer", description: "Max results to return (for search, default 20)"),
-                "id": PropertySchema(type_: "string", description: "Photo local identifier from search results (for fetch)"),
-                "full_resolution": PropertySchema(type_: "boolean", description: "Export at full resolution instead of LLM-optimized size (for fetch, default false)"),
+                "query": PropertySchema(type_: "string", description: "Search keyword — matches ML-recognized content (car, dog, beach), people, and filenames (for search). Each result is tagged `matched: person|content|filename`.",
+                    summary: "Keyword matched against ML content, people, filenames", actions: ["search"]),
+                "person": PropertySchema(type_: "string", description: "Restrict results to photos OF a recognized person by name (e.g. 'Sandy Ford'). Uses Photos face recognition. Results are tagged `matched: person` (for search)",
+                    summary: "Photos of a recognized person by name", actions: ["search"]),
+                "match": PropertySchema(type_: "string", description: "Constrain match type for --query: people | content | filename. With 'people' and no --query/--person, lists recognized people in the library (for search)",
+                    summary: "Constrain match type: people | content | filename", actions: ["search"]),
+                "album": PropertySchema(type_: "string", description: "Album name to filter by (for search)",
+                    summary: "Album name to filter by", actions: ["search"]),
+                "start_date": PropertySchema(type_: "string", description: "Start date, ISO 8601 e.g. 2026-01-15 (for search)",
+                    summary: "Start date, ISO 8601 (e.g. 2026-01-15)", actions: ["search"]),
+                "end_date": PropertySchema(type_: "string", description: "End date, ISO 8601 (for search)",
+                    summary: "End date, ISO 8601", actions: ["search"]),
+                "limit": PropertySchema(type_: "integer", description: "Max results to return (for search, default 20)",
+                    summary: "Max results (default 20)", actions: ["search"]),
+                "id": PropertySchema(type_: "string", description: "Photo local identifier from search results (for fetch)",
+                    summary: "Photo local identifier from search results", actions: ["fetch"]),
+                "full_resolution": PropertySchema(type_: "boolean", description: "Export at full resolution instead of LLM-optimized size (for fetch, default false)",
+                    summary: "Export at full resolution (default false)", actions: ["fetch"]),
             ],
             required: ["action"]
-        )
+        ),
+        cliSummary: "Search the Apple Photos library and export photos.",
+        actions: [
+            ActionHelp(name: "search", summary: "Find photos by keyword, date, person, or album",
+                example: "apple-tools photos search [--query <text>] [--person <name>] [--album <name>] [--start_date <d>] [--end_date <d>] [--match <type>] [--limit <n>]"),
+            ActionHelp(name: "fetch", summary: "Export a photo into the output dir; returns its path",
+                example: "apple-tools photos fetch --id <id> [--full_resolution]", required: ["id"]),
+        ]
     )
 
     public let host: ToolHost

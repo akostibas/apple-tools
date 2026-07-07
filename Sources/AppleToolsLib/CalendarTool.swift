@@ -9,17 +9,36 @@ public struct CalendarTool: ProbeTool {
             type_: "object",
             properties: [
                 "action": PropertySchema(type_: "string", description: "calendars, list, create, or search"),
-                "calendar_name": PropertySchema(type_: "string", description: "Calendar name to filter by (for list, search) or create in (for create)"),
-                "start": PropertySchema(type_: "string", description: "Start date/time, ISO 8601 e.g. 2026-04-15T09:00:00Z (required for create; for list defaults to start of today; for search defaults to 30 days ago)"),
-                "end": PropertySchema(type_: "string", description: "End date/time, ISO 8601 (required for create; for list defaults to end of start day; for search defaults to 30 days from now)"),
-                "title": PropertySchema(type_: "string", description: "Event title (required for create)"),
-                "location": PropertySchema(type_: "string", description: "Event location (for create)"),
-                "notes": PropertySchema(type_: "string", description: "Event notes (for create)"),
-                "query": PropertySchema(type_: "string", description: "Search keyword (required for search)"),
-                "dedupe_by_id": PropertySchema(type_: "boolean", description: "For list/search: collapse the same event appearing on multiple calendars into one row with a 'calendars' array (opt-in; default false)"),
+                "calendar_name": PropertySchema(type_: "string", description: "Calendar name to filter by (for list, search) or create in (for create)",
+                    summary: "Calendar to filter by (list/search) or create in (create)", actions: ["list", "search", "create"]),
+                "start": PropertySchema(type_: "string", description: "Start date/time, ISO 8601 e.g. 2026-04-15T09:00:00Z (required for create; for list defaults to start of today; for search defaults to 30 days ago)",
+                    summary: "Start date/time, ISO 8601 (e.g. 2026-04-15T09:00:00Z)", actions: ["list", "search", "create"]),
+                "end": PropertySchema(type_: "string", description: "End date/time, ISO 8601 (required for create; for list defaults to end of start day; for search defaults to 30 days from now)",
+                    summary: "End date/time, ISO 8601", actions: ["list", "search", "create"]),
+                "title": PropertySchema(type_: "string", description: "Event title (required for create)",
+                    summary: "Event title", actions: ["create"]),
+                "location": PropertySchema(type_: "string", description: "Event location (for create)",
+                    summary: "Event location", actions: ["create"]),
+                "notes": PropertySchema(type_: "string", description: "Event notes (for create)",
+                    summary: "Event notes", actions: ["create"]),
+                "query": PropertySchema(type_: "string", description: "Search keyword (required for search)",
+                    summary: "Search keyword", actions: ["search"]),
+                "dedupe_by_id": PropertySchema(type_: "boolean", description: "For list/search: collapse the same event appearing on multiple calendars into one row with a 'calendars' array (opt-in; default false)",
+                    summary: "Collapse an event on multiple calendars into one row (default false)", actions: ["list", "search"]),
             ],
             required: ["action"]
-        )
+        ),
+        cliSummary: "List, search, and create Apple Calendar events.",
+        actions: [
+            ActionHelp(name: "calendars", summary: "List available calendars",
+                example: "apple-tools calendar calendars"),
+            ActionHelp(name: "list", summary: "View events in a date range",
+                example: "apple-tools calendar list [--start <d>] [--end <d>] [--calendar_name <n>] [--dedupe_by_id]"),
+            ActionHelp(name: "search", summary: "Find events by keyword",
+                example: "apple-tools calendar search --query <text> [--start <d>] [--end <d>] [--calendar_name <n>] [--dedupe_by_id]", required: ["query"]),
+            ActionHelp(name: "create", summary: "Add an event (does not send invites)",
+                example: "apple-tools calendar create --title <t> --start <d> --end <d> [--location <l>] [--notes <n>] [--calendar_name <n>]", required: ["title", "start", "end"]),
+        ]
     )
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
