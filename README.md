@@ -17,18 +17,23 @@ apple-tools calendar list --start 2026-06-15T00:00:00Z --end 2026-06-16T00:00:00
 
 ## Tools
 
-| App | CLI tool | App | CLI tool |
-|-----|----------|-----|----------|
-| Calendar | `calendar` | Photos | `photos` |
-| Reminders | `reminders` | Voice Memos | `voicememos` |
-| Notes | `notes` | Files | `files` |
-| Contacts | `contacts` | Clipboard | `clipboard` |
-| Mail | `email` | Screenshots | `screenshot` |
-| Messages (iMessage/SMS) | `imessage` | Open URIs | `open_uri` |
+Each tool has its own page with actions, examples, and known shortcomings:
 
-See **[docs/tools.md](docs/tools.md)** for every tool's actions and access level
-at a glance, or run `apple-tools list` (and `apple-tools <tool> --help`) for the
-set built into your installed version.
+- [`calendar`](docs/tools/calendar.md) — Calendar (read/write)
+- [`reminders`](docs/tools/reminders.md) — Reminders (read/write)
+- [`notes`](docs/tools/notes.md) — Notes (read/write)
+- [`contacts`](docs/tools/contacts.md) — Contacts (read)
+- [`email`](docs/tools/email.md) — Mail (read + draft)
+- [`imessage`](docs/tools/imessage.md) — Messages, iMessage/SMS (read/write)
+- [`photos`](docs/tools/photos.md) — Photos (read)
+- [`voicememos`](docs/tools/voicememos.md) — Voice Memos (read)
+- [`files`](docs/tools/files.md) — Files, scoped to `~/Documents` (read)
+- [`clipboard`](docs/tools/clipboard.md) — Clipboard (read/write)
+- [`screenshot`](docs/tools/screenshot.md) — Screenshots (read)
+- [`open_uri`](docs/tools/open_uri.md) — Open URLs / `mailto:` / `tel:` / deep links
+
+Run `apple-tools list` (and `apple-tools <tool> --help`) for the exact set and
+parameters built into your installed version.
 
 ## Upgrading
 
