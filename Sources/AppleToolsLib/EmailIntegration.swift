@@ -59,6 +59,14 @@ public enum EmailIntegration {
         public let attachments: [AttachmentMeta]
     }
 
+    /// Outcome of `createReply`: the threaded reply Mail built for us, echoed
+    /// back so the tool can tell the agent who it's addressed to and under
+    /// what subject (both derived by Mail from the original, not the caller).
+    public struct ReplyResult {
+        public let subject: String
+        public let to: String
+    }
+
     // MARK: - AppleScript text protocol
 
     /// Field / section delimiters for the tab-free AppleScript text protocol.
@@ -484,6 +492,121 @@ public enum EmailIntegration {
         )
         let (_, err) = runAppleScript(script, env, verifyHook)
         if let err = err { throw EmailError.scriptFailed(err) }
+    }
+
+    // MARK: - Reply
+
+    /// Create a *threaded* reply draft to the message with `id`, using Mail's
+    /// native `reply` command. Unlike `createDraft` (a fresh outgoing message),
+    /// this produces a real reply: In-Reply-To/References headers, a "Re:"
+    /// subject, the sender pre-filled as recipient, and Mail's native quoted
+    /// original. The caller's `body` is prepended *above* the quote — it must
+    /// contain ONLY the new reply text, not a hand-rolled quote of the original.
+    ///
+    /// `replyAll` toggles reply-to-all (To + all Cc). `cc` adds extra Cc
+    /// recipients on top of whatever the reply already carries. The reply
+    /// window is left open (not sent), mirroring `createDraft`'s `visible:true`.
+    ///
+    /// Returns the subject and to-line Mail derived from the original so the
+    /// tool can report them. Throws `.notFound` if no INBOX message matches.
+    public static func createReply(
+        id: String, body: String, replyAll: Bool, cc: String?, attachments: [String] = []
+    ) throws -> ReplyResult {
+        var env: [String: String] = [
+            "APPLE_TOOLS_REPLY_MSG_ID": bareMessageID(id),
+            "APPLE_TOOLS_REPLY_BODY": body,
+        ]
+
+        var ccBinding = ""
+        var ccClause = ""
+        if let cc = cc, !cc.isEmpty {
+            env["APPLE_TOOLS_REPLY_CC"] = cc
+            ccBinding = """
+            set theCC to do shell script "printenv APPLE_TOOLS_REPLY_CC"
+            """
+            ccClause = """
+            make new cc recipient at end of cc recipients with properties {address:theCC}
+            """
+        }
+
+        // Same async-attachment caveat as createDraft: one numbered env key per
+        // path, a small delay between imports so Mail's file pipeline settles.
+        let attachmentClauses = attachments.enumerated().map { idx, path -> String in
+            let key = "APPLE_TOOLS_REPLY_ATTACH_\(idx)"
+            env[key] = path
+            return """
+            set theAttPath\(idx) to do shell script "printenv \(key)"
+            tell content of theReply to make new attachment with properties {file name:POSIX file theAttPath\(idx)} at after last paragraph
+            delay 0.1
+            """
+        }.joined(separator: "\n")
+
+        // `reply to all` and `opening window` are fixed booleans (not user
+        // text), so bake them into the command as bare AppleScript tokens.
+        let replyToAllLiteral = replyAll ? "true" : "false"
+
+        // Mail populates the reply's quoted body ASYNCHRONOUSLY after `reply`
+        // returns, so we poll (≤3s) for content to appear before prepending —
+        // setting content while it's still empty would drop the quote. We only
+        // ever prepend, never replace, so recipients/subject/threading (all
+        // properties Mail set from the original) are untouched.
+        //
+        // PHASE markers bound the cancel-safe window: `committed id=` is emitted
+        // only after the body and any attachments are in place.
+        let script = """
+        set theMsgID to do shell script "printenv APPLE_TOOLS_REPLY_MSG_ID"
+        set theBody to do shell script "printenv APPLE_TOOLS_REPLY_BODY"
+        \(ccBinding)
+        set fieldSep to (character id 31)
+        log "PHASE: prepare"
+        tell application "Mail"
+            log "PHASE: pre-commit"
+            set theReply to missing value
+            set origSubject to ""
+            set origTo to ""
+            set allAccounts to every account
+            repeat with acct in allAccounts
+                try
+                    set inboxBox to mailbox "INBOX" of acct
+                    set msgs to (every message of inboxBox whose message id is theMsgID)
+                    if (count of msgs) > 0 then
+                        set m to item 1 of msgs
+                        set theReply to reply m opening window true reply to all \(replyToAllLiteral)
+                        exit repeat
+                    end if
+                end try
+            end repeat
+            if theReply is missing value then return "NOT_FOUND"
+            -- Wait (≤3s) for Mail to fill in the quoted original.
+            set waited to 0
+            repeat until ((content of theReply) is not "") or (waited ≥ 30)
+                delay 0.1
+                set waited to waited + 1
+            end repeat
+            set content of theReply to theBody & return & return & (content of theReply)
+            \(ccClause)
+            \(attachmentClauses)
+            set origSubject to subject of theReply
+            set toStr to ""
+            repeat with addr in (address of every to recipient of theReply)
+                if toStr is not "" then set toStr to toStr & ", "
+                set toStr to toStr & addr
+            end repeat
+            set replyID to id of theReply as string
+            log "PHASE: committed id=" & replyID
+            return replyID & fieldSep & origSubject & fieldSep & toStr
+        end tell
+        """
+
+        let (out, err) = runAppleScript(script, env, nil)
+        if let err = err { throw EmailError.scriptFailed(err) }
+        if out == "NOT_FOUND" { throw EmailError.notFound }
+
+        let parts = out.components(separatedBy: fieldSep)
+        return ReplyResult(
+            subject: parts.count > 1 ? parts[1] : "",
+            to: parts.count > 2 ? parts[2] : ""
+        )
     }
 
     // MARK: - AppleScript runner

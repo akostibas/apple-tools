@@ -164,6 +164,50 @@ final class EmailToolTests: XCTestCase {
                        "expanded path should no longer contain '~/': \(result)")
     }
 
+    // MARK: - Reply
+
+    func testToolDefinitionAdvertisesReplyAction() {
+        XCTAssertTrue(tool.definition.description.contains("'reply'"),
+                      "description should list the reply action so agents discover it")
+    }
+
+    func testReplyAdvertisesReplyAllProperty() {
+        XCTAssertNotNil(tool.definition.parameters?.properties?["reply_all"],
+                        "reply should advertise a 'reply_all' parameter")
+    }
+
+    func testReplyRequiresID() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("reply"),
+            "body": AnyCodable("Sounds good, thanks!"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("missing required parameter: id"), result)
+    }
+
+    func testReplyRequiresBody() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("reply"),
+            "id": AnyCodable("<abc@example.com>"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("missing required parameter: body"), result)
+    }
+
+    func testReplyRejectsMissingAttachmentPath() {
+        // Attachment validation runs before AppleScript, so this fails without
+        // touching Mail.app. A missing path proves validation gates the reply.
+        let missing = "/nonexistent/apple-tools-reply-\(UUID().uuidString).txt"
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("reply"),
+            "id": AnyCodable("<abc@example.com>"),
+            "body": AnyCodable("hi"),
+            "attachments": AnyCodable([missing]),
+        ])
+        XCTAssertTrue(isError, "missing attachment should fail validation: \(result)")
+        XCTAssertTrue(result.contains("not found"), result)
+    }
+
     func testSearchRejectsUnparseableBefore() {
         let (result, isError) = tool.handle(params: [
             "action": AnyCodable("search"),

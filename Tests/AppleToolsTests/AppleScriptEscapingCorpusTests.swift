@@ -79,6 +79,7 @@ final class AppleScriptEscapingCorpusTests: XCTestCase {
         iMessageSenderIntegration(),
         notesCreateIntegration(),
         emailCreateDraftIntegration(),
+        emailCreateReplyIntegration(),
         userConfirmationIntegration(),
     ]
 
@@ -215,6 +216,30 @@ private func emailCreateDraftIntegration() -> AppleScriptEscapingCorpusTests.App
                 to: "test@example.com",
                 subject: "fixed-subject",
                 body: payload,
+                cc: nil,
+                attachments: []
+            )
+            return captured
+        }
+    )
+}
+
+private func emailCreateReplyIntegration() -> AppleScriptEscapingCorpusTests.AppleScriptIntegration {
+    return .init(
+        name: "EmailIntegration.createReply(body)",
+        envKey: "APPLE_TOOLS_REPLY_BODY",
+        execute: { payload in
+            var captured: (script: String, env: [String: String]) = ("", [:])
+            let saved = EmailIntegration.runAppleScript
+            defer { EmailIntegration.runAppleScript = saved }
+            EmailIntegration.runAppleScript = { script, env, _ in
+                captured = (script, env)
+                return ("reply-id-x", nil)
+            }
+            _ = try? EmailIntegration.createReply(
+                id: "<abc@example.com>",
+                body: payload,
+                replyAll: false,
                 cc: nil,
                 attachments: []
             )
