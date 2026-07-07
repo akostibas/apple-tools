@@ -422,23 +422,54 @@ public enum EmailIntegration {
     // MARK: - Draft
 
     public static func createDraft(to: String, subject: String, body: String, cc: String?, attachments: [String] = []) throws {
+        let ccList = (cc?.isEmpty == false) ? [cc!] : []
+        try createOutgoingMessage(to: to, subject: subject, body: body, cc: ccList, attachments: attachments)
+    }
+
+    /// Create a visible outgoing message (draft) via `make new outgoing message`
+    /// — the reliable path that sets the body at creation time. Shared by
+    /// `createDraft` and `createReply`. `cc` is a list so reply-all can pass
+    /// many. When `htmlBody` is non-nil the message is created with `html
+    /// content` (rich — used by replies for a real `<blockquote>` quote);
+    /// otherwise `content` is set to the plain `body`.
+    static func createOutgoingMessage(
+        to: String, subject: String, body: String, cc: [String], attachments: [String],
+        htmlBody: String? = nil
+    ) throws {
         var env: [String: String] = [
             "APPLE_TOOLS_EMAIL_TO": to,
             "APPLE_TOOLS_EMAIL_SUBJECT": subject,
-            "APPLE_TOOLS_EMAIL_BODY": body,
         ]
 
-        var ccBinding = ""
-        var ccClause = ""
-        if let cc = cc, !cc.isEmpty {
-            env["APPLE_TOOLS_EMAIL_CC"] = cc
-            ccBinding = """
-            set theCC to do shell script "printenv APPLE_TOOLS_EMAIL_CC"
+        // Body: HTML (rich) or plain, routed through env either way. `html
+        // content` at creation time renders as rich text in the compose window
+        // (verified on macOS 26); the plain `content` path is unchanged.
+        let createClause: String
+        if let htmlBody = htmlBody {
+            env["APPLE_TOOLS_EMAIL_HTML"] = htmlBody
+            createClause = """
+            set theHTML to do shell script "printenv APPLE_TOOLS_EMAIL_HTML"
+            set newMsg to make new outgoing message with properties {subject:theSubject, visible:true}
+            set html content of newMsg to theHTML
             """
-            ccClause = """
-            make new cc recipient at end of cc recipients with properties {address:theCC}
+        } else {
+            env["APPLE_TOOLS_EMAIL_BODY"] = body
+            createClause = """
+            set theBody to do shell script "printenv APPLE_TOOLS_EMAIL_BODY"
+            set newMsg to make new outgoing message with properties {subject:theSubject, content:theBody, visible:true}
             """
         }
+
+        // One numbered env key per cc so addresses stay out of the script
+        // source (same pattern as attachments below).
+        let ccClauses = cc.enumerated().map { idx, addr -> String in
+            let key = "APPLE_TOOLS_EMAIL_CC_\(idx)"
+            env[key] = addr
+            return """
+            set theCC\(idx) to do shell script "printenv \(key)"
+            make new cc recipient at end of cc recipients with properties {address:theCC\(idx)}
+            """
+        }.joined(separator: "\n")
 
         // Mail processes `make new attachment` asynchronously and can drop
         // files when invocations are looped tightly — a small delay between
@@ -462,15 +493,13 @@ public enum EmailIntegration {
         let script = """
         set theTo to do shell script "printenv APPLE_TOOLS_EMAIL_TO"
         set theSubject to do shell script "printenv APPLE_TOOLS_EMAIL_SUBJECT"
-        set theBody to do shell script "printenv APPLE_TOOLS_EMAIL_BODY"
-        \(ccBinding)
         log "PHASE: prepare"
         tell application "Mail"
             log "PHASE: pre-commit"
-            set newMsg to make new outgoing message with properties {subject:theSubject, content:theBody, visible:true}
+            \(createClause)
             tell newMsg
                 make new to recipient at end of to recipients with properties {address:theTo}
-                \(ccClause)
+                \(ccClauses)
             end tell
             \(attachmentClauses)
             set draftID to id of newMsg as string
@@ -496,117 +525,125 @@ public enum EmailIntegration {
 
     // MARK: - Reply
 
-    /// Create a *threaded* reply draft to the message with `id`, using Mail's
-    /// native `reply` command. Unlike `createDraft` (a fresh outgoing message),
-    /// this produces a real reply: In-Reply-To/References headers, a "Re:"
-    /// subject, the sender pre-filled as recipient, and Mail's native quoted
-    /// original. The caller's `body` is prepended *above* the quote — it must
-    /// contain ONLY the new reply text, not a hand-rolled quote of the original.
+    /// Draft a reply to the INBOX message with `id`, as a fresh outgoing message
+    /// (the same reliable `make new outgoing message` path `createDraft` uses).
     ///
-    /// `replyAll` toggles reply-to-all (To + all Cc). `cc` adds extra Cc
-    /// recipients on top of whatever the reply already carries. The reply
-    /// window is left open (not sent), mirroring `createDraft`'s `visible:true`.
+    /// We deliberately do NOT use Mail's native `reply` command: on Exchange /
+    /// Outlook accounts the reply is composed as HTML, and AppleScript's plain
+    /// `content` property is a black hole for it — it reads empty and writes are
+    /// silently discarded, so the caller's text never lands (apple-tools live
+    /// finding, Shannon-Assistant #884). Setting `content` at *creation* time,
+    /// by contrast, works on every account type.
     ///
-    /// Returns the subject and to-line Mail derived from the original so the
-    /// tool can report them. Throws `.notFound` if no INBOX message matches.
+    /// So we read the original ourselves and construct the reply as HTML: a
+    /// "Re:" subject, the sender as recipient, and the caller's text above an
+    /// attribution (`On <date>, <sender> wrote:`) and the original inside a
+    /// `<blockquote>` — which Mail renders as a real indented quote bar via the
+    /// `html content` property (works at creation time where plain `content` on
+    /// a native reply does not).
+    ///
+    /// TRADE-OFF: because this is a new message, it carries no In-Reply-To /
+    /// References headers — the recipient's client threads it by the "Re:"
+    /// subject, not by conversation id. Faithful threading isn't reachable
+    /// through AppleScript once we can't use `reply`. `replyAll` adds the
+    /// original To+Cc recipients as Cc; `cc` adds further Cc on top.
+    ///
+    /// Reads the original via INBOX AppleScript, so (like `reply` before it)
+    /// this only works for messages currently in an inbox. Throws `.notFound`
+    /// if no INBOX message matches.
     public static func createReply(
         id: String, body: String, replyAll: Bool, cc: String?, attachments: [String] = []
     ) throws -> ReplyResult {
-        var env: [String: String] = [
-            "APPLE_TOOLS_REPLY_MSG_ID": bareMessageID(id),
-            "APPLE_TOOLS_REPLY_BODY": body,
-        ]
+        let orig = try readMessageViaAppleScript(id: id)
 
-        var ccBinding = ""
-        var ccClause = ""
-        if let cc = cc, !cc.isEmpty {
-            env["APPLE_TOOLS_REPLY_CC"] = cc
-            ccBinding = """
-            set theCC to do shell script "printenv APPLE_TOOLS_REPLY_CC"
-            """
-            ccClause = """
-            make new cc recipient at end of cc recipients with properties {address:theCC}
-            """
+        let toAddress = extractEmailAddress(orig.from)
+
+        // "Re:" subject, but don't stack "Re: Re:".
+        let trimmedSubject = orig.subject.trimmingCharacters(in: .whitespaces)
+        let replySubject = trimmedSubject.lowercased().hasPrefix("re:")
+            ? trimmedSubject : "Re: \(trimmedSubject)"
+
+        // Cc: for reply-all, every original To+Cc address except the sender (who
+        // is already the To) and empties; then any explicit --cc on top. Deduped
+        // case-insensitively, order preserved.
+        var ccAddresses: [String] = []
+        if replyAll {
+            for field in [orig.to, orig.cc] {
+                for addr in splitAddresses(field) {
+                    let clean = extractEmailAddress(addr)
+                    if !clean.isEmpty { ccAddresses.append(clean) }
+                }
+            }
         }
+        if let cc = cc, !cc.isEmpty {
+            for addr in splitAddresses(cc) { ccAddresses.append(extractEmailAddress(addr)) }
+        }
+        ccAddresses = dedupeAddresses(ccAddresses, excluding: toAddress)
 
-        // Same async-attachment caveat as createDraft: one numbered env key per
-        // path, a small delay between imports so Mail's file pipeline settles.
-        let attachmentClauses = attachments.enumerated().map { idx, path -> String in
-            let key = "APPLE_TOOLS_REPLY_ATTACH_\(idx)"
-            env[key] = path
-            return """
-            set theAttPath\(idx) to do shell script "printenv \(key)"
-            tell content of theReply to make new attachment with properties {file name:POSIX file theAttPath\(idx)} at after last paragraph
-            delay 0.1
-            """
-        }.joined(separator: "\n")
-
-        // `reply to all` and `opening window` are fixed booleans (not user
-        // text), so bake them into the command as bare AppleScript tokens.
-        let replyToAllLiteral = replyAll ? "true" : "false"
-
-        // Mail populates the reply's quoted body ASYNCHRONOUSLY after `reply`
-        // returns, so we poll (≤3s) for content to appear before prepending —
-        // setting content while it's still empty would drop the quote. We only
-        // ever prepend, never replace, so recipients/subject/threading (all
-        // properties Mail set from the original) are untouched.
-        //
-        // PHASE markers bound the cancel-safe window: `committed id=` is emitted
-        // only after the body and any attachments are in place.
-        let script = """
-        set theMsgID to do shell script "printenv APPLE_TOOLS_REPLY_MSG_ID"
-        set theBody to do shell script "printenv APPLE_TOOLS_REPLY_BODY"
-        \(ccBinding)
-        set fieldSep to (character id 31)
-        log "PHASE: prepare"
-        tell application "Mail"
-            log "PHASE: pre-commit"
-            set theReply to missing value
-            set origSubject to ""
-            set origTo to ""
-            set allAccounts to every account
-            repeat with acct in allAccounts
-                try
-                    set inboxBox to mailbox "INBOX" of acct
-                    set msgs to (every message of inboxBox whose message id is theMsgID)
-                    if (count of msgs) > 0 then
-                        set m to item 1 of msgs
-                        set theReply to reply m opening window true reply to all \(replyToAllLiteral)
-                        exit repeat
-                    end if
-                end try
-            end repeat
-            if theReply is missing value then return "NOT_FOUND"
-            -- Wait (≤3s) for Mail to fill in the quoted original.
-            set waited to 0
-            repeat until ((content of theReply) is not "") or (waited ≥ 30)
-                delay 0.1
-                set waited to waited + 1
-            end repeat
-            set content of theReply to theBody & return & return & (content of theReply)
-            \(ccClause)
-            \(attachmentClauses)
-            set origSubject to subject of theReply
-            set toStr to ""
-            repeat with addr in (address of every to recipient of theReply)
-                if toStr is not "" then set toStr to toStr & ", "
-                set toStr to toStr & addr
-            end repeat
-            set replyID to id of theReply as string
-            log "PHASE: committed id=" & replyID
-            return replyID & fieldSep & origSubject & fieldSep & toStr
-        end tell
+        // Build the reply as HTML: the caller's text, an attribution line, then
+        // the original inside a <blockquote> — which Mail renders as a real
+        // indented quote bar (verified on macOS 26), the block-indent #884
+        // wanted, without the literal ">" look. Everything is HTML-escaped;
+        // newlines become <br>.
+        let attribution = "On \(orig.date), \(orig.from) wrote:"
+        let htmlBody = """
+        <div>\(htmlInline(body))</div>
+        <br>
+        <div>\(htmlEscape(attribution))</div>
+        <blockquote type="cite">\(htmlInline(orig.body))</blockquote>
         """
 
-        let (out, err) = runAppleScript(script, env, nil)
-        if let err = err { throw EmailError.scriptFailed(err) }
-        if out == "NOT_FOUND" { throw EmailError.notFound }
+        try createOutgoingMessage(
+            to: toAddress, subject: replySubject, body: body,
+            cc: ccAddresses, attachments: attachments, htmlBody: htmlBody)
 
-        let parts = out.components(separatedBy: fieldSep)
-        return ReplyResult(
-            subject: parts.count > 1 ? parts[1] : "",
-            to: parts.count > 2 ? parts[2] : ""
-        )
+        return ReplyResult(subject: replySubject, to: toAddress)
+    }
+
+    /// Escape the five characters that are unsafe in HTML text/attribute
+    /// context. Order matters: `&` first so we don't double-escape.
+    static func htmlEscape(_ s: String) -> String {
+        var r = s.replacingOccurrences(of: "&", with: "&amp;")
+        r = r.replacingOccurrences(of: "<", with: "&lt;")
+        r = r.replacingOccurrences(of: ">", with: "&gt;")
+        r = r.replacingOccurrences(of: "\"", with: "&quot;")
+        r = r.replacingOccurrences(of: "'", with: "&#39;")
+        return r
+    }
+
+    /// HTML-escape and turn newlines into `<br>` so plain multi-line text keeps
+    /// its line breaks when placed in an HTML body.
+    static func htmlInline(_ s: String) -> String {
+        return htmlEscape(s).replacingOccurrences(of: "\n", with: "<br>")
+    }
+
+    /// Extract a bare email address from a `Name <addr>` / `addr` string. Falls
+    /// back to the trimmed input when there's no angle-bracket form.
+    static func extractEmailAddress(_ s: String) -> String {
+        if let open = s.range(of: "<"), let close = s.range(of: ">"),
+           open.upperBound <= close.lowerBound {
+            return String(s[open.upperBound..<close.lowerBound])
+                .trimmingCharacters(in: .whitespaces)
+        }
+        return s.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Split a comma-separated recipient list, dropping empties.
+    static func splitAddresses(_ s: String) -> [String] {
+        return s.components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Case-insensitively dedupe addresses, dropping any equal to `excluding`.
+    static func dedupeAddresses(_ addresses: [String], excluding: String) -> [String] {
+        var seen = Set([excluding.lowercased()])
+        var out: [String] = []
+        for a in addresses where !a.isEmpty {
+            let key = a.lowercased()
+            if seen.insert(key).inserted { out.append(a) }
+        }
+        return out
     }
 
     // MARK: - AppleScript runner
