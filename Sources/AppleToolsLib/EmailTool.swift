@@ -5,13 +5,13 @@ import UniformTypeIdentifiers
 public struct EmailTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "email",
-        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a draft message — does NOT send; supports file attachments by absolute path).",
+        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message — does NOT send; supports file attachments by absolute path), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "inbox, search, read, fetch_attachment, or draft"),
+                "action": PropertySchema(type_: "string", description: "inbox, search, read, fetch_attachment, draft, or reply"),
                 "limit": PropertySchema(type_: "integer", description: "Max messages to return (for inbox and search, default 20, max 50)"),
-                "id": PropertySchema(type_: "string", description: "Message ID (for read, fetch_attachment)"),
+                "id": PropertySchema(type_: "string", description: "Message ID (for read, fetch_attachment, reply)"),
                 "filename": PropertySchema(type_: "string", description: "Attachment filename to select when a message has multiple attachments (for fetch_attachment, optional)"),
                 "query": PropertySchema(type_: "string", description: "Whitespace-separated tokens, all must match across subject, body preview, or sender — full message body is not searched (for search)"),
                 "from": PropertySchema(type_: "string", description: "Sender name or email to filter by — a WIDE TEXT NET: matches a name prefix in the display name (so 'sam' finds 'Samira'), or a whole word in the email local-part; domain is ignored (so a full address like 'a@b.com' returns 0 — use from_email for that). When one query matches >1 distinct address, the response prepends a 'senders' rollup + hint (for search)"),
@@ -22,12 +22,13 @@ public struct EmailTool: ProbeTool {
                 "after": PropertySchema(type_: "string", description: "ISO 8601 date lower bound, e.g. '2025-01-01' or '2025-01-01T00:00:00' (for search)"),
                 "before": PropertySchema(type_: "string", description: "ISO 8601 date upper bound (for search)"),
                 "exclude_self": PropertySchema(type_: "boolean", description: "Drop results where the viewer is the sender; default true (for search)"),
-                "cc": PropertySchema(type_: "string", description: "CC email address (for draft)"),
-                "subject": PropertySchema(type_: "string", description: "Email subject (for draft)"),
-                "body": PropertySchema(type_: "string", description: "Email body text (for draft)"),
+                "cc": PropertySchema(type_: "string", description: "CC email address (for draft; for reply, an EXTRA cc added on top of the reply's existing recipients)"),
+                "subject": PropertySchema(type_: "string", description: "Email subject (for draft; ignored for reply — the 'Re:' subject is taken from the original)"),
+                "body": PropertySchema(type_: "string", description: "Email body text. For draft, the whole message. For reply, ONLY your new reply text — the original message is quoted automatically, so do NOT paste or '>'-quote it yourself."),
+                "reply_all": PropertySchema(type_: "boolean", description: "For reply: reply to all recipients (To + Cc) instead of just the sender. Default false."),
                 "attachments": PropertySchema(
                     type_: "array",
-                    description: "Absolute file paths to attach to the draft (for draft). '~' is expanded. Each path must exist and be ≤35MB; max 10 attachments.",
+                    description: "Absolute file paths to attach (for draft and reply). '~' is expanded. Each path must exist and be ≤35MB; max 10 attachments.",
                     items: ItemsSchema(type_: "string")
                 ),
             ],
@@ -43,6 +44,7 @@ public struct EmailTool: ProbeTool {
         "read":             .read,
         "fetch_attachment": .read,
         "draft":            .readWrite,
+        "reply":            .readWrite,
     ])
 
     public init(host: ToolHost) {
@@ -74,6 +76,17 @@ public struct EmailTool: ProbeTool {
             let cc = params?["cc"]?.value as? String
             let attachments = (params?["attachments"]?.value as? [Any])?.compactMap { $0 as? String } ?? []
             return draft(to: to, subject: subject, body: body, cc: cc, attachments: attachments)
+        case "reply":
+            guard let id = params?["id"]?.value as? String, !id.isEmpty else {
+                return ("missing required parameter: id", true)
+            }
+            guard let body = params?["body"]?.value as? String, !body.isEmpty else {
+                return ("missing required parameter: body", true)
+            }
+            let replyAll = (params?["reply_all"]?.value as? Bool) ?? false
+            let cc = params?["cc"]?.value as? String
+            let attachments = (params?["attachments"]?.value as? [Any])?.compactMap { $0 as? String } ?? []
+            return reply(id: id, body: body, replyAll: replyAll, cc: cc, attachments: attachments)
         case "fetch_attachment":
             guard let id = params?["id"]?.value as? String, !id.isEmpty else {
                 return ("missing required parameter: id", true)
@@ -81,7 +94,7 @@ public struct EmailTool: ProbeTool {
             let filename = params?["filename"]?.value as? String
             return fetchAttachment(id: id, filename: filename)
         default:
-            return ("unknown action: \(action) (use inbox, search, read, fetch_attachment, or draft)", true)
+            return ("unknown action: \(action) (use inbox, search, read, fetch_attachment, draft, or reply)", true)
         }
     }
 
@@ -571,6 +584,45 @@ public struct EmailTool: ProbeTool {
         if !warnings.isEmpty {
             response["warnings"] = warnings
         }
+        return (jsonEncode(response), false)
+    }
+
+    // MARK: - Reply
+
+    private func reply(id: String, body: String, replyAll: Bool, cc: String?, attachments: [String]) -> (String, Bool) {
+        // Same '>' guard as draft — but for replies it also catches the common
+        // failure mode where the caller pastes a hand-quoted copy of the
+        // original into the body. Mail quotes the original for us.
+        var warnings: [String] = []
+        let lines = body.components(separatedBy: "\n")
+        if lines.contains(where: { $0.hasPrefix(">") }) {
+            warnings.append("Body contains lines starting with '>'. The original message is quoted automatically — 'body' should hold only your new reply text, and '>' will appear as a literal character.")
+        }
+
+        let (resolved, attachErr) = resolveAttachments(attachments)
+        if let attachErr = attachErr { return (attachErr, true) }
+
+        let result: EmailIntegration.ReplyResult
+        do {
+            result = try EmailIntegration.createReply(
+                id: id, body: body, replyAll: replyAll, cc: cc, attachments: resolved)
+        } catch EmailIntegration.EmailError.notFound {
+            return ("message not found: \(id)", true)
+        } catch let e as EmailIntegration.EmailError {
+            return (e.description, true)
+        } catch {
+            return (error.localizedDescription, true)
+        }
+
+        var response: [String: Any] = [
+            "status": "reply drafted",
+            "reply_all": replyAll,
+        ]
+        if !result.subject.isEmpty { response["subject"] = result.subject }
+        if !result.to.isEmpty { response["to"] = result.to }
+        if let cc = cc, !cc.isEmpty { response["cc_added"] = cc }
+        if !resolved.isEmpty { response["attachments"] = resolved }
+        if !warnings.isEmpty { response["warnings"] = warnings }
         return (jsonEncode(response), false)
     }
 

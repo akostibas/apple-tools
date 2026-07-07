@@ -164,6 +164,103 @@ final class EmailToolTests: XCTestCase {
                        "expanded path should no longer contain '~/': \(result)")
     }
 
+    // MARK: - Reply
+
+    func testToolDefinitionAdvertisesReplyAction() {
+        XCTAssertTrue(tool.definition.description.contains("'reply'"),
+                      "description should list the reply action so agents discover it")
+    }
+
+    func testReplyAdvertisesReplyAllProperty() {
+        XCTAssertNotNil(tool.definition.parameters?.properties?["reply_all"],
+                        "reply should advertise a 'reply_all' parameter")
+    }
+
+    func testReplyRequiresID() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("reply"),
+            "body": AnyCodable("Sounds good, thanks!"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("missing required parameter: id"), result)
+    }
+
+    func testReplyRequiresBody() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("reply"),
+            "id": AnyCodable("<abc@example.com>"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("missing required parameter: body"), result)
+    }
+
+    func testReplyRejectsMissingAttachmentPath() {
+        // Attachment validation runs before AppleScript, so this fails without
+        // touching Mail.app. A missing path proves validation gates the reply.
+        let missing = "/nonexistent/apple-tools-reply-\(UUID().uuidString).txt"
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("reply"),
+            "id": AnyCodable("<abc@example.com>"),
+            "body": AnyCodable("hi"),
+            "attachments": AnyCodable([missing]),
+        ])
+        XCTAssertTrue(isError, "missing attachment should fail validation: \(result)")
+        XCTAssertTrue(result.contains("not found"), result)
+    }
+
+    // MARK: - Reply address parsing
+
+    func testExtractEmailAddressFromAngleBracketForm() {
+        XCTAssertEqual(EmailIntegration.extractEmailAddress("Sam Piell <sam@example.com>"), "sam@example.com")
+    }
+
+    func testExtractEmailAddressFromBareAddress() {
+        XCTAssertEqual(EmailIntegration.extractEmailAddress("  sam@example.com  "), "sam@example.com")
+    }
+
+    func testExtractEmailAddressHandlesCommaInDisplayName() {
+        // Exchange-style display names with a comma must not confuse extraction.
+        XCTAssertEqual(
+            EmailIntegration.extractEmailAddress("Piell, Sam (she/her) <S4P5@pge.com>"),
+            "S4P5@pge.com")
+    }
+
+    func testSplitAddressesDropsEmpties() {
+        XCTAssertEqual(
+            EmailIntegration.splitAddresses("a@x.com, , b@x.com,"),
+            ["a@x.com", "b@x.com"])
+    }
+
+    func testDedupeAddressesExcludesSenderCaseInsensitively() {
+        let out = EmailIntegration.dedupeAddresses(
+            ["Sam@x.com", "b@x.com", "B@x.com", "sam@x.com"],
+            excluding: "sam@x.com")
+        XCTAssertEqual(out, ["b@x.com"], "sender and case-dupes should be dropped")
+    }
+
+    // MARK: - HTML reply body
+
+    func testHtmlEscapeEscapesAllFive() {
+        XCTAssertEqual(
+            EmailIntegration.htmlEscape("a & b < c > d \" e ' f"),
+            "a &amp; b &lt; c &gt; d &quot; e &#39; f")
+    }
+
+    func testHtmlEscapeAmpersandFirstNoDoubleEscape() {
+        // "&lt;" in the input must become "&amp;lt;", not "&lt;".
+        XCTAssertEqual(EmailIntegration.htmlEscape("&lt;"), "&amp;lt;")
+    }
+
+    func testHtmlInlineConvertsNewlinesToBr() {
+        XCTAssertEqual(EmailIntegration.htmlInline("line1\nline2"), "line1<br>line2")
+    }
+
+    func testHtmlInlineEscapesThenBreaks() {
+        XCTAssertEqual(
+            EmailIntegration.htmlInline("<tag>\n& more"),
+            "&lt;tag&gt;<br>&amp; more")
+    }
+
     func testSearchRejectsUnparseableBefore() {
         let (result, isError) = tool.handle(params: [
             "action": AnyCodable("search"),
