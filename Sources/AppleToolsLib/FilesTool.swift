@@ -9,13 +9,28 @@ public struct FilesTool: ProbeTool {
             type_: "object",
             properties: [
                 "action": PropertySchema(type_: "string", description: "search, list, info, or fetch"),
-                "query": PropertySchema(type_: "string", description: "Spotlight search query (for search)"),
-                "path": PropertySchema(type_: "string", description: "Relative path within ~/Documents (for list, info, fetch). For list, defaults to root."),
-                "offset": PropertySchema(type_: "integer", description: "Number of results to skip (for search/list, default 0)"),
-                "limit": PropertySchema(type_: "integer", description: "Max results to return (for search/list, default 20, max 50)"),
+                "query": PropertySchema(type_: "string", description: "Spotlight search query (for search)",
+                    summary: "Spotlight search query", actions: ["search"]),
+                "path": PropertySchema(type_: "string", description: "Relative path within ~/Documents (for list, info, fetch). For list, defaults to root.",
+                    summary: "Relative path within ~/Documents (list defaults to root)", actions: ["list", "info", "fetch"]),
+                "offset": PropertySchema(type_: "integer", description: "Number of results to skip (for search/list, default 0)",
+                    summary: "Number of results to skip (default 0)", actions: ["search", "list"]),
+                "limit": PropertySchema(type_: "integer", description: "Max results to return (for search/list, default 20, max 50)",
+                    summary: "Max results (default 20, max 50)", actions: ["search", "list"]),
             ],
             required: ["action"]
-        )
+        ),
+        cliSummary: "Search and browse files in ~/Documents.",
+        actions: [
+            ActionHelp(name: "search", summary: "Spotlight search within ~/Documents",
+                example: "apple-tools files search --query <text> [--offset <n>] [--limit <n>]", required: ["query"]),
+            ActionHelp(name: "list", summary: "List a directory",
+                example: "apple-tools files list [--path <dir>] [--offset <n>] [--limit <n>]"),
+            ActionHelp(name: "info", summary: "Show file metadata",
+                example: "apple-tools files info --path <file>", required: ["path"]),
+            ActionHelp(name: "fetch", summary: "Copy a file into the output dir; returns its path",
+                example: "apple-tools files fetch --path <file>", required: ["path"]),
+        ]
     )
 
     // The probe config is injected so we can derive the upload URL and API key.

@@ -69,10 +69,74 @@ public struct ToolDefinition: Codable {
     public let description: String
     public let parameters: ParameterSchema?
 
-    public init(name: String, description: String, parameters: ParameterSchema?) {
+    // MARK: CLI-only help metadata
+    //
+    // These fields inform the human-facing `apple-tools <tool> --help` renderer
+    // and are DELIBERATELY excluded from `CodingKeys` below, so they never
+    // appear in the JSON schema handed to the LLM (`description` + property
+    // descriptions remain the model's single source of truth). See CLIHelp.swift.
+
+    /// Short, human one-line blurb for the CLI (the `description` above is the
+    /// verbose model-facing prose). Falls back to `description` when nil.
+    public let cliSummary: String?
+
+    /// For tools that dispatch on an `action` param: ordered, human-facing help
+    /// for each action (summary, example, per-action required flags). Drives
+    /// the grouped CLI help. Nil for single-action tools (renders a flat list).
+    public let actions: [ActionHelp]?
+
+    public init(
+        name: String,
+        description: String,
+        parameters: ParameterSchema?,
+        cliSummary: String? = nil,
+        actions: [ActionHelp]? = nil
+    ) {
         self.name = name
         self.description = description
         self.parameters = parameters
+        self.cliSummary = cliSummary
+        self.actions = actions
+    }
+
+    // Only these keys are encoded/decoded — `cliSummary` and `actions` are
+    // omitted, keeping the LLM payload byte-identical to before they existed.
+    enum CodingKeys: String, CodingKey {
+        case name
+        case description
+        case parameters
+    }
+
+    // Custom decode so the CLI-only fields (absent from CodingKeys) stay `let`
+    // without a stored default. They never round-trip through JSON.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        description = try c.decode(String.self, forKey: .description)
+        parameters = try c.decodeIfPresent(ParameterSchema.self, forKey: .parameters)
+        cliSummary = nil
+        actions = nil
+    }
+}
+
+/// Human-facing help for a single tool action, used only by the CLI renderer.
+/// Never encoded into the LLM tool schema.
+public struct ActionHelp {
+    public let name: String
+    public let summary: String
+    /// Usage/example line shown under the action, e.g.
+    /// `apple-tools email draft --to <addr> [--subject <t>]`.
+    public let example: String?
+    /// Flags this action requires (rendered first and tagged `(required)`).
+    /// Required-ness is per-action and lives only in each tool's `handle`
+    /// switch today, so it must be declared here for the renderer.
+    public let required: [String]
+
+    public init(name: String, summary: String, example: String? = nil, required: [String] = []) {
+        self.name = name
+        self.summary = summary
+        self.example = example
+        self.required = required
     }
 }
 
@@ -99,16 +163,46 @@ public struct PropertySchema: Codable {
     public let description: String?
     public let items: ItemsSchema?
 
-    public init(type_: String, description: String?, items: ItemsSchema? = nil) {
+    // MARK: CLI-only help metadata (excluded from CodingKeys — see ToolDefinition)
+
+    /// Terse, human one-line help for `apple-tools <tool> --help`. The verbose
+    /// `description` above stays the model's source of truth; `summary` is what
+    /// the CLI shows. Falls back to `description` when nil.
+    public let summary: String?
+
+    /// Which action(s) own this flag, for grouping in the CLI help. Nil means
+    /// the flag is common to all actions (rendered once under "Common flags").
+    public let actions: [String]?
+
+    public init(
+        type_: String,
+        description: String?,
+        items: ItemsSchema? = nil,
+        summary: String? = nil,
+        actions: [String]? = nil
+    ) {
         self.type_ = type_
         self.description = description
         self.items = items
+        self.summary = summary
+        self.actions = actions
     }
 
+    // `summary` and `actions` are intentionally absent — not sent to the LLM.
     enum CodingKeys: String, CodingKey {
         case type_ = "type"
         case description
         case items
+    }
+
+    // Custom decode so the CLI-only fields stay `let` without a stored default.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type_ = try c.decode(String.self, forKey: .type_)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        items = try c.decodeIfPresent(ItemsSchema.self, forKey: .items)
+        summary = nil
+        actions = nil
     }
 }
 

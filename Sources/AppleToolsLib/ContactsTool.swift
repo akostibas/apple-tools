@@ -9,12 +9,22 @@ public struct ContactsTool: ProbeTool {
             type_: "object",
             properties: [
                 "action": PropertySchema(type_: "string", description: "search or get"),
-                "query": PropertySchema(type_: "string", description: "Search term — matches name, email, phone, or group name (required for search)"),
-                "limit": PropertySchema(type_: "integer", description: "Max results to return (for search, default 20)"),
-                "id": PropertySchema(type_: "string", description: "Contact identifier from search results (required for get)"),
+                "query": PropertySchema(type_: "string", description: "Search term — matches name, email, phone, or group name (required for search)",
+                    summary: "Search term matched across name, email, phone, group", actions: ["search"]),
+                "limit": PropertySchema(type_: "integer", description: "Max results to return (for search, default 20)",
+                    summary: "Max results (default 20)", actions: ["search"]),
+                "id": PropertySchema(type_: "string", description: "Contact identifier from search results (required for get)",
+                    summary: "Contact ID from search results", actions: ["get"]),
             ],
             required: ["action"]
-        )
+        ),
+        cliSummary: "Search Apple Contacts and read full contact details.",
+        actions: [
+            ActionHelp(name: "search", summary: "Find contacts by name, email, phone, or group",
+                example: "apple-tools contacts search --query <text> [--limit <n>]", required: ["query"]),
+            ActionHelp(name: "get", summary: "Get full details for a contact by ID",
+                example: "apple-tools contacts get --id <id>", required: ["id"]),
+        ]
     )
 
     public let accessPolicy: ToolAccessPolicy = .perAction([

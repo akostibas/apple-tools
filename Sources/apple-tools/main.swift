@@ -9,6 +9,16 @@ import Foundation
 // onto that schema with no per-tool code: `action` becomes a positional
 // subcommand, every other property becomes a `--flag`, and values are coerced
 // to the property's declared JSON type before calling `handle(params:)`.
+//
+// Why not swift-argument-parser? The source of truth here is the LLM tool
+// schema (`ToolDefinition`), consumed primarily by an agent (probe-macos), and
+// the CLI is a *projection* of it. ArgumentParser inverts that ownership — it
+// wants the command tree (Swift structs with @Option/@Argument/subcommands) to
+// be authoritative and derives parsing from types; it emits no JSON schema. Using
+// it would mean maintaining two representations per tool (an ArgumentParser
+// command AND the hand-written schema) and keeping them in sync — the exact drift
+// this single-schema design avoids. The cost is that we hand-roll usage rendering
+// (see CLIHelp) and completion (a follow-up). Revisiting this would be an ADR.
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data(("error: " + message + "\n").utf8))
@@ -31,28 +41,17 @@ func emit(_ result: String) {
     }
 }
 
-func toolUsage(_ tool: ProbeTool) -> String {
-    let def = tool.definition
-    var lines = ["\(def.name) — \(def.description)", ""]
-    guard let props = def.parameters?.properties, !props.isEmpty else {
-        lines.append("  (no parameters)")
-        return lines.joined(separator: "\n")
-    }
-    let required = Set(def.parameters?.required ?? [])
-    lines.append("Parameters (pass as --flag value; use --json '{...}' for raw):")
-    for name in props.keys.sorted() {
-        let p = props[name]!
-        let req = required.contains(name) ? " (required)" : ""
-        let arr = p.type_ == "array" ? "[]" : ""
-        lines.append("  --\(name) <\(p.type_)\(arr)>\(req)  \(p.description ?? "")")
-    }
-    return lines.joined(separator: "\n")
+/// Human-facing per-tool help. Delegates to the testable renderer in the lib;
+/// `action` scopes the output to a single action's block when non-nil.
+func toolUsage(_ tool: ProbeTool, action: String? = nil) -> String {
+    CLIHelp.render(tool.definition, action: action)
 }
 
 func listTools(_ tools: [ProbeTool]) {
     print("Available tools (run `apple-tools <tool> --help` for details):\n")
     for tool in tools.sorted(by: { $0.definition.name < $1.definition.name }) {
-        print("  \(tool.definition.name) — \(tool.definition.description)")
+        let def = tool.definition
+        print("  \(def.name) — \(def.cliSummary ?? def.description)")
     }
 }
 
@@ -79,7 +78,8 @@ func printTopUsage() {
 
     Usage:
       apple-tools list                         List available tools
-      apple-tools <tool> --help                Show a tool's parameters
+      apple-tools <tool> --help                Show a tool's actions and flags
+      apple-tools <tool> <action> --help       Show one action's flags
       apple-tools <tool> [action] [--flag v]   Run a tool action
       apple-tools <tool> --json '{...}'        Run a tool with raw JSON params
       apple-tools permissions                  Preflight all tools (trigger TCC dialogs)
@@ -210,14 +210,19 @@ guard let tool = tools.first(where: { $0.definition.name == first }) else {
 
 let rest = Array(argv.dropFirst())
 
-// Per-tool help.
-if rest.first == "--help" || rest.first == "-h" {
-    print(toolUsage(tool))
-    exit(0)
-}
-
 let schema = tool.definition.parameters
 let hasAction = schema?.properties?["action"] != nil
+
+// Per-tool help. `--help`/`-h` anywhere triggers it; a leading positional token
+// (the action) scopes the render to that action — `apple-tools email draft --help`.
+if rest.contains("--help") || rest.contains("-h") {
+    let scopedAction: String? = {
+        guard hasAction, let candidate = rest.first, !candidate.hasPrefix("-") else { return nil }
+        return candidate
+    }()
+    print(toolUsage(tool, action: scopedAction))
+    exit(0)
+}
 
 var params: [String: AnyCodable]
 var resolvedAction: String?

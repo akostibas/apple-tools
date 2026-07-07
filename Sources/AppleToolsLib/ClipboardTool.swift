@@ -10,10 +10,18 @@ public struct ClipboardTool: ProbeTool {
             type_: "object",
             properties: [
                 "action": PropertySchema(type_: "string", description: "read or write"),
-                "text": PropertySchema(type_: "string", description: "Text to write to clipboard (for write)"),
+                "text": PropertySchema(type_: "string", description: "Text to write to clipboard (for write)",
+                    summary: "Text to write to the clipboard", actions: ["write"]),
             ],
             required: ["action"]
-        )
+        ),
+        cliSummary: "Read or write the macOS clipboard.",
+        actions: [
+            ActionHelp(name: "read", summary: "Get the current clipboard contents",
+                example: "apple-tools clipboard read"),
+            ActionHelp(name: "write", summary: "Set the clipboard text contents",
+                example: "apple-tools clipboard write --text <text>", required: ["text"]),
+        ]
     )
 
     public let host: ToolHost
