@@ -66,6 +66,29 @@ schema), and the driver maps `action` → subcommand and each property → a
 `--flag`, coercing values to the declared type. There is no per-tool argument
 parsing — adding a tool to the library adds it to the CLI automatically.
 
+## Shell completion (zsh)
+
+Tab completion is dynamic — a hidden `apple-tools __complete` subcommand
+introspects the tool registry at runtime, so the candidates can never drift
+from the CLI. It completes tool names, then a tool's actions, then that
+action's flags (skipping ones already supplied):
+
+```
+apple-tools <Tab>                 # → calendar  email  imessage  notes …
+apple-tools email <Tab>           # → inbox  search  draft  reply …
+apple-tools email draft --<Tab>   # → --to  --subject  --body  --cc …
+```
+
+Install the `completions/_apple-tools` function by putting its directory on
+your `fpath` **before** `compinit` runs — in `~/.zshrc`:
+
+```zsh
+fpath=(/path/to/apple-tools/completions $fpath)
+autoload -Uz compinit && compinit
+```
+
+(Bash/fish are not supported yet.)
+
 ## Output schema conventions
 
 Every tool emits JSON. Field names are kept consistent across tools so an agent
