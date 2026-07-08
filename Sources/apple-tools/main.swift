@@ -128,6 +128,25 @@ func notificationBody(tool: String, action: String?, result: String, isError: Bo
 
 var argv = Array(CommandLine.arguments.dropFirst())
 
+// Hidden `__complete` subcommand for shell completion (see CLICompletion and
+// completions/_apple-tools). Handled first — before global-flag scanning, the
+// update nudge, or any other output — so a Tab keypress stays silent and fast
+// (no network, no stderr) and the raw words reach the completer intact. In
+// particular, global-flag scanning strips `--`/`--output-dir`, which would
+// corrupt a partial line like `email draft --`. The words after the marker are
+// what the user has typed so far, the last of which is the token under the
+// cursor (possibly empty). Not registered as a tool and not listed by `list`,
+// so it stays hidden.
+if argv.first == "__complete" {
+    let words = Array(argv.dropFirst())
+    let completionHost = ToolHost(fileSink: LocalFileSink(outputDir: nil),
+                                  confirmer: AllowAllConfirmer(),
+                                  appName: "apple-tools")
+    let candidates = CLICompletion.complete(tools: allAppleTools(host: completionHost), words: words)
+    print(CLICompletion.render(candidates))
+    exit(0)
+}
+
 // Extract global options anywhere in the argument list.
 var outputDir: String?
 var quiet = ProcessInfo.processInfo.environment["APPLE_TOOLS_QUIET"] == "1"
