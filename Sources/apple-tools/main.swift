@@ -83,6 +83,7 @@ func printTopUsage() {
       apple-tools <tool> [action] [--flag v]   Run a tool action
       apple-tools <tool> --json '{...}'        Run a tool with raw JSON params
       apple-tools permissions                  Preflight all tools (trigger TCC dialogs)
+      apple-tools completion zsh               Print the zsh completion script
       apple-tools version                      Print version
 
     Global options:
@@ -145,6 +146,25 @@ if argv.first == "__complete" {
     let candidates = CLICompletion.complete(tools: allAppleTools(host: completionHost), words: words)
     print(CLICompletion.render(candidates))
     exit(0)
+}
+
+// `apple-tools completion <shell>` prints the shell completion script to stdout
+// (the kubectl/gh model). Handled here — before the update nudge — because it's
+// commonly run at shell startup via `source <(apple-tools completion zsh)`, and
+// any stray stderr/stdout there is noise. zsh is the only supported shell today
+// (bash/fish are a follow-up; see issue #44 non-goals).
+if argv.first == "completion" {
+    switch argv.count > 1 ? argv[1] : nil {
+    case "zsh":
+        print(CLICompletion.zshScript)
+        exit(0)
+    case let other?:
+        printErr("unsupported shell: \(other)\n\nSupported shells: zsh")
+        exit(1)
+    case nil:
+        printErr("usage: apple-tools completion <shell>\n\nSupported shells: zsh")
+        exit(1)
+    }
 }
 
 // Extract global options anywhere in the argument list.
