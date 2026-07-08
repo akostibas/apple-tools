@@ -2,16 +2,19 @@
 #
 # dependabot-status — surface open Dependabot PRs for a repo.
 #
-# Prints a short summary of open Dependabot PRs, or nothing at all when there
-# are none. Wired into the Claude Code SessionStart hook (.claude/settings.json)
-# so open dependency PRs are visible the moment a session starts in this repo.
+# Managed by ~/bin/setup-dependabot-watch. Do not edit in place: change the
+# canonical copy inside that tool and re-run it to propagate to every repo.
+#
+# Prints a short summary of open Dependabot PRs, or nothing when there are none.
+# Wired into the Claude Code SessionStart hook (.claude/settings.json) so open
+# dependency PRs are visible the moment a session starts in this repo.
 #
 # Usage:
-#   dependabot-status              # query the current directory's repo (default)
-#   dependabot-status owner/repo   # query a specific repo (used for testing)
+#   dependabot-status              # current directory's repo (default)
+#   dependabot-status owner/repo   # a specific repo (used for testing)
 #
-# Deliberately fail-quiet: any missing tool, auth problem, or network error
-# results in NO output and a clean exit, so it can never disrupt session start.
+# Fail-quiet: any missing tool, auth problem, or network error yields NO output
+# and a clean exit, so it can never disrupt session start.
 
 command -v gh >/dev/null 2>&1 || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
@@ -21,9 +24,10 @@ repo_args=()
 
 gh pr list "${repo_args[@]}" --author 'app/dependabot' --state open \
   --json number,title,url 2>/dev/null \
-| jq -r 'if length > 0
-    then "⚠️  \(length) open Dependabot PR(s) — consider reviewing:\n"
-         + (map("  #\(.number)  \(.title)\n     \(.url)") | join("\n"))
+| jq -r 'if length > 0 then
+      "⚠️  \(length) open Dependabot PR(s) in this repo:\n"
+      + (map("  #\(.number)  \(.title)\n     \(.url)") | join("\n"))
+      + "\n\nAgent: proactively offer to review and merge these via a background subagent (checks CI on each, merges the safe ones)."
     else empty end' 2>/dev/null
 
 exit 0
