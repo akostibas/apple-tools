@@ -1,4 +1,4 @@
-# files — Files
+# documents — Documents
 
 Browse and read files under `~/Documents`. Everything is scoped to that one
 directory tree — no other folder on disk is reachable — and the tool only ever
@@ -23,15 +23,15 @@ the other actions read directly via `FileManager`.
 - **fetch** — copy the file at a relative `path` into the local output/delivery
   dir and return its path. This is how you retrieve a file's bytes.
 
-Run `apple-tools files --help` for the exact parameters of each action.
+Run `apple-tools documents --help` for the exact parameters of each action.
 
 ## Examples
 
 ```bash
-apple-tools files search --query "quarterly report" --limit 10
-apple-tools files list --path "Projects/2026"
-apple-tools files info --path "taxes/w2.pdf"
-apple-tools files fetch --path "taxes/w2.pdf"
+apple-tools documents search --query "quarterly report" --limit 10
+apple-tools documents list --path "Projects/2026"
+apple-tools documents info --path "taxes/w2.pdf"
+apple-tools documents fetch --path "taxes/w2.pdf"
 ```
 
 ## Shortcomings

@@ -1,10 +1,10 @@
 import Foundation
 import UniformTypeIdentifiers
 
-public struct FilesTool: ProbeTool {
+public struct DocumentsTool: ProbeTool {
     public let definition = ToolDefinition(
-        name: "files",
-        description: "Access files in ~/Documents. Actions: 'search' (Spotlight query), 'list' (directory listing), 'info' (file metadata), 'fetch' (copy a file into the local output dir; returns its path).",
+        name: "documents",
+        description: "Access the user's documents (everything under ~/Documents). Actions: 'search' (Spotlight query), 'list' (directory listing), 'info' (file metadata), 'fetch' (copy a file into the local output dir; returns its path).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
@@ -20,16 +20,16 @@ public struct FilesTool: ProbeTool {
             ],
             required: ["action"]
         ),
-        cliSummary: "Search and browse files in ~/Documents.",
+        cliSummary: "Search and browse the user's documents (~/Documents).",
         actions: [
             ActionHelp(name: "search", summary: "Spotlight search within ~/Documents",
-                example: "apple-tools files search --query <text> [--offset <n>] [--limit <n>]", required: ["query"]),
+                example: "apple-tools documents search --query <text> [--offset <n>] [--limit <n>]", required: ["query"]),
             ActionHelp(name: "list", summary: "List a directory",
-                example: "apple-tools files list [--path <dir>] [--offset <n>] [--limit <n>]"),
+                example: "apple-tools documents list [--path <dir>] [--offset <n>] [--limit <n>]"),
             ActionHelp(name: "info", summary: "Show file metadata",
-                example: "apple-tools files info --path <file>", required: ["path"]),
+                example: "apple-tools documents info --path <file>", required: ["path"]),
             ActionHelp(name: "fetch", summary: "Copy a file into the output dir; returns its path",
-                example: "apple-tools files fetch --path <file>", required: ["path"]),
+                example: "apple-tools documents fetch --path <file>", required: ["path"]),
         ]
     )
 
