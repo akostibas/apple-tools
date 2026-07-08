@@ -51,23 +51,20 @@ enum EmailSearch {
         }
     }
 
-    /// Stopwords stripped from `query` before tokenization. Kept tiny on
-    /// purpose — only the words people commonly pad natural-language queries
-    /// with that have no signal value.
-    static let queryStopwords: Set<String> = [
-        "the", "a", "an", "and", "or", "of", "to", "for",
-        "email", "mail", "message",
-    ]
+    /// Stopwords stripped from `query` before tokenization: the shared generic
+    /// English set plus the email-domain words people pad mail queries with
+    /// ("find the *email* about…"). Layered on `QueryTerms.commonStopwords`
+    /// rather than duplicated — "message"/"mail" are noise here but could be
+    /// signal in another tool, so they live at this call site, not in the
+    /// shared set.
+    static let queryStopwords: Set<String> =
+        QueryTerms.commonStopwords.union(["email", "mail", "message"])
 
-    /// Split a free-text query into AND-able tokens. Lowercases, splits on
-    /// whitespace, drops stopwords. Returns an empty array if the query has
-    /// no usable tokens (caller should treat that as "no query filter").
+    /// Split a free-text query into AND-able tokens via the shared tokenizer,
+    /// with email's domain stopwords. Returns an empty array if the query has
+    /// no usable tokens (caller treats that as "no query filter").
     static func tokenize(_ query: String) -> [String] {
-        return query
-            .lowercased()
-            .split(whereSeparator: { $0.isWhitespace })
-            .map(String.init)
-            .filter { !$0.isEmpty && !queryStopwords.contains($0) }
+        return QueryTerms.tokenize(query, stopwords: queryStopwords)
     }
 
     /// Default path to the Envelope Index on this Mac. Follows the current

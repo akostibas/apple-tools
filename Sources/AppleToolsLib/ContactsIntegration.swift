@@ -60,6 +60,106 @@ public enum ContactsIntegration {
         return (try? store.unifiedContacts(matching: predicate, keysToFetch: keys)) ?? []
     }
 
+    /// Keys `searchByNameTokens` must fetch so its identity signature (name +
+    /// contact points) can be computed without hitting an unfetched-property
+    /// exception. Merged with whatever display keys the caller wants.
+    private static let identityFetchKeys: [CNKeyDescriptor] = [
+        CNContactIdentifierKey as CNKeyDescriptor,
+        CNContactGivenNameKey as CNKeyDescriptor,
+        CNContactMiddleNameKey as CNKeyDescriptor,
+        CNContactFamilyNameKey as CNKeyDescriptor,
+        CNContactNicknameKey as CNKeyDescriptor,
+        CNContactOrganizationNameKey as CNKeyDescriptor,
+        CNContactEmailAddressesKey as CNKeyDescriptor,
+        CNContactPhoneNumbersKey as CNKeyDescriptor,
+    ]
+
+    /// Multi-token name search: AND-of-terms across a contact's searchable
+    /// fields (issue #46). A whole multi-token string like `"Mike Walter"` is
+    /// matched literally by `predicateForContacts(matchingName:)` and misses
+    /// "Michael Walter". So match **each token independently against name, email,
+    /// and phone**, then keep the people every token hit — the same
+    /// AND-of-terms model as notes search, applied over a contact's fields
+    /// instead of a note's title/body.
+    ///
+    /// `"Mike Walter" → Michael Walter` works because `"walter"` matches his
+    /// family name and `"mike"` matches his email local-part
+    /// (`mike@mikewalter.com`) — NOT because of any nickname map. (Apple's name
+    /// predicate does *not* expand "Mike"→"Michael"; the issue's premise that it
+    /// does was mistaken — the observed single-token hit was the email match.)
+    /// **Limitation:** a contact whose diminutive appears in no field at all
+    /// (a "Michael Walter" with no "mike" anywhere) still won't be found — true
+    /// diminutive expansion would need a nickname dictionary, out of scope here.
+    ///
+    /// The per-token sets are joined on a **content signature** (resolved name +
+    /// merged emails/phones), not on `identifier`, so a person matched via
+    /// different passes/cards for different tokens still joins — and different
+    /// people stay distinct. Needs ≥2 tokens (a single token is `searchByName`'s
+    /// job → returns [] here). Disjoint tokens (`"Mike Karen"`) intersect to
+    /// nothing. Errors are swallowed, consistent with `searchByName`.
+    ///
+    /// Only invoked as a fallback when the direct passes whiff, so the extra
+    /// per-token address-book enumeration (via `searchByEmailOrPhone`) is off
+    /// the hot path.
+    public static func searchByNameTokens(query: String, keys: [CNKeyDescriptor]) -> [CNContact] {
+        // No stopwords: names can legitimately be short ("Al", "Bo").
+        let tokens = QueryTerms.tokenize(query, stopwords: [])
+        guard tokens.count >= 2 else { return [] }
+
+        // Fetch the identity keys (incl. nickname) so identityKey never touches
+        // an unfetched property, on top of the caller's display keys.
+        var fetchKeys = keys
+        for k in identityFetchKeys where !fetchKeys.contains(where: { ($0 as? String) == (k as? String) }) {
+            fetchKeys.append(k)
+        }
+
+        var bySignature: [String: CNContact] = [:]
+        var perToken: [Set<String>] = []
+        for token in tokens {
+            // "matches this token" = name OR email OR phone, the same fields the
+            // single-query search covers.
+            let candidates = searchByName(query: token, keys: fetchKeys)
+                + searchByEmailOrPhone(query: token, keys: fetchKeys)
+            var sigs = Set<String>()
+            for c in candidates {
+                let sig = identityKey(for: c)
+                sigs.insert(sig)
+                if bySignature[sig] == nil { bySignature[sig] = c }
+            }
+            // A token nobody matches makes the intersection empty; bail early.
+            if sigs.isEmpty { return [] }
+            perToken.append(sigs)
+        }
+
+        return intersectAll(perToken).compactMap { bySignature[$0] }
+    }
+
+    /// A content-derived identity for a unified contact, stable across separate
+    /// name-token queries (see `searchByNameTokens`). Resolved name plus the
+    /// sorted, normalized merged emails and phones — the same person yields the
+    /// same key whichever token matched them; two different people don't collide
+    /// unless they share a name AND every contact point.
+    static func identityKey(for c: CNContact) -> String {
+        let name = resolvedName(for: c).lowercased()
+        let emails = c.emailAddresses
+            .map { ($0.value as String).lowercased() }
+            .filter { !$0.isEmpty }
+            .sorted()
+        let phones = c.phoneNumbers
+            .map { phoneKey($0.value.stringValue.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()) }
+            .filter { !$0.isEmpty }
+            .sorted()
+        return ([name] + emails + phones).joined(separator: "|")
+    }
+
+    /// Intersect per-token key sets: the entries every token matched. Pure, so
+    /// the AND semantics are unit-testable without a live CNContactStore. Empty
+    /// input → empty set.
+    static func intersectAll(_ sets: [Set<String>]) -> Set<String> {
+        guard let first = sets.first else { return [] }
+        return sets.dropFirst().reduce(first) { $0.intersection($1) }
+    }
+
     /// Search contacts by email substring or phone-digit substring. CNContact
     /// has no native predicate for these, so we enumerate (capped at 100
     /// matches) and filter.
