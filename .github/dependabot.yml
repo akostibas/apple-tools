@@ -1,0 +1,9 @@
+version: 2
+updates:
+  # Swift Package Manager dependencies (Package.swift / Package.resolved).
+  # Currently: PhoneNumberKit.
+  - package-ecosystem: "swift"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
