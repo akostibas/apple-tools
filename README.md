@@ -79,15 +79,29 @@ apple-tools email <Tab>           # → inbox  search  draft  reply …
 apple-tools email draft --<Tab>   # → --to  --subject  --body  --cc …
 ```
 
-Install the `completions/_apple-tools` function by putting its directory on
-your `fpath` **before** `compinit` runs — in `~/.zshrc`:
+The binary emits its own completion script (kubectl/gh style), so nothing
+hardcodes a repo path — `apple-tools completion zsh` prints the zsh function.
+Install it either way:
+
+**Source it at startup** — one line in `~/.zshrc`, *after* `compinit`:
 
 ```zsh
-fpath=(/path/to/apple-tools/completions $fpath)
+source <(apple-tools completion zsh)
+```
+
+**Or cache it to a file** — no subprocess per shell; put the dir on `fpath`
+*before* `compinit`:
+
+```zsh
+mkdir -p ~/.zfunc
+apple-tools completion zsh > ~/.zfunc/_apple-tools   # re-run to refresh
+fpath=(~/.zfunc $fpath)
 autoload -Uz compinit && compinit
 ```
 
-(Bash/fish are not supported yet.)
+Either way the *candidates* stay current automatically (they come from
+`__complete` at runtime); regenerate the cached file only if this script itself
+changes. Bash/fish are not supported yet.
 
 ## Output schema conventions
 

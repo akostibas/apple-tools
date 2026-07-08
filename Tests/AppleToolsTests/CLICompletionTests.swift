@@ -115,6 +115,37 @@ final class CLICompletionTests: XCTestCase {
         XCTAssertEqual(CLICompletion.render([]), "")
     }
 
+    // MARK: - Emitted zsh script (`apple-tools completion zsh`)
+
+    func testZshScriptIsWellFormed() {
+        let s = CLICompletion.zshScript
+        XCTAssertTrue(s.hasPrefix("#compdef apple-tools"),
+                      "must start with the #compdef tag so it autoloads from fpath")
+        XCTAssertTrue(s.contains("_apple-tools()"), "defines the completion function")
+        XCTAssertTrue(s.contains("apple-tools __complete"),
+                      "delegates candidates to the __complete subcommand")
+        XCTAssertTrue(s.contains("_describe"), "feeds candidates to _describe")
+    }
+
+    /// The dual-mode guard: run the function when autoloaded, else register it —
+    /// so one script serves both `fpath` and `source <(...)` installs.
+    func testZshScriptIsDualMode() {
+        let s = CLICompletion.zshScript
+        XCTAssertTrue(s.contains(#"funcstack[1]"# + #"" = "_apple-tools""#) || s.contains("funcstack[1]"),
+                      "uses the funcstack guard to detect autoload vs source")
+        XCTAssertTrue(s.contains("compdef _apple-tools apple-tools"),
+                      "registers via compdef when sourced")
+    }
+
+    /// The literal characters `\t` must survive into the script (zsh `$'\t'`),
+    /// i.e. the Swift raw string didn't collapse them into an actual tab.
+    func testZshScriptPreservesLiteralTabEscape() {
+        XCTAssertTrue(CLICompletion.zshScript.contains(##"$'\t'"##),
+                      "the zsh tab escape must be literal backslash-t, not a real tab")
+        XCTAssertFalse(CLICompletion.zshScript.contains("\t"),
+                       "the script itself should contain no real tab characters")
+    }
+
     // MARK: - Coverage: every dispatch action is completable
 
     /// Mirrors CLIHelpTests — every action a tool dispatches on must surface as
