@@ -39,7 +39,7 @@ returns an access/permission error, tell the user which permission to grant.
 
 ## Files
 
-File-producing actions (`photos fetch`, `screenshot`, `files fetch`,
+File-producing actions (`photos fetch`, `screenshot`, `documents fetch`,
 `clipboard read` on an image, `email`/`imessage fetch_attachment`) write the
 file to a local output dir and return its **absolute `path`** in the JSON. Read
 that path directly with the Read tool. Override the location with
@@ -77,8 +77,8 @@ Allow/Deny dialog; off by default.)
   preview; cached per recording, so repeat calls are instant; `--timestamps`
   writes a `.json` segment sidecar, `--inline` returns the full text in the
   response; macOS 26+). Read-only.
-- **files** — `search` (Spotlight), `list`, `info`, `fetch` (copy a file locally
-  → path). Scoped to ~/Documents.
+- **documents** — `search` (Spotlight), `list`, `info`, `fetch` (copy a file
+  locally → path). Scoped to ~/Documents.
 - **clipboard** — `read`, `write`.
 - **screenshot** — capture the screen → local PNG path.
 - **open_uri** — open a URL / mailto: / tel: / app deep link.

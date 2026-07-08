@@ -47,7 +47,7 @@ extension ProbeTool {
 public func allAppleTools(host: ToolHost) -> [ProbeTool] {
     return [
         EchoTool(),
-        FilesTool(host: host),
+        DocumentsTool(host: host),
         CalendarTool(),
         ClipboardTool(host: host),
         RemindersTool(),

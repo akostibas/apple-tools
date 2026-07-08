@@ -13,7 +13,7 @@ into your installed version, run `apple-tools list`.
 - [`imessage`](imessage.md) — Messages, iMessage/SMS (read/write)
 - [`photos`](photos.md) — Photos (read)
 - [`voicememos`](voicememos.md) — Voice Memos (read)
-- [`files`](files.md) — Files, scoped to `~/Documents` (read)
+- [`documents`](documents.md) — the user's documents, scoped to `~/Documents` (read)
 - [`clipboard`](clipboard.md) — Clipboard (read/write)
 - [`screenshot`](screenshot.md) — Screenshots (read)
 - [`open_uri`](open_uri.md) — Open URLs / `mailto:` / `tel:` / deep links

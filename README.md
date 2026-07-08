@@ -3,7 +3,7 @@
 Local macOS/Apple integrations as a single CLI, plus a Claude Code skill that
 drives it. Read and write Calendar, Reminders, Notes, Contacts, Mail, and
 Messages (iMessage/SMS); search Photos; list, export, and transcribe Voice
-Memos; plus files, the clipboard, screenshots, and open URIs — all on the
+Memos; plus documents, the clipboard, screenshots, and open URIs — all on the
 machine it runs on, with no server.
 
 ## Quick start
@@ -27,7 +27,7 @@ Each tool has its own page with actions, examples, and known shortcomings:
 - [`imessage`](docs/tools/imessage.md) — Messages, iMessage/SMS (read/write)
 - [`photos`](docs/tools/photos.md) — Photos (read)
 - [`voicememos`](docs/tools/voicememos.md) — Voice Memos (read)
-- [`files`](docs/tools/files.md) — Files, scoped to `~/Documents` (read)
+- [`documents`](docs/tools/documents.md) — the user's documents, scoped to `~/Documents` (read)
 - [`clipboard`](docs/tools/clipboard.md) — Clipboard (read/write)
 - [`screenshot`](docs/tools/screenshot.md) — Screenshots (read)
 - [`open_uri`](docs/tools/open_uri.md) — Open URLs / `mailto:` / `tel:` / deep links
@@ -131,7 +131,7 @@ names. The rules:
 
 ## Files
 
-File-producing actions (`photos fetch`, `screenshot`, `files fetch`, clipboard
+File-producing actions (`photos fetch`, `screenshot`, `documents fetch`, clipboard
 images, attachment fetches) write to a local output dir and return the absolute
 `path` in their JSON. Control the location with `--output-dir` or
 `$APPLE_TOOLS_OUTPUT_DIR` (default: a private per-user temp dir, `0700`).

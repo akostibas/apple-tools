@@ -1,13 +1,13 @@
 import XCTest
 @testable import AppleToolsLib
 
-final class FilesToolTests: XCTestCase {
-    var tool: FilesTool!
+final class DocumentsToolTests: XCTestCase {
+    var tool: DocumentsTool!
     var tempDir: String = ""
 
     override func setUp() {
         super.setUp()
-        tool = FilesTool(host: .test())
+        tool = DocumentsTool(host: .test())
 
         // Create a temp directory structure under ~/Documents for testing.
         // We use a unique subdirectory to avoid interfering with real files.
