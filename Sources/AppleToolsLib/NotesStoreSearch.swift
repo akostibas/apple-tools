@@ -40,6 +40,15 @@ public enum NotesStoreSearch {
     public static func search(query: String, folder: String?, fullText: Bool) -> [Hit] {
         guard !query.isEmpty else { return [] }
 
+        // AND-of-terms: a multi-word query matches when every word appears
+        // somewhere (title for the default path; title OR body under fullText),
+        // in any order — not only as an adjacent phrase (issue #45). Strip only
+        // generic stopwords; if that empties the query (a bare "the"), fall back
+        // to matching the raw words so single-word behavior is unchanged.
+        var terms = QueryTerms.tokenize(query)
+        if terms.isEmpty { terms = QueryTerms.tokenize(query, stopwords: []) }
+        guard !terms.isEmpty else { return [] }
+
         var db: OpaquePointer?
         guard sqlite3_open_v2(NotesChecklistStore.storePath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
             sqlite3_close(db); return []
@@ -59,7 +68,11 @@ public enum NotesStoreSearch {
         LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON o.ZFOLDER = f.Z_PK
         WHERE (o.ZMARKEDFORDELETION = 0 OR o.ZMARKEDFORDELETION IS NULL)
         """
-        if !fullText { sql += " AND o.ZTITLE1 LIKE ? ESCAPE '\\'" }
+        // Title path: one LIKE per term, AND'd, so all words must be in the
+        // title (in any order). fullText defers matching to the body scan below.
+        if !fullText {
+            for _ in terms { sql += " AND o.ZTITLE1 LIKE ? ESCAPE '\\'" }
+        }
         if folder != nil { sql += " AND f.ZTITLE2 = ?" }
 
         var stmt: OpaquePointer?
@@ -68,14 +81,15 @@ public enum NotesStoreSearch {
 
         var bindIdx: Int32 = 1
         if !fullText {
-            sqlite3_bind_text(stmt, bindIdx, "%\(SQLEscaping.escapeLIKE(query))%", -1, transient)
-            bindIdx += 1
+            for term in terms {
+                sqlite3_bind_text(stmt, bindIdx, "%\(SQLEscaping.escapeLIKE(term))%", -1, transient)
+                bindIdx += 1
+            }
         }
         if let folder = folder {
             sqlite3_bind_text(stmt, bindIdx, folder, -1, transient)
         }
 
-        let needle = query.lowercased()
         var hits: [(modified: Double, hit: Hit)] = []
 
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -89,8 +103,8 @@ public enum NotesStoreSearch {
                 let blob = Data(bytes: blobPtr, count: Int(sqlite3_column_bytes(stmt, 3)))
                 guard let inflated = NotesChecklistStore.gunzip(blob),
                       let body = NotesChecklistStore.plaintext(fromInflated: inflated) else { continue }
-                guard body.lowercased().contains(needle) || title.lowercased().contains(needle) else { continue }
-                snippet = self.snippet(from: body)
+                guard QueryTerms.allTermsMatch(terms, inAnyOf: [title, body]) else { continue }
+                snippet = self.snippet(from: body, terms: terms)
             }
             // (title-only matching is done by the SQL LIKE; that path has no body snippet)
 
@@ -115,8 +129,30 @@ public enum NotesStoreSearch {
         return String(cString: c)
     }
 
-    /// Build a snippet the same way the old AppleScript path did: drop the
-    /// first line (the title), trim leading whitespace/newlines, cap at 200.
+    /// Build a snippet centered on the first matching term, so a multi-word hit
+    /// shows *why* it matched instead of always the note's opening line (#45).
+    /// If no term is found in the body — the match came from the title alone —
+    /// fall back to the head-of-body snippet.
+    private static func snippet(from body: String, terms: [String]) -> String {
+        let lower = body.lowercased()
+        let firstHit = terms
+            .compactMap { lower.range(of: $0)?.lowerBound }
+            .min()
+        guard let hit = firstHit else { return snippet(from: body) }
+
+        // Window ~40 chars before the match through ~200 total, on a word
+        // boundary where cheap. A leading ellipsis signals a mid-note excerpt.
+        let lead = 40, width = 200
+        let start = body.index(hit, offsetBy: -lead, limitedBy: body.startIndex) ?? body.startIndex
+        let end = body.index(start, offsetBy: width, limitedBy: body.endIndex) ?? body.endIndex
+        var excerpt = String(body[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if start > body.startIndex { excerpt = "…" + excerpt }
+        return excerpt
+    }
+
+    /// Head-of-body snippet (old AppleScript behavior): drop the first line (the
+    /// title), trim leading whitespace/newlines, cap at 200. Used when the match
+    /// was title-only.
     private static func snippet(from body: String) -> String {
         guard let firstLF = body.firstIndex(of: "\n") else { return "" }
         let afterTitle = body[body.index(after: firstLF)...]

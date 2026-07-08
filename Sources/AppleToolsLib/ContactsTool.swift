@@ -9,7 +9,7 @@ public struct ContactsTool: ProbeTool {
             type_: "object",
             properties: [
                 "action": PropertySchema(type_: "string", description: "search or get"),
-                "query": PropertySchema(type_: "string", description: "Search term — matches name, email, phone, or group name (required for search)",
+                "query": PropertySchema(type_: "string", description: "Search term — matches name, email, phone, or group name (required for search). A multi-word query requires each word to match some field (name/email/phone) of the same contact, so 'Mike Walter' finds 'Michael Walter' when a field carries each word",
                     summary: "Search term matched across name, email, phone, group", actions: ["search"]),
                 "limit": PropertySchema(type_: "integer", description: "Max results to return (for search, default 20)",
                     summary: "Max results (default 20)", actions: ["search"]),
@@ -78,8 +78,14 @@ public struct ContactsTool: ProbeTool {
         ]
 
         let groupContactIDs = ContactsIntegration.contactIDsInMatchingGroups(query: query)
-        let nameMatches = ContactsIntegration.searchByName(query: query, keys: searchKeys)
+        // Whole-query passes first. Only when BOTH whiff do we try the
+        // multi-token AND-of-fields intersection (issue #46), so any direct hit
+        // ranks ahead of an intersection hit.
+        var nameMatches = ContactsIntegration.searchByName(query: query, keys: searchKeys)
         let emailPhoneMatches = ContactsIntegration.searchByEmailOrPhone(query: query, keys: searchKeys)
+        if nameMatches.isEmpty && emailPhoneMatches.isEmpty {
+            nameMatches = ContactsIntegration.searchByNameTokens(query: query, keys: searchKeys)
+        }
 
         var seen = Set<String>()
         var results: [[String: Any]] = []

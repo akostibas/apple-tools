@@ -3,12 +3,12 @@ import Foundation
 public struct NotesTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "notes",
-        description: "Access Apple Notes. Actions: 'folders' (list folders), 'search' (find notes by keyword with pagination; matches titles by default, pass full_text=true to also search note bodies; returns snippets only — use 'read' for full content), 'read' (get note content by ID or title), 'create' (new note in a folder), 'append' (add content to an existing note). Content is Markdown: headings (#, ##), **bold**, *italic*, ~~strike~~, `mono`, and -/1. lists round-trip. Apple Notes can't store links or checkboxes via this API, so [text](url) becomes 'text (url)' and '- [ ]' becomes a plain bullet on write; checkbox state on read may lag (read from the on-disk store).",
+        description: "Access Apple Notes. Actions: 'folders' (list folders), 'search' (find notes by keyword with pagination; matches titles by default, pass full_text=true to also search note bodies; a multi-word query is AND-of-terms — every word must appear, in any order, not only as an adjacent phrase; returns snippets only — use 'read' for full content), 'read' (get note content by ID or title), 'create' (new note in a folder), 'append' (add content to an existing note). Content is Markdown: headings (#, ##), **bold**, *italic*, ~~strike~~, `mono`, and -/1. lists round-trip. Apple Notes can't store links or checkboxes via this API, so [text](url) becomes 'text (url)' and '- [ ]' becomes a plain bullet on write; checkbox state on read may lag (read from the on-disk store).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
                 "action": PropertySchema(type_: "string", description: "folders, search, read, create, or append"),
-                "query": PropertySchema(type_: "string", description: "Search keyword (required for search)",
+                "query": PropertySchema(type_: "string", description: "Search keyword(s) (required for search). Multiple words are AND-of-terms: every word must appear, in any order",
                     summary: "Search keyword", actions: ["search"]),
                 "folder": PropertySchema(type_: "string", description: "Folder name or '/'-separated path as reported by 'folders' (for search, create). On create, an existing folder is used as-is; a path with missing segments creates them nested",
                     summary: "Folder name or '/'-separated path", actions: ["search", "create"]),
