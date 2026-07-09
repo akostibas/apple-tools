@@ -44,10 +44,13 @@ extension ProbeTool {
 /// All registered Apple tools. `host` supplies the file sink (where
 /// file-producing tools deliver output), the confirmer (how sensitive actions
 /// are gated), and the user-facing app name. Pure read-only tools ignore it.
-public func allAppleTools(host: ToolHost) -> [ProbeTool] {
+/// `documentsRoots` overrides the documents tool's search/browse roots
+/// (nil = the ~/Documents default); how roots are sourced (config file,
+/// CLI flags) is the embedding host's concern.
+public func allAppleTools(host: ToolHost, documentsRoots: [DocumentRoot]? = nil) -> [ProbeTool] {
     return [
         EchoTool(),
-        DocumentsTool(host: host),
+        DocumentsTool(host: host, roots: documentsRoots ?? [.documents]),
         CalendarTool(),
         ClipboardTool(host: host),
         RemindersTool(),

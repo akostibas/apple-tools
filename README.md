@@ -27,7 +27,7 @@ Each tool has its own page with actions, examples, and known shortcomings:
 - [`imessage`](docs/tools/imessage.md) — Messages, iMessage/SMS (read/write)
 - [`photos`](docs/tools/photos.md) — Photos (read)
 - [`voicememos`](docs/tools/voicememos.md) — Voice Memos (read)
-- [`documents`](docs/tools/documents.md) — the user's documents, scoped to `~/Documents` (read)
+- [`documents`](docs/tools/documents.md) — the user's documents, under configurable named roots (default `~/Documents`) (read)
 - [`clipboard`](docs/tools/clipboard.md) — Clipboard (read/write)
 - [`screenshot`](docs/tools/screenshot.md) — Screenshots (read)
 - [`open_uri`](docs/tools/open_uri.md) — Open URLs / `mailto:` / `tel:` / deep links

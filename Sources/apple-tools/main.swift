@@ -93,6 +93,9 @@ func printTopUsage() {
                            (also: APPLE_TOOLS_QUIET=1).
       --output-dir <dir>   Where file-producing tools write output
                            (default: $APPLE_TOOLS_OUTPUT_DIR or a temp dir).
+      --root <name>=<path> Add a named documents root alongside the built-in
+                           'Documents' (~/Documents). Repeatable. Documents
+                           tool paths are namespaced as '<name>/<relative>'.
 
     Examples:
       apple-tools calendar list --start 2026-06-15T00:00:00Z --end 2026-06-16T00:00:00Z
@@ -174,6 +177,22 @@ var quiet = ProcessInfo.processInfo.environment["APPLE_TOOLS_QUIET"] == "1"
 // under an agent (the agent's own per-invocation approval is the gate).
 // `--confirm` (or APPLE_TOOLS_CONFIRM=1) opts into a blocking Allow/Deny dialog.
 var confirm = ["1", "true", "yes"].contains(ProcessInfo.processInfo.environment["APPLE_TOOLS_CONFIRM"] ?? "")
+// Extra documents roots (additive — the ~/Documents default is always
+// present). Parsed from repeatable `--root name=path`.
+var extraDocumentRoots: [DocumentRoot] = []
+func parseRootFlag(_ value: String) -> DocumentRoot {
+    guard let eq = value.firstIndex(of: "="), eq != value.startIndex else {
+        fail("--root expects name=path, got: \(value)")
+    }
+    let name = String(value[..<eq])
+    let path = String(value[value.index(after: eq)...])
+    if path.isEmpty { fail("--root expects name=path, got: \(value)") }
+    if name.contains("/") { fail("--root name must not contain '/': \(name)") }
+    if name == DocumentRoot.documents.name || extraDocumentRoots.contains(where: { $0.name == name }) {
+        fail("duplicate --root name: \(name)")
+    }
+    return DocumentRoot(name: name, path: path)
+}
 var globalArgs: [String] = []
 do {
     var i = 0
@@ -197,11 +216,17 @@ do {
             guard i + 1 < argv.count else { fail("--output-dir needs a value") }
             outputDir = argv[i + 1]
             i += 2
+        case "--root":
+            guard i + 1 < argv.count else { fail("--root needs a value (name=path)") }
+            extraDocumentRoots.append(parseRootFlag(argv[i + 1]))
+            i += 2
         default:
             // `--output-dir=PATH` keeps the value in one token, so it can't
             // swallow the following token (#34).
             if arg.hasPrefix("--output-dir=") {
                 outputDir = String(arg.dropFirst("--output-dir=".count))
+            } else if arg.hasPrefix("--root=") {
+                extraDocumentRoots.append(parseRootFlag(String(arg.dropFirst("--root=".count))))
             } else {
                 globalArgs.append(arg)
             }
@@ -216,7 +241,7 @@ let host = ToolHost(
     confirmer: confirm ? AppleScriptConfirmer() : AllowAllConfirmer(),
     appName: "apple-tools"
 )
-let tools = allAppleTools(host: host)
+let tools = allAppleTools(host: host, documentsRoots: [.documents] + extraDocumentRoots)
 
 // Best-effort weekly "you're behind" nudge to stderr (never stdout — the JSON
 // tool contract). CLI-only: library/API hosts embedding AppleToolsLib never
