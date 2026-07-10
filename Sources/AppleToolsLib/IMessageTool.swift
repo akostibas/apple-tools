@@ -574,11 +574,6 @@ public struct IMessageTool: ProbeTool {
     // MARK: - Search
 
     private func search(query: String, chat: String?, limit: Int, since: String?, before: String?) -> (String, Bool) {
-        // Escape single quotes for the SQL string literal, and LIKE wildcards
-        // so `%`/`_` in the query match literally (issue #33). The LIKE below
-        // carries a matching `ESCAPE '\'` clause.
-        let escaped = SQLEscaping.escapeLIKE(query).replacingOccurrences(of: "'", with: "''")
-
         var extraFilters = ""
         if let chat = chat {
             let resolution = IMessageIntegration.resolveChat(chat)
@@ -604,6 +599,52 @@ public struct IMessageTool: ProbeTool {
             extraFilters += " AND m.date < \(nanos)"
         }
 
+        // Match against DECODED message text, not the raw `m.text` column: on
+        // modern macOS the body lives in the `attributedBody` blob and `m.text`
+        // is empty for essentially every message, so a SQL `text LIKE` has
+        // near-zero recall (apple-tools #52). Phase 1 scans a bounded window of
+        // recent candidates (any row carrying text or a body blob), decodes each
+        // empty-text row, and collects the ROWIDs whose decoded text contains
+        // the query (case-insensitive literal substring — matching `read`/
+        // `recent`, which also decode the blob). Phase 2 hydrates only the
+        // matched rows with full attachment/chat/participant detail, so the
+        // expensive per-row work is bounded by `limit`, not by the scan window.
+        let scanCap = 20000
+        // Only the chat filter references cmj; join it in just for that case.
+        let candidateJoin = chat != nil ? "JOIN chat_message_join cmj ON m.ROWID = cmj.message_id" : ""
+        let candidateSQL = """
+            SELECT m.ROWID,
+                   COALESCE(m.text, '') AS text,
+                   CASE WHEN m.text IS NULL OR m.text = '' THEN hex(m.attributedBody) ELSE '' END AS body_hex
+            FROM message m
+            \(candidateJoin)
+            WHERE (m.text IS NOT NULL AND m.text != '' OR m.attributedBody IS NOT NULL)\(extraFilters)
+            GROUP BY m.ROWID
+            ORDER BY m.date DESC
+            LIMIT \(scanCap)
+            """
+
+        let (candidates, cErr) = IMessageIntegration.queryChatDB(candidateSQL)
+        if let cErr = cErr { return (cErr, true) }
+
+        var matchedIDs: [String] = []
+        for row in candidates {
+            let body = row[1].isEmpty ? (IMessageFormatting.bodyText(hex: row[2]) ?? "") : row[1]
+            if body.range(of: query, options: [.caseInsensitive]) != nil {
+                matchedIDs.append(row[0])
+                if matchedIDs.count >= limit { break }
+            }
+        }
+        // The scan window bounds worst-case decode cost; flag when it was hit so
+        // consumers know older messages may not have been examined (issue #52).
+        let scanTruncated = candidates.count >= scanCap
+
+        if matchedIDs.isEmpty {
+            var empty: [String: Any] = ["count": 0, "messages": [[String: Any]]()]
+            if scanTruncated { empty["scan_truncated"] = true }
+            return (IMessageIntegration.jsonEncode(empty), false)
+        }
+
         let sql = """
             SELECT m.ROWID,
                    COALESCE(m.text, '') AS text,
@@ -619,11 +660,9 @@ public struct IMessageTool: ProbeTool {
             JOIN chat c ON cmj.chat_id = c.ROWID
             LEFT JOIN message_attachment_join maj ON m.ROWID = maj.message_id
             LEFT JOIN attachment a ON maj.attachment_id = a.ROWID
-            WHERE m.text LIKE '%\(escaped)%' ESCAPE '\\'
-              AND m.text IS NOT NULL AND m.text != ''\(extraFilters)
+            WHERE m.ROWID IN (\(matchedIDs.joined(separator: ", ")))
             GROUP BY m.ROWID
             ORDER BY m.date DESC
-            LIMIT \(limit)
             """
 
         let (rows, err) = IMessageIntegration.queryChatDB(sql)
@@ -660,10 +699,11 @@ public struct IMessageTool: ProbeTool {
         let names = nameResolver(identifiers(inMessages: rawMessages))
         let messages = annotateMessages(rawMessages, names: names)
 
-        let response: [String: Any] = [
+        var response: [String: Any] = [
             "count": messages.count,
             "messages": messages,
         ]
+        if scanTruncated { response["scan_truncated"] = true }
         return (IMessageIntegration.jsonEncode(response), false)
     }
 
