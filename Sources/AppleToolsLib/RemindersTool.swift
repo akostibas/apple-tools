@@ -31,6 +31,8 @@ public struct RemindersTool: ProbeTool {
                     summary: "Search keyword", actions: ["search"]),
                 "show_completed": PropertySchema(type_: "boolean", description: "Include completed reminders (for search, default false)",
                     summary: "Include completed reminders (default false)", actions: ["search"]),
+                "flagged": PropertySchema(type_: "boolean", description: "Only return flagged reminders (for search, default false)",
+                    summary: "Only flagged reminders (default false)", actions: ["search"]),
             ],
             required: ["action"]
         ),
@@ -39,7 +41,7 @@ public struct RemindersTool: ProbeTool {
             ActionHelp(name: "lists", summary: "See available reminder lists",
                 example: "apple-tools reminders lists"),
             ActionHelp(name: "search", summary: "Find reminders by keyword, list, or date range",
-                example: "apple-tools reminders search [--query <text>] [--list_name <name>] [--due_date <date>] [--due_date_end <date>] [--show_completed]"),
+                example: "apple-tools reminders search [--query <text>] [--list_name <name>] [--due_date <date>] [--due_date_end <date>] [--show_completed] [--flagged]"),
             ActionHelp(name: "get", summary: "View a single reminder's full details",
                 example: "apple-tools reminders get --id <id>", required: ["id"]),
             ActionHelp(name: "create", summary: "Add a reminder",
@@ -79,11 +81,12 @@ public struct RemindersTool: ProbeTool {
             let dueDate = params?["due_date"]?.value as? String
             let dueDateEnd = params?["due_date_end"]?.value as? String
             let showCompleted = params?["show_completed"]?.value as? Bool ?? false
-            if query == nil && listName == nil && dueDate == nil && dueDateEnd == nil {
-                return ("search requires at least one of: query, list_name, due_date, or due_date_end", true)
+            let flaggedOnly = params?["flagged"]?.value as? Bool ?? false
+            if query == nil && listName == nil && dueDate == nil && dueDateEnd == nil && !flaggedOnly {
+                return ("search requires at least one of: query, list_name, due_date, due_date_end, or flagged", true)
             }
             guard RemindersIntegration.requestAccess() else { return accessDenied }
-            return searchReminders(query: query, listName: listName, dueDate: dueDate, dueDateEnd: dueDateEnd, showCompleted: showCompleted)
+            return searchReminders(query: query, listName: listName, dueDate: dueDate, dueDateEnd: dueDateEnd, showCompleted: showCompleted, flaggedOnly: flaggedOnly)
         case "get":
             guard let id = params?["id"]?.value as? String, !id.isEmpty else {
                 return ("missing required parameter: id", true)
@@ -145,7 +148,7 @@ public struct RemindersTool: ProbeTool {
 
     // MARK: - Search
 
-    private func searchReminders(query: String?, listName: String?, dueDate: String?, dueDateEnd: String?, showCompleted: Bool) -> (String, Bool) {
+    private func searchReminders(query: String?, listName: String?, dueDate: String?, dueDateEnd: String?, showCompleted: Bool, flaggedOnly: Bool) -> (String, Bool) {
         var calendars: [EKCalendar]? = nil
         if let listName = listName {
             guard let resolved = RemindersIntegration.resolveLists(name: listName) else {
@@ -211,16 +214,27 @@ public struct RemindersTool: ProbeTool {
             }
         }
 
+        // Flag state and subtask relationships both come from the Reminders
+        // SQLite DB (neither is exposed by EventKit). Look up flags over every
+        // candidate first, since a `flagged` filter runs against the same set;
+        // items degrade to unflagged (and drop out) if the DB is unreadable.
+        let candidateIDs = reminders.map { $0.calendarItemExternalIdentifier ?? $0.calendarItemIdentifier }
+        let flaggedIDs = RemindersDB.flagged(forIDs: candidateIDs)
+        if flaggedOnly {
+            reminders = reminders.filter { flaggedIDs.contains($0.calendarItemExternalIdentifier ?? $0.calendarItemIdentifier) }
+        }
+
         var results = reminders.map { reminderToDict($0, truncateNotes: true) }
 
-        // Enrich with subtask relationships from the Reminders SQLite DB.
-        // One entry per reminder (falling back to the local identifier when
-        // the external one is nil) so ids[i] stays aligned with results[i].
+        // One entry per (surviving) reminder, falling back to the local
+        // identifier when the external one is nil, so ids[i] stays aligned
+        // with results[i].
         let ids = reminders.map { $0.calendarItemExternalIdentifier ?? $0.calendarItemIdentifier }
         let parentMap = RemindersDB.parents(forChildIDs: ids)
         let subtaskMap = RemindersDB.subtasks(forParentIDs: ids)
         for i in results.indices {
             let id = ids[i]
+            results[i]["is_flagged"] = flaggedIDs.contains(id)
             if let parent = parentMap[id] {
                 results[i]["parent"] = liteDict(parent)
             }
@@ -245,8 +259,10 @@ public struct RemindersTool: ProbeTool {
 
         var dict = reminderToDict(reminder, truncateNotes: false)
 
-        // Enrich with subtask relationships from the Reminders SQLite DB.
+        // Enrich with flag state and subtask relationships from the Reminders
+        // SQLite DB (neither is exposed by EventKit).
         let ekID = reminder.calendarItemExternalIdentifier ?? ""
+        dict["is_flagged"] = ekID.isEmpty ? false : RemindersDB.isFlagged(forID: ekID)
         if !ekID.isEmpty {
             if let parent = RemindersDB.parent(forChildID: ekID) {
                 dict["parent"] = liteDict(parent)

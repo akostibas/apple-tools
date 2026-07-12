@@ -38,6 +38,38 @@ final class RemindersDBTests: XCTestCase {
         XCTAssertNil(result)
     }
 
+    // MARK: - Flag state
+
+    func testFlaggedEmptyInput() {
+        let result = RemindersDB.flagged(forIDs: [])
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testFlaggedWithBogusDBPath() {
+        // Should return empty, not crash, when the DB doesn't exist
+        let result = RemindersDB.flagged(forIDs: ["anything"], dbPath: "/nonexistent/path.sqlite")
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testIsFlaggedForNonexistentReminder() {
+        // Should return false, not crash
+        XCTAssertFalse(RemindersDB.isFlagged(forID: "nonexistent-\(UUID().uuidString)"))
+    }
+
+    func testIsFlaggedWithBogusDBPath() {
+        XCTAssertFalse(RemindersDB.isFlagged(forID: "anything", dbPath: "/nonexistent/path.sqlite"))
+    }
+
+    func testFlaggedForKnownFlaggedReminder() throws {
+        guard let flaggedID = findFlaggedReminder() else {
+            throw XCTSkip("No readable Reminders DB or no flagged reminders found")
+        }
+
+        // Both the batch and single-ID APIs should agree it's flagged.
+        XCTAssertTrue(RemindersDB.flagged(forIDs: [flaggedID]).contains(flaggedID))
+        XCTAssertTrue(RemindersDB.isFlagged(forID: flaggedID))
+    }
+
     // MARK: - Integration tests (require readable Reminders DB)
 
     func testSubtasksForKnownParent() throws {
@@ -133,6 +165,43 @@ final class RemindersDBTests: XCTestCase {
                 let parentID = String(cString: cStr)
                 let count = Int(sqlite3_column_int(stmt, 1))
                 return (parentID, count)
+            }
+        }
+        return nil
+    }
+
+    /// Scans the Reminders DB for any flagged reminder.
+    /// Returns its EK identifier or nil if none are found / DB unavailable.
+    private func findFlaggedReminder() -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let storesDir = "\(home)/Library/Group Containers/group.com.apple.reminders/Container_v1/Stores"
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: storesDir) else { return nil }
+
+        let dbFiles = entries
+            .filter { $0.hasPrefix("Data-") && $0.hasSuffix(".sqlite") }
+            .map { "\(storesDir)/\($0)" }
+
+        for path in dbFiles {
+            guard FileManager.default.isReadableFile(atPath: path) else { continue }
+            var db: OpaquePointer?
+            let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
+            guard sqlite3_open_v2(path, &db, flags, nil) == SQLITE_OK, let db = db else { continue }
+            defer { sqlite3_close(db) }
+
+            let sql = """
+                SELECT ZDACALENDARITEMUNIQUEIDENTIFIER
+                FROM ZREMCDREMINDER
+                WHERE ZFLAGGED = 1 AND ZMARKEDFORDELETION = 0
+                  AND ZDACALENDARITEMUNIQUEIDENTIFIER IS NOT NULL
+                LIMIT 1
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { continue }
+            defer { sqlite3_finalize(stmt) }
+
+            if sqlite3_step(stmt) == SQLITE_ROW,
+               let cStr = sqlite3_column_text(stmt, 0) {
+                return String(cString: cStr)
             }
         }
         return nil
