@@ -67,13 +67,39 @@ git fetch origin main --quiet
 git merge-base --is-ancestor origin/main HEAD || \
   die "local main is behind origin/main. Pull/rebase first."
 
+# Everything below mutates local state (bumps Version.swift, commits, tags).
+# The commit runs through pre-commit, whose test hook is currently flaky under
+# load (issue #54) — a spurious failure there used to abort mid-flight and
+# strand a bumped-but-uncommitted Version.swift, so a retry then died on "dirty
+# tree". Roll back every local mutation on any failure so a retry starts clean.
+COMMITTED=no
+rollback() {
+  local rc=$?
+  echo >&2
+  echo "release: FAILED (exit $rc) — rolling back local changes so you can retry." >&2
+  git tag -d "$TAG" >/dev/null 2>&1 || true
+  # If the release commit landed (tag/push failed after it), undo it but keep
+  # the bump staged, then discard the bump from index + worktree below.
+  [ "$COMMITTED" = yes ] && git reset --soft HEAD^ >/dev/null 2>&1 || true
+  git restore --staged --worktree "$VERSION_FILE" >/dev/null 2>&1 \
+    || git checkout -- "$VERSION_FILE" >/dev/null 2>&1 || true
+  echo "release: rolled back. Fix the cause (see #54 if it was a flaky test) and re-run:" >&2
+  echo "  bin/release $VERSION --push" >&2
+}
+trap rollback ERR
+
 sed -i '' "s|apple-tools/$CUR_VERSION|apple-tools/$VERSION|" "$VERSION_FILE"
 git add "$VERSION_FILE"
 git commit -m "chore(release): $TAG
 
 $COAUTHOR"
+COMMITTED=yes
 git tag -a "$TAG" -m "apple-tools $TAG"
-git push origin main "$TAG"
+# --atomic: main and the tag land together or not at all, so a partial push
+# can't leave the remote with one but not the other (and rollback stays safe —
+# nothing reached origin to contradict the local undo).
+git push --atomic origin main "$TAG"
 
+trap - ERR
 echo
 echo "Released $TAG. Consumers update with:  swift package update apple-tools"
