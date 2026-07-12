@@ -188,6 +188,53 @@ enum RemindersDB {
         return results
     }
 
+    /// Batch-fetches flag state for multiple reminder IDs at once. Returns the
+    /// subset of the given EK identifiers whose ZFLAGGED column is set.
+    ///
+    /// EventKit exposes no public API for a reminder's flag state (it lives
+    /// only in the CoreData-backed SQLite store), so — like subtask
+    /// relationships — we read it directly. If the DB can't be read, returns an
+    /// empty set and callers degrade to treating everything as unflagged.
+    static func flagged(forIDs ekIDs: [String], dbPath: String? = nil) -> Set<String> {
+        guard !ekIDs.isEmpty else { return [] }
+        guard let db = openDB(path: dbPath) else { return [] }
+        defer { sqlite3_close(db) }
+
+        let placeholders = ekIDs.map { _ in "?" }.joined(separator: ",")
+        let sql = """
+            SELECT ZDACALENDARITEMUNIQUEIDENTIFIER
+            FROM ZREMCDREMINDER
+            WHERE ZDACALENDARITEMUNIQUEIDENTIFIER IN (\(placeholders))
+              AND ZFLAGGED = 1
+              AND ZMARKEDFORDELETION = 0
+        """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else {
+            return []
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        for (i, id) in ekIDs.enumerated() {
+            sqlite3_bind_text(stmt, Int32(i + 1), (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        }
+
+        var results: Set<String> = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let id = columnString(stmt, 0) {
+                results.insert(id)
+            }
+        }
+        return results
+    }
+
+    /// Returns whether a single reminder, identified by its EventKit
+    /// calendarItemExternalIdentifier, is flagged. Returns false if the DB
+    /// can't be read.
+    static func isFlagged(forID ekID: String, dbPath: String? = nil) -> Bool {
+        return flagged(forIDs: [ekID], dbPath: dbPath).contains(ekID)
+    }
+
     // MARK: - Database discovery
 
     /// Finds the active Reminders SQLite database. There are multiple DB files

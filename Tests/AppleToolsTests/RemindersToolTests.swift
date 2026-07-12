@@ -142,8 +142,20 @@ final class RemindersToolTests: XCTestCase {
         XCTAssertNotNil(props?["id"])
         XCTAssertNotNil(props?["query"])
         XCTAssertNotNil(props?["show_completed"])
+        XCTAssertNotNil(props?["flagged"])
         XCTAssertNotNil(props?["name"])
         XCTAssertNotNil(props?["account"])
+    }
+
+    func testSearchFlaggedOnlyNotRejectedAsNoFilters() {
+        // `flagged` alone is a valid filter ("only flagged reminders"); it must
+        // not be rejected as having no filters. Holds whether or not Reminders
+        // access is granted, since the no-filters guard runs first.
+        let (result, _) = tool.handle(params: [
+            "action": AnyCodable("search"),
+            "flagged": AnyCodable(true),
+        ])
+        XCTAssertFalse(result.contains("search requires at least one"))
     }
 
     // MARK: - EventKit integration tests
@@ -242,6 +254,53 @@ final class RemindersToolTests: XCTestCase {
         XCTAssertFalse(searchCompletedError, searchCompleted)
         let searchCompletedJSON = parseJSON(searchCompleted)
         XCTAssertEqual(searchCompletedJSON["count"] as? Int, 1)
+    }
+
+    func testSearchEmitsIsFlaggedAndFlaggedFilterExcludesUnflagged() throws {
+        // A freshly created reminder is unflagged (EventKit has no API to set a
+        // flag, so we can only assert the unflagged path here).
+        let testTitle = "apple-tools flag test \(UUID().uuidString.prefix(8))"
+        let (createResult, createError) = tool.handle(params: [
+            "action": AnyCodable("create"),
+            "title": AnyCodable(testTitle),
+        ])
+
+        if createError && createResult.contains("access denied") {
+            throw XCTSkip("Reminders access not granted")
+        }
+        XCTAssertFalse(createError, createResult)
+        let id = parseJSON(createResult)["id"] as! String
+
+        // Plain search: is_flagged is always present and false for this item.
+        let (searchResult, _) = tool.handle(params: [
+            "action": AnyCodable("search"),
+            "query": AnyCodable(testTitle),
+        ])
+        let reminders = parseJSON(searchResult)["reminders"] as! [[String: Any]]
+        XCTAssertEqual(reminders.count, 1)
+        XCTAssertEqual(reminders[0]["is_flagged"] as? Bool, false)
+
+        // get also emits is_flagged.
+        let (getResult, _) = tool.handle(params: [
+            "action": AnyCodable("get"),
+            "id": AnyCodable(id),
+        ])
+        XCTAssertEqual(parseJSON(getResult)["is_flagged"] as? Bool, false)
+
+        // A flagged-only search excludes the unflagged item.
+        let (flaggedResult, flaggedError) = tool.handle(params: [
+            "action": AnyCodable("search"),
+            "query": AnyCodable(testTitle),
+            "flagged": AnyCodable(true),
+        ])
+        XCTAssertFalse(flaggedError, flaggedResult)
+        XCTAssertEqual(parseJSON(flaggedResult)["count"] as? Int, 0)
+
+        // Clean up
+        _ = tool.handle(params: [
+            "action": AnyCodable("complete"),
+            "id": AnyCodable(id),
+        ])
     }
 
     func testCreateWithDueDate() throws {

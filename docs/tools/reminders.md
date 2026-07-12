@@ -13,11 +13,12 @@ grant in System Settings → Privacy & Security → Reminders.
 - **lists** — list every reminder list with its `id`, flagging the default list
   for new reminders (`is_default`).
 - **search** — find reminders by any of `query` (case-insensitive substring over
-  title + notes), `list_name`, or a `due_date` / `due_date_end` range; completed
-  reminders are excluded unless `show_completed` is set. Results include parent /
-  subtask links pulled from the Reminders database.
+  title + notes), `list_name`, a `due_date` / `due_date_end` range, or `flagged`
+  (only flagged reminders); completed reminders are excluded unless
+  `show_completed` is set. Every result carries `is_flagged`; results also
+  include parent / subtask links pulled from the Reminders database.
 - **get** — full detail for a single reminder by `id`, including untruncated
-  notes and its parent / subtasks.
+  notes, `is_flagged`, and its parent / subtasks.
 - **create** — add a top-level reminder (`title` required; optional `list_name`,
   `due_date`, `notes`). Falls back to the default list when `list_name` is
   omitted.
@@ -52,7 +53,10 @@ apple-tools reminders create --title "Renew passport" --list_name "Errands" --du
   date; there is no un-complete / reopen action.
 - **No recurring reminders, alarms, priority, or URL on create.** `createReminder`
   sets no recurrence rule, alarm, priority, or URL. Priority is *reported* when
-  present (high/medium/low), but you can't *set* it here.
+  present (high/medium/low) and `is_flagged` is *reported* on every reminder, but
+  you can't *set* either here. Flag state has no public EventKit API, so it's read
+  from the Reminders SQLite DB (like subtasks) and degrades to `false` if that DB
+  is unreadable.
 - **Search keyword matching is a plain substring on title + notes only.** No
   fuzzy/token matching and no matching on other fields; a `query` word that isn't
   a literal substring of the title or notes won't match. Notes in `search`
