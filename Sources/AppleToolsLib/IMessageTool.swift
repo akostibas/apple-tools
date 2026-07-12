@@ -26,8 +26,8 @@ public struct IMessageTool: ProbeTool {
                 ),
                 "chat": PropertySchema(type_: "string", description: "Phone number, email, group name, or chat_id (for read; optional filter for search)",
                     summary: "Phone, email, group name, or chat_id (filters results on search)", actions: ["read", "search"]),
-                "query": PropertySchema(type_: "string", description: "Text to search for (for search)",
-                    summary: "Text to search for", actions: ["search"]),
+                "query": PropertySchema(type_: "string", description: "Text to search for (for search). Multi-word queries are AND-of-terms: every word must appear in the message, in any order.",
+                    summary: "Text to search for (AND-of-terms)", actions: ["search"]),
                 "limit": PropertySchema(type_: "integer", description: "Max results (default 5 for recent, 10 for read and stats, 20 for search)",
                     summary: "Max results (defaults vary by action)", actions: ["recent", "stats", "read", "search"]),
                 "before": PropertySchema(type_: "string", description: "Return messages/conversations before this time (for read, search). Accepts an ISO 8601 timestamp, a date (2026-07-03), or the opaque next_before cursor from a prior read page. An unparseable value is rejected, not ignored.",
@@ -604,11 +604,19 @@ public struct IMessageTool: ProbeTool {
         // is empty for essentially every message, so a SQL `text LIKE` has
         // near-zero recall (apple-tools #52). Phase 1 scans a bounded window of
         // recent candidates (any row carrying text or a body blob), decodes each
-        // empty-text row, and collects the ROWIDs whose decoded text contains
-        // the query (case-insensitive literal substring — matching `read`/
-        // `recent`, which also decode the blob). Phase 2 hydrates only the
-        // matched rows with full attachment/chat/participant detail, so the
-        // expensive per-row work is bounded by `limit`, not by the scan window.
+        // empty-text row, and collects the ROWIDs whose decoded text matches the
+        // query. Matching is AND-of-terms (case-insensitive): every word must
+        // appear in the message, in any order — not only as one adjacent
+        // substring (issue #47). Phase 2 hydrates only the matched rows with
+        // full attachment/chat/participant detail, so the expensive per-row work
+        // is bounded by `limit`, not by the scan window.
+        //
+        // Strip only generic stopwords; if that empties the query (a bare
+        // "the"), fall back to the raw words so single-word behavior is
+        // unchanged. Mirrors NotesStoreSearch's never-empty fallback.
+        var terms = QueryTerms.tokenize(query)
+        if terms.isEmpty { terms = QueryTerms.tokenize(query, stopwords: []) }
+
         let scanCap = 20000
         // Only the chat filter references cmj; join it in just for that case.
         let candidateJoin = chat != nil ? "JOIN chat_message_join cmj ON m.ROWID = cmj.message_id" : ""
@@ -630,7 +638,7 @@ public struct IMessageTool: ProbeTool {
         var matchedIDs: [String] = []
         for row in candidates {
             let body = row[1].isEmpty ? (IMessageFormatting.bodyText(hex: row[2]) ?? "") : row[1]
-            if body.range(of: query, options: [.caseInsensitive]) != nil {
+            if QueryTerms.allTermsMatch(terms, inAnyOf: [body]) {
                 matchedIDs.append(row[0])
                 if matchedIDs.count >= limit { break }
             }

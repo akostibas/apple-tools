@@ -126,7 +126,8 @@ public enum VoiceMemosIntegration {
     /// together. Returns nil only when the database can't be opened or the
     /// schema doesn't match — an empty match set returns `[]`.
     ///
-    /// - query:  case-insensitive substring on the title.
+    /// - query:  case-insensitive title match; AND-of-terms — every word in a
+    ///           multi-word query must appear in the title, in any order (#47).
     /// - folder: exact folder name (case-insensitive).
     /// - start/end: filter on recording date.
     /// - limit:  max rows (nil = unbounded).
@@ -159,8 +160,17 @@ public enum VoiceMemosIntegration {
             binds.append(.real(end.timeIntervalSinceReferenceDate))
         }
         if let query = query, !query.isEmpty {
-            sql += "\n  AND r.ZENCRYPTEDTITLE LIKE ? ESCAPE '\\'"
-            binds.append(.text("%\(SQLEscaping.escapeLIKE(query))%"))
+            // AND-of-terms: one LIKE per token, AND'd, so every word must appear
+            // in the title (in any order) — not only as one adjacent substring
+            // (issue #47). Strip only generic stopwords; if that empties the
+            // query (a bare "the"), fall back to the raw words so single-word
+            // behavior is unchanged. Mirrors NotesStoreSearch's title path.
+            var terms = QueryTerms.tokenize(query)
+            if terms.isEmpty { terms = QueryTerms.tokenize(query, stopwords: []) }
+            for term in terms {
+                sql += "\n  AND r.ZENCRYPTEDTITLE LIKE ? ESCAPE '\\'"
+                binds.append(.text("%\(SQLEscaping.escapeLIKE(term))%"))
+            }
         }
         if let folder = folder, !folder.isEmpty {
             sql += "\n  AND f.ZENCRYPTEDNAME = ? COLLATE NOCASE"

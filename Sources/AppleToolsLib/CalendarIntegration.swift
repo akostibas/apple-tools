@@ -88,24 +88,33 @@ public enum CalendarIntegration {
         return store.events(matching: predicate)
     }
 
-    /// Search events by keyword across title, notes, location, and attendee names.
+    /// Search events by keyword across title, notes, location, and attendee
+    /// names. AND-of-terms: every word in a multi-word query must appear in at
+    /// least one field, in any order (issue #47).
     public static func searchEvents(
         query: String,
         from start: Date,
         to end: Date,
         in calendars: [EKCalendar]? = nil
     ) -> [EKEvent] {
-        let queryLower = query.lowercased()
+        // AND-of-terms: a multi-word query matches when every word appears in
+        // at least one field, in any order — not only as one adjacent substring
+        // across the whole query (issue #47). Strip only generic stopwords; if
+        // that empties the query (a bare "the"), fall back to the raw words so
+        // single-word behavior is unchanged. Mirrors NotesStoreSearch.
+        var terms = QueryTerms.tokenize(query)
+        if terms.isEmpty { terms = QueryTerms.tokenize(query, stopwords: []) }
+        guard !terms.isEmpty else { return [] }
+
         return events(from: start, to: end, in: calendars).filter { event in
-            if let title = event.title, title.lowercased().contains(queryLower) { return true }
-            if let notes = event.notes, notes.lowercased().contains(queryLower) { return true }
-            if let location = event.location, location.lowercased().contains(queryLower) { return true }
+            var fields: [String] = []
+            if let title = event.title { fields.append(title) }
+            if let notes = event.notes { fields.append(notes) }
+            if let location = event.location { fields.append(location) }
             if let attendees = event.attendees {
-                for attendee in attendees {
-                    if let name = attendee.name, name.lowercased().contains(queryLower) { return true }
-                }
+                fields.append(contentsOf: attendees.compactMap { $0.name })
             }
-            return false
+            return QueryTerms.allTermsMatch(terms, inAnyOf: fields)
         }
     }
 

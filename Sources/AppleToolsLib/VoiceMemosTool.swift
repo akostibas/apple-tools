@@ -17,8 +17,8 @@ public struct VoiceMemosTool: ProbeTool {
             type_: "object",
             properties: [
                 "action": PropertySchema(type_: "string", description: "list, search, export, or transcribe"),
-                "query": PropertySchema(type_: "string", description: "Title substring, case-insensitive (for search)",
-                    summary: "Title substring, case-insensitive", actions: ["search"]),
+                "query": PropertySchema(type_: "string", description: "Title keywords, case-insensitive (for search). Multi-word queries are AND-of-terms: every word must appear in the title, in any order.",
+                    summary: "Title keywords (AND-of-terms)", actions: ["search"]),
                 "folder": PropertySchema(type_: "string", description: "Restrict to a named Voice Memos folder, case-insensitive (for list/search)",
                     summary: "Restrict to a named folder, case-insensitive", actions: ["list", "search"]),
                 "start_date": PropertySchema(type_: "string", description: "Only recordings on/after this date, ISO 8601 e.g. 2026-01-15 (for list/search)",

@@ -106,6 +106,32 @@ final class VoiceMemosIntegrationTests: XCTestCase {
         XCTAssertEqual(recs.map { $0.id }, ["BBB"])
     }
 
+    func testQueryIsAndOfTermsAcrossWordOrder() throws {
+        let fx = try makeFixture(); defer { cleanup(fx) }
+        // "Alpha memo" holds both words but not adjacent-in-order for "memo
+        // alpha"; AND-of-terms matches regardless of order (issue #47).
+        let recs = try XCTUnwrap(VoiceMemosIntegration.list(query: "memo alpha", dbPath: fx.dbPath))
+        XCTAssertEqual(recs.map { $0.id }, ["AAA"])
+    }
+
+    func testQueryRequiresEveryTermInTitle() throws {
+        let fx = try makeFixture(); defer { cleanup(fx) }
+        // "alpha" is in AAA, "beta" is in BBB — no single title has both, so
+        // AND-of-terms yields nothing.
+        let recs = try XCTUnwrap(VoiceMemosIntegration.list(query: "alpha beta", dbPath: fx.dbPath))
+        XCTAssertTrue(recs.isEmpty)
+    }
+
+    func testStopwordOnlyQueryFallsBackToLiteral() throws {
+        let fx = try makeFixture(); defer { cleanup(fx) }
+        // A bare stopword would tokenize to nothing; the never-empty fallback
+        // re-tokenizes without stopwords so single-word behavior is unchanged.
+        // None of the fixture titles contain "the", so this yields nothing
+        // rather than matching everything.
+        let recs = try XCTUnwrap(VoiceMemosIntegration.list(query: "the", dbPath: fx.dbPath))
+        XCTAssertTrue(recs.isEmpty)
+    }
+
     func testFolderFilterIsCaseInsensitive() throws {
         let fx = try makeFixture(); defer { cleanup(fx) }
         let recs = try XCTUnwrap(VoiceMemosIntegration.list(folder: "amelia", dbPath: fx.dbPath))
