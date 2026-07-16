@@ -10,10 +10,11 @@ playback (play/pause/skip/volume/shuffle/repeat/seek). Drives `application
 playback controls (play, pause, next, volume, …) mutate player state.
 **Permissions:** Automation → Music (TCC). The first call triggers the system
 dialog; grant in System Settings → Privacy & Security → Automation.
-**Tested on:** macOS 26.5.2 (Tahoe) — 2026-07-16. (Music's AppleScript
-terminology drifts across macOS releases — e.g. Tahoe renamed `loved` to
-`favorited` and needs a settle delay after transport commands — so treat
-untested OS versions as unverified.)
+**Verified on:** macOS 26.5.2 (Tahoe), apple-tools 0.19.0 — see
+[COMPATIBILITY.md](./COMPATIBILITY.md) for the pinned commit and caveats. Music's
+AppleScript terminology drifts across macOS releases (Tahoe renamed `loved` to
+`favorited` and made transport commands settle asynchronously), so a newer macOS
+— or newer apple-tools commit — is unverified until re-checked.
 
 ## Actions
 
