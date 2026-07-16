@@ -30,14 +30,11 @@ public enum MediaIntegration {
     /// One recently-engaged item, normalized across sources.
     public struct MediaItem {
         public let source: String            // "podcast" | "book"
-        public let kind: String              // "podcast_episode" | "book"
         public let title: String             // episode / book title
         public let creator: String?          // show name / author
         public let lastEngaged: Date         // last played / opened
-        public let positionSeconds: Double?  // podcast playhead (nil for books / at start)
-        public let durationSeconds: Double?  // podcast duration (nil if unknown / live)
+        public let durationSeconds: Double?  // podcast duration (nil for books / live)
         public let percent: Int?             // 0–100 progress (book, or computed for podcast)
-        public let finished: Bool?
     }
 
     // MARK: - Paths
@@ -105,11 +102,11 @@ public enum MediaIntegration {
     static func recentPodcasts(since: Date, dbPath: String) -> [MediaItem]? {
         guard let db = openDB(path: dbPath) else { return nil }
         defer { sqlite3_close(db) }
-        guard validate(db, "ZMTEPISODE", ["ZTITLE", "ZLASTDATEPLAYED", "ZPLAYHEAD", "ZDURATION", "ZPODCAST", "ZHASBEENPLAYED"]),
+        guard validate(db, "ZMTEPISODE", ["ZTITLE", "ZLASTDATEPLAYED", "ZPLAYHEAD", "ZDURATION", "ZPODCAST"]),
               validate(db, "ZMTPODCAST", ["Z_PK", "ZTITLE"]) else { return nil }
 
         let sql = """
-            SELECT p.ZTITLE, e.ZTITLE, e.ZLASTDATEPLAYED, e.ZPLAYHEAD, e.ZDURATION, e.ZHASBEENPLAYED
+            SELECT p.ZTITLE, e.ZTITLE, e.ZLASTDATEPLAYED, e.ZPLAYHEAD, e.ZDURATION
             FROM ZMTEPISODE e
             JOIN ZMTPODCAST p ON e.ZPODCAST = p.Z_PK
             WHERE e.ZLASTDATEPLAYED IS NOT NULL AND e.ZLASTDATEPLAYED >= ?
@@ -127,14 +124,12 @@ public enum MediaIntegration {
             let last = Date(timeIntervalSinceReferenceDate: sqlite3_column_double(stmt, 2))
             let playhead = sqlite3_column_double(stmt, 3)
             let duration = sqlite3_column_double(stmt, 4)
-            let played = sqlite3_column_int(stmt, 5) == 1
             let percent: Int? = duration > 0 ? Int((playhead / duration * 100).rounded()) : nil
             items.append(MediaItem(
-                source: "podcast", kind: "podcast_episode",
+                source: "podcast",
                 title: episode, creator: show, lastEngaged: last,
-                positionSeconds: playhead > 0 ? playhead : nil,
                 durationSeconds: duration > 0 ? duration : nil,
-                percent: percent, finished: played))
+                percent: percent))
         }
         return items
     }
@@ -144,10 +139,10 @@ public enum MediaIntegration {
     static func recentBooks(since: Date, dbPath: String) -> [MediaItem]? {
         guard let db = openDB(path: dbPath) else { return nil }
         defer { sqlite3_close(db) }
-        guard validate(db, "ZBKLIBRARYASSET", ["ZTITLE", "ZAUTHOR", "ZLASTOPENDATE", "ZREADINGPROGRESS", "ZISFINISHED"]) else { return nil }
+        guard validate(db, "ZBKLIBRARYASSET", ["ZTITLE", "ZAUTHOR", "ZLASTOPENDATE", "ZREADINGPROGRESS"]) else { return nil }
 
         let sql = """
-            SELECT ZTITLE, ZAUTHOR, ZLASTOPENDATE, ZREADINGPROGRESS, ZISFINISHED
+            SELECT ZTITLE, ZAUTHOR, ZLASTOPENDATE, ZREADINGPROGRESS
             FROM ZBKLIBRARYASSET
             WHERE ZLASTOPENDATE IS NOT NULL AND ZLASTOPENDATE >= ?
             ORDER BY ZLASTOPENDATE DESC
@@ -163,12 +158,11 @@ public enum MediaIntegration {
             let author = columnString(stmt, 1).flatMap { $0.isEmpty || $0 == "UnknownAuthor" ? nil : $0 }
             let last = Date(timeIntervalSinceReferenceDate: sqlite3_column_double(stmt, 2))
             let progress = sqlite3_column_double(stmt, 3)  // 0–1
-            let finished = sqlite3_column_int(stmt, 4) == 1
             items.append(MediaItem(
-                source: "book", kind: "book",
+                source: "book",
                 title: title, creator: author, lastEngaged: last,
-                positionSeconds: nil, durationSeconds: nil,
-                percent: Int((progress * 100).rounded()), finished: finished))
+                durationSeconds: nil,
+                percent: Int((progress * 100).rounded())))
         }
         return items
     }

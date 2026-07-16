@@ -88,14 +88,11 @@ final class MediaIntegrationTests: XCTestCase {
         let recent = items!.first { $0.title == "Recent Ep" }!
         XCTAssertEqual(recent.source, "podcast")
         XCTAssertEqual(recent.creator, "The Weekly Show")
-        XCTAssertEqual(recent.positionSeconds, 1800)
         XCTAssertEqual(recent.durationSeconds, 3600)
         XCTAssertEqual(recent.percent, 50, "1800/3600 = 50%")
-        XCTAssertEqual(recent.finished, false)
 
-        // Just-started episode: playhead 0 → nil position, 0%
+        // Just-started episode: playhead 0 → 0%
         let newest = items!.first { $0.title == "Newest Ep" }!
-        XCTAssertNil(newest.positionSeconds)
         XCTAssertEqual(newest.percent, 0)
     }
 
@@ -116,7 +113,7 @@ final class MediaIntegrationTests: XCTestCase {
         // "UnknownAuthor" sentinel is normalized to nil.
         let noAuthor = items!.first { $0.title == "No Author Book" }!
         XCTAssertNil(noAuthor.creator)
-        XCTAssertEqual(noAuthor.finished, true)
+        XCTAssertEqual(noAuthor.percent, 50)
     }
 
     // MARK: - Merge

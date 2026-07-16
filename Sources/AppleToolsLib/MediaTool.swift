@@ -66,15 +66,12 @@ public struct MediaTool: ProbeTool {
     private func itemDict(_ item: MediaIntegration.MediaItem) -> [String: Any] {
         var dict: [String: Any] = [
             "source": item.source,
-            "kind": item.kind,
             "title": item.title,
             "last_engaged": DateFormatting.iso(item.lastEngaged),
         ]
         if let creator = item.creator { dict["creator"] = creator }
-        if let pos = item.positionSeconds { dict["position_seconds"] = Int(pos.rounded()) }
         if let dur = item.durationSeconds { dict["duration_seconds"] = Int(dur.rounded()) }
         if let pct = item.percent { dict["percent"] = pct }
-        if let finished = item.finished { dict["finished"] = finished }
         return dict
     }
 
