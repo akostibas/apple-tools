@@ -1,13 +1,19 @@
 # music — Apple Music / Music.app
 
-Read the local Music.app: see what's playing, search the local library, and
-rank the library by local play history. Drives `application "Music"` via
-AppleScript — **zero auth** beyond the one-time Automation grant (no Apple
-Developer account, MusicKit token, or sign-in popup).
+Read and control the local Music.app: see what's playing, search the local
+library, rank it by play history, get "what to play now" picks, and drive
+playback (play/pause/skip/volume/shuffle/repeat/seek). Drives `application
+"Music"` via AppleScript — **zero auth** beyond the one-time Automation grant
+(no Apple Developer account, MusicKit token, or sign-in popup).
 
-**Access:** read-only
+**Access:** read/write — reads (now-playing, search, stats, mix) are read-only;
+playback controls (play, pause, next, volume, …) mutate player state.
 **Permissions:** Automation → Music (TCC). The first call triggers the system
 dialog; grant in System Settings → Privacy & Security → Automation.
+**Tested on:** macOS 26.5.2 (Tahoe) — 2026-07-16. (Music's AppleScript
+terminology drifts across macOS releases — e.g. Tahoe renamed `loved` to
+`favorited` and needs a settle delay after transport commands — so treat
+untested OS versions as unverified.)
 
 ## Actions
 
@@ -52,6 +58,22 @@ dialog; grant in System Settings → Privacy & Security → Automation.
   30 days" is impossible here (that needs the Apple Music API; see issue #55).
   These queries approximate it from what's local.
 
+### Playback control
+
+These mutate player state (not your library). Each returns `{ "ok": true }`
+with the resulting `state` and current `track`.
+
+- **play** — resume playback, or start something specific: `--playlist <name>`
+  plays the first user playlist whose name contains it; `--query <text>`
+  (with optional `--field`) plays the top matching library track. With no
+  target, resumes what's cued.
+- **pause** / **playpause** / **stop** — pause, toggle, or stop.
+- **next** / **previous** — skip forward / back.
+- **volume** — `--level 0-100` sets the app volume (clamped).
+- **shuffle** — `--state on|off`.
+- **repeat** — `--mode off|one|all`.
+- **seek** — `--position <seconds>` jumps within the current track.
+
 Run `apple-tools music --help` for the exact parameters of each action.
 
 ## Track fields
@@ -79,6 +101,13 @@ apple-tools music stats --by recently-played
 apple-tools music mix --by neglected-favorites --months 12
 apple-tools music mix --by velocity --limit 15
 apple-tools music mix --by fresh --days 14
+apple-tools music play --playlist "Road Trip"
+apple-tools music play --query "hey jude"
+apple-tools music pause
+apple-tools music next
+apple-tools music volume --level 60
+apple-tools music shuffle --state on
+apple-tools music repeat --mode all
 ```
 
 ## Shortcomings
@@ -92,8 +121,14 @@ apple-tools music mix --by fresh --days 14
 - **Library only — no catalog.** `search` matches the local library. It can't
   reach the Apple Music streaming catalog; a song you've never added won't
   appear. Catalog search needs MusicKit / the Apple Music API and its auth.
-- **Read-only.** No playback control, no rating/favoriting, no playlist edits —
-  those are later phases (#56 Groups B/C). This tool never mutates.
+- **No curation writes yet.** Playback control works, but rating/favoriting,
+  playlist edits, queue management, and AirPlay/EQ are a later phase (#56 Group
+  C). Reads never mutate; playback controls only change *player* state, never
+  your library.
+- **Transport commands settle asynchronously.** Music applies `pause`/`play`/
+  `next`/`seek` just after returning control, so the tool waits a brief moment
+  before reading back the resulting `state`/`position`. Expect a ~0.3s pause on
+  those actions; it's what makes the confirmation accurate.
 - **iCloud sync volatility.** A track added from Apple Music becomes visible here
   once it syncs to the local library (as a `shared`/`file track`), but that add
   can also silently revert on a later sync — so a track present one moment may be

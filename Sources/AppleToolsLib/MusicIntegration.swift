@@ -98,9 +98,11 @@ public enum MusicIntegration {
 
     public enum MusicError: Error, CustomStringConvertible {
         case scriptFailed(String)
+        case notFound(String)
         public var description: String {
             switch self {
             case .scriptFailed(let detail): return "Music automation failed: \(detail)"
+            case .notFound(let detail): return detail
             }
         }
     }
@@ -209,11 +211,30 @@ public enum MusicIntegration {
     // MARK: - Now playing
 
     public static func nowPlaying() throws -> NowPlaying {
+        return try controlAndReport(command: "", env: [:])
+    }
+
+    /// Body of a script that reads player state + current track into the
+    /// `state<FS>pos<SS>trackLine` wire format ``parseNowPlaying`` expects.
+    /// `command` runs inside the Music tell before the state read, so control
+    /// verbs (`play`, `pause`, `next`, `set sound volume …`) report the
+    /// resulting state; `prelude` runs before the tell (e.g. reading an env
+    /// var into `theQuery`). An empty command is just a read (now-playing).
+    static func controlAndReport(prelude: String = "", command: String, env: [String: String]) throws -> NowPlaying {
+        // Transport verbs (`pause`, `play`, `next`, `set player position …`)
+        // return control before Music applies them, so an immediate `player
+        // state` read races the change and reports the OLD state. A short
+        // settle delay makes the read-back reflect reality. `now-playing`
+        // passes no command, so it stays instant.
+        let settle = command.isEmpty ? "" : "delay 0.3"
         let script = """
+        \(prelude)
         \(handlers)
         set fieldSep to (character id 31)
         set sectionSep to (character id 30)
         tell application "Music"
+            \(command)
+            \(settle)
             set theState to (player state as text)
             set thePos to ""
             try
@@ -228,9 +249,12 @@ public enum MusicIntegration {
         if currentRef is not missing value then set trackLine to my trackRecord(currentRef)
         return theState & fieldSep & thePos & sectionSep & trackLine
         """
-        let (out, err) = runAppleScript(script, [:], nil)
+        let (out, err) = runAppleScript(script, env, nil)
         if let err = err { throw MusicError.scriptFailed(err) }
+        return parseNowPlaying(out)
+    }
 
+    static func parseNowPlaying(_ out: String) -> NowPlaying {
         let sections = out.components(separatedBy: sectionSep)
         let header = sections.first ?? ""
         let headerParts = header.components(separatedBy: fieldSep)
@@ -247,24 +271,111 @@ public enum MusicIntegration {
         return NowPlaying(state: state, position: position, track: track)
     }
 
+    // MARK: - Playback control (mutating)
+
+    /// The `whose` clause for a library-track match, shared by `search` and
+    /// `play --query`.
+    static func matchClause(_ field: SearchField) -> String {
+        switch field {
+        case .title:  return "name contains theQuery"
+        case .artist: return "artist contains theQuery"
+        case .album:  return "album contains theQuery"
+        case .any:    return "(name contains theQuery) or (artist contains theQuery) or (album contains theQuery)"
+        }
+    }
+
+    /// Resume / pause / toggle / skip / stop. `command` is a Music verb.
+    public static func transport(_ command: String) throws -> NowPlaying {
+        return try controlAndReport(command: command, env: [:])
+    }
+
+    /// Play the first library track matching `query`. Throws if nothing matches.
+    public static func playQuery(_ query: String, field: SearchField) throws -> NowPlaying {
+        let prelude = #"set theQuery to do shell script "printenv APPLE_TOOLS_MUSIC_QUERY""#
+        let command = """
+        set matches to (every track of library playlist 1 whose \(matchClause(field)))
+                if (count of matches) is 0 then error "NO_MATCH"
+                play (item 1 of matches)
+        """
+        do {
+            return try controlAndReport(prelude: prelude, command: command,
+                                        env: ["APPLE_TOOLS_MUSIC_QUERY": query])
+        } catch let MusicError.scriptFailed(detail) where detail.contains("NO_MATCH") {
+            throw MusicError.notFound("no library track matches: \(query)")
+        }
+    }
+
+    /// Play a user playlist by name (first whose name contains `name`). Throws
+    /// if none matches.
+    public static func playPlaylist(_ name: String) throws -> NowPlaying {
+        let prelude = #"set thePlaylist to do shell script "printenv APPLE_TOOLS_MUSIC_PLAYLIST""#
+        let command = """
+        set matches to (every user playlist whose name contains thePlaylist)
+                if (count of matches) is 0 then error "NO_MATCH"
+                play (item 1 of matches)
+        """
+        do {
+            return try controlAndReport(prelude: prelude, command: command,
+                                        env: ["APPLE_TOOLS_MUSIC_PLAYLIST": name])
+        } catch let MusicError.scriptFailed(detail) where detail.contains("NO_MATCH") {
+            throw MusicError.notFound("no playlist matches: \(name)")
+        }
+    }
+
+    /// Set the app volume (0–100) and return the value Music reports back.
+    public static func setVolume(_ level: Int) throws -> Int {
+        let clamped = min(100, max(0, level))
+        let (out, err) = runAppleScript("""
+        tell application "Music"
+            set sound volume to \(clamped)
+            return (sound volume as text)
+        end tell
+        """, [:], nil)
+        if let err = err { throw MusicError.scriptFailed(err) }
+        return Int(out.trimmingCharacters(in: .whitespacesAndNewlines)) ?? clamped
+    }
+
+    /// Toggle shuffle; returns the resulting state.
+    public static func setShuffle(_ on: Bool) throws -> Bool {
+        let (out, err) = runAppleScript("""
+        tell application "Music"
+            set shuffle enabled to \(on ? "true" : "false")
+            delay 0.2
+            return (shuffle enabled as text)
+        end tell
+        """, [:], nil)
+        if let err = err { throw MusicError.scriptFailed(err) }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
+    }
+
+    /// Set repeat mode (`off` / `one` / `all`); returns the resulting mode.
+    public static func setRepeat(_ mode: String) throws -> String {
+        let (out, err) = runAppleScript("""
+        tell application "Music"
+            set song repeat to \(mode)
+            delay 0.2
+            return (song repeat as text)
+        end tell
+        """, [:], nil)
+        if let err = err { throw MusicError.scriptFailed(err) }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Seek to `seconds` within the current track; returns the new now-playing.
+    public static func seek(toSeconds seconds: Int) throws -> NowPlaying {
+        return try controlAndReport(command: "set player position to \(max(0, seconds))", env: [:])
+    }
+
     // MARK: - Search
 
     /// Search the local library. Matches are bounded to `limit` inside
     /// AppleScript so a broad query can't drag the whole library over the wire.
     public static func search(query: String, field: SearchField, limit: Int) throws -> [Track] {
-        let clause: String
-        switch field {
-        case .title:  clause = "name contains theQuery"
-        case .artist: clause = "artist contains theQuery"
-        case .album:  clause = "album contains theQuery"
-        case .any:    clause = "(name contains theQuery) or (artist contains theQuery) or (album contains theQuery)"
-        }
-
         let script = """
         set theQuery to do shell script "printenv APPLE_TOOLS_MUSIC_QUERY"
         \(handlers)
         tell application "Music"
-            set matches to (every track of library playlist 1 whose \(clause))
+            set matches to (every track of library playlist 1 whose \(matchClause(field)))
         end tell
         set matchCount to (count of matches)
         if matchCount > \(limit) then set matchCount to \(limit)

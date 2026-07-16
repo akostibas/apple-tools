@@ -386,6 +386,149 @@ final class MusicToolTests: XCTestCase {
         XCTAssertEqual(obj["count"] as? Int, 1)
     }
 
+    // MARK: - playback control (Group B)
+
+    func testControlActionsAreReadWrite() {
+        guard case .perAction(let map) = tool.accessPolicy else { return XCTFail() }
+        for action in ["play", "pause", "playpause", "next", "previous", "stop",
+                       "volume", "shuffle", "repeat", "seek"] {
+            XCTAssertEqual(map[action], .readWrite, "\(action) must be classified read/write")
+        }
+    }
+
+    /// Capture the AppleScript a control action generates, returning a canned
+    /// now-playing line so the confirmation envelope is exercised too.
+    private func captureScript(_ params: [String: AnyCodable], stdout: String? = nil) -> (script: String, env: [String: String], result: String) {
+        var captured = ""
+        var capturedEnv: [String: String] = [:]
+        MusicIntegration.runAppleScript = { [ss, fs] script, env, _ in
+            captured = script
+            capturedEnv = env
+            return (stdout ?? "playing\(fs)5\(ss)", nil)
+        }
+        let (result, _) = tool.handle(params: params)
+        return (captured, capturedEnv, result)
+    }
+
+    func testPauseIssuesPauseAndReportsState() {
+        let (script, _, result) = captureScript(["action": AnyCodable("pause")],
+                                                 stdout: "paused\(fs)5\(ss)")
+        XCTAssertTrue(script.contains("pause"))
+        let obj = json(result)
+        XCTAssertEqual(obj["ok"] as? Bool, true)
+        XCTAssertEqual(obj["state"] as? String, "paused")
+    }
+
+    func testNextUsesNextTrackVerb() {
+        let (script, _, _) = captureScript(["action": AnyCodable("next")])
+        XCTAssertTrue(script.contains("next track"))
+    }
+
+    func testPreviousUsesPreviousTrackVerb() {
+        let (script, _, _) = captureScript(["action": AnyCodable("previous")])
+        XCTAssertTrue(script.contains("previous track"))
+    }
+
+    func testPlayResumesWhenNoTarget() {
+        let (script, env, _) = captureScript(["action": AnyCodable("play")])
+        XCTAssertTrue(script.contains("play"))
+        XCTAssertTrue(env.isEmpty, "bare play passes no query/playlist env")
+    }
+
+    func testPlayPlaylistPassesNameViaEnv() {
+        let (script, env, _) = captureScript([
+            "action": AnyCodable("play"),
+            "playlist": AnyCodable("Road Trip"),
+        ])
+        XCTAssertEqual(env["APPLE_TOOLS_MUSIC_PLAYLIST"], "Road Trip")
+        XCTAssertTrue(script.contains("user playlist"))
+    }
+
+    func testPlayQueryPassesQueryViaEnvAndMatchesField() {
+        let (script, env, _) = captureScript([
+            "action": AnyCodable("play"),
+            "query": AnyCodable("hey jude"),
+            "field": AnyCodable("title"),
+        ])
+        XCTAssertEqual(env["APPLE_TOOLS_MUSIC_QUERY"], "hey jude")
+        XCTAssertTrue(script.contains("name contains theQuery"))
+    }
+
+    func testPlayQueryNoMatchReturnsError() {
+        MusicIntegration.runAppleScript = { _, _, _ in ("", "error \"NO_MATCH\"") }
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("play"),
+            "query": AnyCodable("zzznope"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("no library track matches"))
+    }
+
+    func testVolumeSetsClampedLevel() {
+        let (script, _, result) = captureScript([
+            "action": AnyCodable("volume"),
+            "level": AnyCodable(60),
+        ], stdout: "60")
+        XCTAssertTrue(script.contains("set sound volume to 60"))
+        XCTAssertEqual(json(result)["volume"] as? Int, 60)
+    }
+
+    func testVolumeRequiresLevel() {
+        let (result, isError) = tool.handle(params: ["action": AnyCodable("volume")])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("level"))
+    }
+
+    func testShuffleOnSetsEnabledTrue() {
+        let (script, _, result) = captureScript([
+            "action": AnyCodable("shuffle"),
+            "state": AnyCodable("on"),
+        ], stdout: "true")
+        XCTAssertTrue(script.contains("set shuffle enabled to true"))
+        XCTAssertEqual(json(result)["shuffle"] as? Bool, true)
+    }
+
+    func testShuffleRejectsBadState() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("shuffle"),
+            "state": AnyCodable("maybe"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("on or off"))
+    }
+
+    func testRepeatSetsMode() {
+        let (script, _, result) = captureScript([
+            "action": AnyCodable("repeat"),
+            "mode": AnyCodable("all"),
+        ], stdout: "all")
+        XCTAssertTrue(script.contains("set song repeat to all"))
+        XCTAssertEqual(json(result)["repeat"] as? String, "all")
+    }
+
+    func testRepeatRejectsBadMode() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("repeat"),
+            "mode": AnyCodable("sometimes"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("off, one, or all"))
+    }
+
+    func testSeekSetsPlayerPosition() {
+        let (script, _, _) = captureScript([
+            "action": AnyCodable("seek"),
+            "position": AnyCodable(90),
+        ])
+        XCTAssertTrue(script.contains("set player position to 90"))
+    }
+
+    func testSeekRequiresPosition() {
+        let (result, isError) = tool.handle(params: ["action": AnyCodable("seek")])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("position"))
+    }
+
     // MARK: - parsing
 
     func testParseTrackRecordRatingToStars() {
