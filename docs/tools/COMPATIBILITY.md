@@ -25,6 +25,7 @@ Every registered tool must have a row here (enforced by
 | Tool | apple-tools | Commit | macOS | Verified | Notes |
 |------|-------------|--------|-------|----------|-------|
 | music | 0.19.0 | bed3809 | 26.5.2 (25F84) Tahoe | 2026-07-16 | Reads + Group B playback control. Tahoe: `loved`→`favorited` (fallback in place); transport/shuffle/repeat need a settle delay before read-back. |
+| media | 0.21.0 | 3524b5d | 26.5.2 (25F84) Tahoe | 2026-07-16 | Read-only recent-media reader over Podcasts + Books SQLite stores. Podcasts reflects phone listening via iCloud sync. TV/movies not covered (no local data). |
 | echo | n/a | n/a | n/a | n/a | Diagnostic tool; no OS interaction. |
 | calendar | — | — | not recorded | — | |
 | reminders | — | — | not recorded | — | |
