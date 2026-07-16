@@ -18,8 +18,8 @@ here, which is the main reason the tool is useful.
 - **recent** — everything played or opened in the last `--hours` (default 24),
   newest first, capped by `--limit` (default: all). Each item carries its
   `source` (podcast/book), `title`, `creator` (show or author), `last_engaged`
-  (ISO-8601 UTC), and — for podcasts — `position_seconds` / `duration_seconds`
-  / `percent` so you can see where you left off.
+  (ISO-8601 UTC), `percent` (how far through), and — for podcasts —
+  `duration_seconds` (episode length).
 
 ```bash
 apple-tools media recent
