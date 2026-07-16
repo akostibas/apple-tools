@@ -7,33 +7,42 @@ import Foundation
 public struct MusicTool: ProbeTool {
     private static let defaultSearchLimit = 25
     private static let defaultStatsLimit = 20
+    private static let defaultMixLimit = 20
+    private static let defaultStaleMonths = 6
+    private static let defaultFreshDays = 30
 
     public let definition = ToolDefinition(
         name: "music",
-        description: "Read Apple Music / Music.app. Use 'now-playing' to see the current track and player state (works for streamed tracks too), 'search' to find tracks in the local library, 'stats' to rank the library by local play history (most-played, recently-played, most-loved). Read-only: play counts and dates reflect what THIS Mac recorded locally, not your full cross-device Apple Music listening history.",
+        description: "Read Apple Music / Music.app. Use 'now-playing' to see the current track and player state (works for streamed tracks too), 'search' to find tracks in the local library, 'stats' to rank the library by raw local play history (most-played, recently-played, most-loved), and 'mix' for derived 'what should I play right now' picks (neglected-favorites, rediscover, velocity, fresh, unplayed-gems). Read-only: play counts and dates reflect what THIS Mac recorded locally, not your full cross-device Apple Music listening history.",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "now-playing, search, or stats"),
+                "action": PropertySchema(type_: "string", description: "now-playing, search, stats, or mix"),
                 "query": PropertySchema(type_: "string", description: "Text to match (required for search)",
                     summary: "Search text", actions: ["search"]),
                 "field": PropertySchema(type_: "string", description: "Which field to match for search: any (default), title, artist, or album",
                     summary: "Match field: any (default), title, artist, album", actions: ["search"]),
-                "by": PropertySchema(type_: "string", description: "Ranking for stats: most-played, recently-played, or most-loved (required for stats)",
-                    summary: "Ranking: most-played, recently-played, most-loved", actions: ["stats"]),
-                "limit": PropertySchema(type_: "integer", description: "Max results (search default 25, stats default 20)",
-                    summary: "Max results", actions: ["search", "stats"]),
+                "by": PropertySchema(type_: "string", description: "For stats: most-played, recently-played, most-loved. For mix: neglected-favorites, rediscover, velocity, fresh, unplayed-gems. (required for stats and mix)",
+                    summary: "Ranking / pick query", actions: ["stats", "mix"]),
+                "months": PropertySchema(type_: "integer", description: "Staleness window in months for mix neglected-favorites/rediscover — 'not heard in the last N months' (default 6)",
+                    summary: "Staleness window (months, default 6)", actions: ["mix"]),
+                "days": PropertySchema(type_: "integer", description: "Recency window in days for mix fresh — 'added in the last N days' (default 30)",
+                    summary: "Recency window (days, default 30)", actions: ["mix"]),
+                "limit": PropertySchema(type_: "integer", description: "Max results (search default 25, stats/mix default 20)",
+                    summary: "Max results", actions: ["search", "stats", "mix"]),
             ],
             required: ["action"]
         ),
-        cliSummary: "Read Apple Music — now playing, search the library, and local play stats.",
+        cliSummary: "Read Apple Music — now playing, search, play stats, and 'what to play now' mixes.",
         actions: [
             ActionHelp(name: "now-playing", summary: "Show the current track and player state",
                 example: "apple-tools music now-playing"),
             ActionHelp(name: "search", summary: "Find tracks in the local library",
                 example: "apple-tools music search --query <text> [--field any|title|artist|album] [--limit N]", required: ["query"]),
-            ActionHelp(name: "stats", summary: "Rank the library by local play history",
+            ActionHelp(name: "stats", summary: "Rank the library by raw local play history",
                 example: "apple-tools music stats --by most-played|recently-played|most-loved [--limit N]", required: ["by"]),
+            ActionHelp(name: "mix", summary: "Derived 'what should I play right now' picks",
+                example: "apple-tools music mix --by neglected-favorites|rediscover|velocity|fresh|unplayed-gems [--months N] [--days N] [--limit N]", required: ["by"]),
         ]
     )
 
@@ -41,6 +50,7 @@ public struct MusicTool: ProbeTool {
         "now-playing": .read,
         "search":      .read,
         "stats":       .read,
+        "mix":         .read,
     ])
 
     public init() {}
@@ -76,8 +86,19 @@ public struct MusicTool: ProbeTool {
             }
             let limit = intParam(params, "limit") ?? Self.defaultStatsLimit
             return stats(by: by, limit: limit)
+        case "mix":
+            guard let byRaw = params?["by"]?.value as? String, !byRaw.isEmpty else {
+                return ("missing required parameter: by", true)
+            }
+            guard let by = MusicIntegration.MixKind(rawValue: byRaw) else {
+                return ("invalid by: \(byRaw) (use neglected-favorites, rediscover, velocity, fresh, or unplayed-gems)", true)
+            }
+            let limit = intParam(params, "limit") ?? Self.defaultMixLimit
+            let months = intParam(params, "months") ?? Self.defaultStaleMonths
+            let days = intParam(params, "days") ?? Self.defaultFreshDays
+            return mix(by: by, limit: limit, months: months, days: days)
         default:
-            return ("unknown action: \(action) (use now-playing, search, or stats)", true)
+            return ("unknown action: \(action) (use now-playing, search, stats, or mix)", true)
         }
     }
 
@@ -129,6 +150,22 @@ public struct MusicTool: ProbeTool {
         return (jsonString(response) ?? "{}", false)
     }
 
+    private func mix(by: MusicIntegration.MixKind, limit: Int, months: Int, days: Int) -> (String, Bool) {
+        let tracks: [MusicIntegration.Track]
+        do {
+            tracks = try MusicIntegration.mix(by: by, limit: limit, months: months, days: days)
+        } catch {
+            return (errorText(error), true)
+        }
+        let response: [String: Any] = [
+            "by": by.rawValue,
+            "source": "local",
+            "count": tracks.count,
+            "tracks": tracks.map { trackDict($0) },
+        ]
+        return (jsonString(response) ?? "{}", false)
+    }
+
     // MARK: - Formatting
 
     private func trackDict(_ track: MusicIntegration.Track) -> [String: Any] {
@@ -150,6 +187,7 @@ public struct MusicTool: ProbeTool {
         // Music content ("subscription") from the user's own files.
         if let cloud = track.cloudStatus { dict["cloud_status"] = cloud }
         if let played = track.playedDate { dict["played_date"] = played }
+        if let added = track.dateAdded { dict["date_added"] = added }
         return dict
     }
 

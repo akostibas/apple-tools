@@ -26,10 +26,11 @@ final class MusicToolTests: XCTestCase {
         name: String, artist: String = "A", album: String = "Alb",
         duration: Double = 100, played: Int = 0, rating: Int = 0,
         loved: Bool = false, kind: String = "file track",
-        cloud: String = "", playedComponents: String = "", id: String = "1"
+        cloud: String = "", playedComponents: String = "", id: String = "1",
+        addedComponents: String = ""
     ) -> String {
         return [name, artist, album, "\(duration)", "\(played)", "\(rating)",
-                "\(loved)", kind, cloud, playedComponents, id].joined(separator: fs)
+                "\(loved)", kind, cloud, playedComponents, id, addedComponents].joined(separator: fs)
     }
 
     private func json(_ result: String) -> [String: Any] {
@@ -253,6 +254,136 @@ final class MusicToolTests: XCTestCase {
         ])
         let tracks = json(result)["tracks"] as? [[String: Any]]
         XCTAssertEqual(tracks?.count, 3)
+    }
+
+    // MARK: - mix (derived pick queries)
+
+    /// Fixed reference "now" so relative-date logic is deterministic.
+    private let now = ISO8601DateFormatter().date(from: "2026-07-16T12:00:00Z")!
+
+    /// ISO-8601 (UTC) timestamp `daysAgo` before `now`.
+    private func iso(daysAgo: Double) -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone]
+        return f.string(from: now.addingTimeInterval(-daysAgo * 86_400))
+    }
+
+    private func mkTrack(
+        name: String, played: Int = 0, rating: Int = 0, loved: Bool = false,
+        playedDate: String? = nil, dateAdded: String? = nil, id: String = "1"
+    ) -> MusicIntegration.Track {
+        MusicIntegration.Track(
+            name: name, artist: "A", album: "Alb", duration: 100,
+            playedCount: played, rating: rating, loved: loved,
+            kind: "file track", cloudStatus: nil,
+            playedDate: playedDate, databaseID: id, dateAdded: dateAdded
+        )
+    }
+
+    private func rank(_ tracks: [MusicIntegration.Track], by: MusicIntegration.MixKind,
+                      months: Int = 6, days: Int = 30, limit: Int = 20) -> [String] {
+        MusicIntegration.rankMix(tracks, by: by, limit: limit, months: months, days: days, now: now)
+            .map { $0.name }
+    }
+
+    func testMixNeglectedFavoritesFiltersToStaleFavorites() {
+        let tracks = [
+            mkTrack(name: "LovedFresh", loved: true, playedDate: iso(daysAgo: 5), id: "1"),   // favorite but played recently → out
+            mkTrack(name: "LovedStale", loved: true, playedDate: iso(daysAgo: 400), id: "2"), // favorite, cold → in
+            mkTrack(name: "HighRatedStale", rating: 100, playedDate: iso(daysAgo: 300), id: "3"), // 5★ cold → in
+            mkTrack(name: "NeverHeardFav", loved: true, playedDate: nil, id: "4"),             // favorite never played → in, first
+            mkTrack(name: "PlainStale", rating: 40, playedDate: iso(daysAgo: 400), id: "5"),   // not a favorite → out
+        ]
+        let names = rank(tracks, by: .neglectedFavorites)
+        // Never-heard favorite first (most neglected), then oldest-played:
+        // LovedStale (400d ago) is older/colder than HighRatedStale (300d ago).
+        XCTAssertEqual(names, ["NeverHeardFav", "LovedStale", "HighRatedStale"])
+    }
+
+    func testMixRediscoverNeedsHighPlaysAndStaleness() {
+        let tracks = [
+            mkTrack(name: "HeavyStale", played: 40, playedDate: iso(daysAgo: 400), id: "1"), // in
+            mkTrack(name: "HeavyFresh", played: 40, playedDate: iso(daysAgo: 3), id: "2"),   // played recently → out
+            mkTrack(name: "LightStale", played: 2, playedDate: iso(daysAgo: 400), id: "3"),  // too few plays → out
+            mkTrack(name: "MediumStale", played: 12, playedDate: iso(daysAgo: 400), id: "4"),// in
+        ]
+        let names = rank(tracks, by: .rediscover)
+        XCTAssertEqual(names, ["HeavyStale", "MediumStale"], "high-play cold tracks, most-played first")
+    }
+
+    func testMixVelocityRanksPlaysPerDaySinceAdded() {
+        let tracks = [
+            mkTrack(name: "OldWarhorse", played: 40, dateAdded: iso(daysAgo: 2000), id: "1"), // 0.02/day
+            mkTrack(name: "FreshObsession", played: 8, dateAdded: iso(daysAgo: 7), id: "2"),  // ~1.1/day
+            mkTrack(name: "Never", played: 0, dateAdded: iso(daysAgo: 5), id: "3"),           // no plays → excluded
+        ]
+        let names = rank(tracks, by: .velocity)
+        XCTAssertEqual(names, ["FreshObsession", "OldWarhorse"],
+                       "recent obsession outranks old warhorse despite fewer total plays")
+    }
+
+    func testMixFreshFiltersRecentlyAddedAndBarelyPlayed() {
+        let tracks = [
+            mkTrack(name: "NewUnplayed", played: 0, dateAdded: iso(daysAgo: 3), id: "1"),  // in
+            mkTrack(name: "NewButPlayed", played: 9, dateAdded: iso(daysAgo: 3), id: "2"), // played a lot → out
+            mkTrack(name: "OldUnplayed", played: 0, dateAdded: iso(daysAgo: 400), id: "3"),// added long ago → out
+            mkTrack(name: "NewestBarely", played: 1, dateAdded: iso(daysAgo: 1), id: "4"), // in, newest
+        ]
+        let names = rank(tracks, by: .fresh)
+        XCTAssertEqual(names, ["NewestBarely", "NewUnplayed"], "recent + barely-played, newest add first")
+    }
+
+    func testMixUnplayedGemsAreFlaggedNeverPlayed() {
+        let tracks = [
+            mkTrack(name: "GemA", played: 0, rating: 100, dateAdded: iso(daysAgo: 10), id: "1"),
+            mkTrack(name: "GemB", played: 0, loved: true, dateAdded: iso(daysAgo: 5), id: "2"),
+            mkTrack(name: "PlayedGem", played: 3, rating: 100, id: "3"), // played → out
+            mkTrack(name: "PlainUnplayed", played: 0, rating: 20, id: "4"), // not a favorite → out
+        ]
+        let names = rank(tracks, by: .unplayedGems)
+        // Higher rating first (GemA 100 > GemB's loved-only 0 rating).
+        XCTAssertEqual(names, ["GemA", "GemB"])
+    }
+
+    func testMixRespectsLimit() {
+        let tracks = (1...10).map { mkTrack(name: "T\($0)", played: $0 * 10, dateAdded: iso(daysAgo: 5), id: "\($0)") }
+        XCTAssertEqual(rank(tracks, by: .velocity, limit: 3).count, 3)
+    }
+
+    // MARK: - mix wiring (through the tool)
+
+    func testMixRejectsInvalidBy() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("mix"),
+            "by": AnyCodable("bangers"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("invalid by"))
+    }
+
+    func testMixRequiresBy() {
+        let (result, isError) = tool.handle(params: ["action": AnyCodable("mix")])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("by"))
+    }
+
+    func testMixThroughToolReturnsLocalSourceEnvelope() {
+        MusicIntegration.runAppleScript = { [weak self] _, _, _ in
+            guard let self = self else { return ("", nil) }
+            // Two loved-but-never-played gems.
+            return ([
+                self.trackLine(name: "Gem", played: 0, loved: true, id: "1", addedComponents: "2026,7,1,0,0,0"),
+            ].joined(separator: "\n"), nil)
+        }
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("mix"),
+            "by": AnyCodable("unplayed-gems"),
+        ])
+        XCTAssertFalse(isError)
+        let obj = json(result)
+        XCTAssertEqual(obj["source"] as? String, "local")
+        XCTAssertEqual(obj["by"] as? String, "unplayed-gems")
+        XCTAssertEqual(obj["count"] as? Int, 1)
     }
 
     // MARK: - parsing

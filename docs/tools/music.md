@@ -24,6 +24,34 @@ dialog; grant in System Settings → Privacy & Security → Automation.
 
   Bounded by `limit` (default 20).
 
+- **mix** — derived "what should I play right now" picks (`by`, required). Where
+  `stats` reports raw facts, `mix` blends recency, play count, ratings, and
+  library age into actionable suggestions:
+  - `neglected-favorites` — loved / 4★+ tracks not heard in the last `months`
+    (default 6). *The* "rediscover something you love" query; self-clearing
+    (playing a track drops it until the window lapses again).
+  - `rediscover` — heavily played (≥ 8 lifetime plays) but not heard in
+    `months` — like neglected-favorites, but earned by plays, so it catches
+    things you clearly loved yet never rated.
+  - `velocity` — `played_count ÷ days-since-added`, highest first. The honest
+    local stand-in for "trending" / "on rotation": a track added last week and
+    played 8 times beats one added five years ago and played 8 times.
+  - `fresh` — added in the last `days` (default 30) and barely played — new
+    music you haven't given a fair hearing yet.
+  - `unplayed-gems` — loved / 4★+ but never played — flagged gems still in the
+    backlog.
+
+  Bounded by `limit` (default 20). Tune windows with `--months` (neglected /
+  rediscover) and `--days` (fresh).
+
+  **Why `mix` and not just `stats`?** "Most-played all-time" is a *fact*, but
+  usually not what you want to hear *now* — it's dominated by songs you loved
+  years ago. `mix` answers the actual question. Note the hard limit: Music
+  stores only a lifetime play count and a *single* last-played timestamp per
+  track — there's no local play-by-play log — so a true "top plays in the last
+  30 days" is impossible here (that needs the Apple Music API; see issue #55).
+  These queries approximate it from what's local.
+
 Run `apple-tools music --help` for the exact parameters of each action.
 
 ## Track fields
@@ -48,6 +76,9 @@ apple-tools music search --query "kid a" --field album
 apple-tools music search --query radiohead --field artist --limit 10
 apple-tools music stats --by most-played --limit 10
 apple-tools music stats --by recently-played
+apple-tools music mix --by neglected-favorites --months 12
+apple-tools music mix --by velocity --limit 15
+apple-tools music mix --by fresh --days 14
 ```
 
 ## Shortcomings

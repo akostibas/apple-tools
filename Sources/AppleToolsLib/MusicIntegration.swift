@@ -52,6 +52,7 @@ public enum MusicIntegration {
         public let cloudStatus: String? // "subscription" / "purchased" / … / nil
         public let playedDate: String?  // ISO-8601, nil if never played
         public let databaseID: String
+        public let dateAdded: String?   // ISO-8601; present for every real track
     }
 
     /// Player transport state plus the current track (nil when stopped / idle).
@@ -71,6 +72,28 @@ public enum MusicIntegration {
         case mostPlayed = "most-played"
         case recentlyPlayed = "recently-played"
         case mostLoved = "most-loved"
+    }
+
+    /// Derived "what should I play right now" queries (the `mix` action).
+    /// Unlike `stats` (honest all-time facts), these blend recency, play
+    /// count, ratings, and library age into actionable picks. All computed
+    /// from the same local fields — no play-history log needed. See issue #56.
+    public enum MixKind: String {
+        /// Loved / 4★+ tracks not heard in `months`. The canonical
+        /// "rediscover something you love" query; self-clearing (playing a
+        /// track evicts it until the window lapses again).
+        case neglectedFavorites = "neglected-favorites"
+        /// Heavily played but not heard in `months` — like neglected-favorites
+        /// but earned by plays, so it catches things you loved yet never rated.
+        case rediscover
+        /// plays ÷ days-since-added, highest first. The honest local stand-in
+        /// for "trending": distinguishes a fresh obsession from an old warhorse.
+        case velocity
+        /// Added within `days` and barely played — new music you haven't given
+        /// a fair hearing yet.
+        case fresh
+        /// Loved / 4★+ but never played — flagged gems still in the backlog.
+        case unplayedGems = "unplayed-gems"
     }
 
     public enum MusicError: Error, CustomStringConvertible {
@@ -152,8 +175,13 @@ public enum MusicIntegration {
             try
                 set dbid to (database ID of theTrack as text)
             end try
+            set addedStr to ""
+            try
+                set addedVal to (date added of theTrack)
+                if addedVal is not missing value then set addedStr to my atDateComponents(addedVal)
+            end try
         end tell
-        return nm & fieldSep & ar & fieldSep & alb & fieldSep & dur & fieldSep & playCount & fieldSep & theRating & fieldSep & isLoved & fieldSep & theClass & fieldSep & cloudStat & fieldSep & playedStr & fieldSep & dbid
+        return nm & fieldSep & ar & fieldSep & alb & fieldSep & dur & fieldSep & playCount & fieldSep & theRating & fieldSep & isLoved & fieldSep & theClass & fieldSep & cloudStat & fieldSep & playedStr & fieldSep & dbid & fieldSep & addedStr
     end trackRecord
     """
 
@@ -280,6 +308,87 @@ public enum MusicIntegration {
         return Array(ranked.prefix(limit))
     }
 
+    // MARK: - Mix (derived "what to play now" queries)
+
+    /// Play count below which a track counts as "high rated" for the star-based
+    /// filters. Music stores ratings 0–100 at 20 per star, so 80 = 4★.
+    static let fourStars = 80
+    /// A track needs at least this many lifetime plays to qualify for
+    /// `rediscover` — enough that it was genuinely a favorite once, not a
+    /// one-off. Deliberately a plain constant (documented, not a flag) to keep
+    /// the surface small; revisit if libraries vary too much.
+    static let rediscoverMinPlays = 8
+
+    /// Run a derived pick query. `months` is the staleness window for the
+    /// "not heard lately" filters; `days` is the recency window for `fresh`.
+    /// `now` is injectable so tests are deterministic.
+    public static func mix(by kind: MixKind, limit: Int, months: Int, days: Int, now: Date = Date()) throws -> [Track] {
+        return rankMix(try allLibraryTracks(), by: kind, limit: limit, months: months, days: days, now: now)
+    }
+
+    /// Pure ranking core of ``mix`` — no AppleScript, so it's directly
+    /// unit-testable with hand-built tracks and an injected `now`.
+    static func rankMix(_ tracks: [Track], by kind: MixKind, limit: Int, months: Int, days: Int, now: Date) -> [Track] {
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone]
+
+        // Days between `now` and an ISO timestamp; nil if unparseable/absent.
+        func daysSince(_ iso: String?) -> Double? {
+            guard let iso = iso, let date = parser.date(from: iso) else { return nil }
+            return now.timeIntervalSince(date) / 86_400
+        }
+        let staleWindow = Double(months) * 30
+        // A track is "stale" if last played longer ago than the window — or was
+        // never played at all (nil playedDate ⇒ never heard ⇒ maximally stale).
+        func isStale(_ track: Track) -> Bool {
+            guard let ago = daysSince(track.playedDate) else { return true }
+            return ago >= staleWindow
+        }
+        func isFavorite(_ track: Track) -> Bool { track.loved || track.rating >= fourStars }
+
+        let ranked: [Track]
+        switch kind {
+        case .neglectedFavorites:
+            // Favorites gone cold. Never-played favorites (empty playedDate)
+            // sort first, then oldest-played — the most neglected on top.
+            ranked = tracks
+                .filter { isFavorite($0) && isStale($0) }
+                .sorted { ($0.playedDate ?? "") < ($1.playedDate ?? "") }
+        case .rediscover:
+            // Earned by plays rather than stars: heavily played, now cold.
+            ranked = tracks
+                .filter { $0.playedCount >= rediscoverMinPlays && isStale($0) && ($0.playedDate != nil) }
+                .sorted { $0.playedCount > $1.playedCount }
+        case .velocity:
+            // plays ÷ days-since-added, highest first. Needs date_added and at
+            // least one play; max(age,1) guards a same-day add.
+            func velocity(_ track: Track) -> Double {
+                Double(track.playedCount) / max(daysSince(track.dateAdded) ?? 1, 1)
+            }
+            ranked = tracks
+                .filter { $0.playedCount > 0 && daysSince($0.dateAdded) != nil }
+                .sorted { velocity($0) > velocity($1) }
+        case .fresh:
+            // Added within `days`, still barely played. Newest add first.
+            let freshWindow = Double(days)
+            ranked = tracks
+                .filter { track in
+                    guard let addedAgo = daysSince(track.dateAdded) else { return false }
+                    return addedAgo <= freshWindow && track.playedCount < 3
+                }
+                .sorted { ($0.dateAdded ?? "") > ($1.dateAdded ?? "") }
+        case .unplayedGems:
+            // Flagged favorites never played. Highest rated / newest first.
+            ranked = tracks
+                .filter { isFavorite($0) && $0.playedCount == 0 }
+                .sorted {
+                    $0.rating != $1.rating ? $0.rating > $1.rating
+                        : ($0.dateAdded ?? "") > ($1.dateAdded ?? "")
+                }
+        }
+        return Array(ranked.prefix(limit))
+    }
+
     /// Every track in `library playlist 1`, read via vectorized bulk property
     /// fetches. Parallel lists are zipped in AppleScript and emitted one
     /// `fieldSep`-joined line per track — same shape `trackRecord` produces, so
@@ -300,6 +409,7 @@ public enum MusicIntegration {
             set cloudList to cloud status of every track of lib
             set playedList to played date of every track of lib
             set idsList to database ID of every track of lib
+            set addedList to date added of every track of lib
             -- `loved` can't be bulk-fetched on macOS 26 (renamed to
             -- `favorited`); older macOS only knows `loved`. Try new, fall back.
             try
@@ -317,7 +427,10 @@ public enum MusicIntegration {
             set playedItem to item i of playedList
             set playedStr to ""
             if playedItem is not missing value then set playedStr to my atDateComponents(playedItem)
-            set end of rows to (item i of namesList) & fieldSep & (item i of artistsList) & fieldSep & (item i of albumsList) & fieldSep & (item i of durationsList) & fieldSep & (item i of playCountsList) & fieldSep & (item i of ratingsList) & fieldSep & (item i of lovedList) & fieldSep & ((item i of classesList) as text) & fieldSep & cloudStr & fieldSep & playedStr & fieldSep & (item i of idsList)
+            set addedItem to item i of addedList
+            set addedStr to ""
+            if addedItem is not missing value then set addedStr to my atDateComponents(addedItem)
+            set end of rows to (item i of namesList) & fieldSep & (item i of artistsList) & fieldSep & (item i of albumsList) & fieldSep & (item i of durationsList) & fieldSep & (item i of playCountsList) & fieldSep & (item i of ratingsList) & fieldSep & (item i of lovedList) & fieldSep & ((item i of classesList) as text) & fieldSep & cloudStr & fieldSep & playedStr & fieldSep & (item i of idsList) & fieldSep & addedStr
         end repeat
         set AppleScript's text item delimiters to (character id 10)
         return rows as text
@@ -343,6 +456,10 @@ public enum MusicIntegration {
         guard f.count >= 11 else { return nil }
         let cloud = f[8].isEmpty ? nil : f[8]
         let played = f[9].isEmpty ? nil : DateFormatting.isoFromAppleScriptComponents(f[9])
+        // date_added (field 11) is appended; tolerate its absence so older
+        // callers / truncated lines still parse.
+        let added: String? = (f.count > 11 && !f[11].isEmpty)
+            ? DateFormatting.isoFromAppleScriptComponents(f[11]) : nil
         return Track(
             name: f[0],
             artist: f[1],
@@ -354,7 +471,8 @@ public enum MusicIntegration {
             kind: f[7],
             cloudStatus: cloud,
             playedDate: played,
-            databaseID: f[10]
+            databaseID: f[10],
+            dateAdded: added
         )
     }
 
