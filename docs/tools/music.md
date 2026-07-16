@@ -138,3 +138,40 @@ apple-tools music repeat --mode all
   broke the old `loved` AppleScript property; the tool tries `favorited` first
   and falls back to `loved` on older macOS. Apple has broken Music AppleScript
   terms across releases before, so expect occasional drift.
+
+## Future ideas
+
+Deferred, not built. Tracked under [issue #56](https://github.com/akostibas/apple-tools/issues/56)
+(local, zero-auth) and [#55](https://github.com/akostibas/apple-tools/issues/55)
+(the Apple Music API engine).
+
+**Curation writes (zero-auth, but caveated).** These mutate the library rather
+than just player state, so each would need a read-back "did it persist?" check:
+
+- **love / rate** — set favorite + star rating. Reliable for local `file
+  track`s, but iCloud is authoritative for `shared`/`subscription` tracks and
+  can silently revert the edit on next sync.
+- **playlist create / add / remove** — manage user playlists. Note the ceiling:
+  via AppleScript you can only add tracks *already in the library*. The
+  compelling case — "add that Apple Music song I just found to a playlist" —
+  needs adding a catalog item to the library first, which is an Apple Music API
+  operation (see below), not AppleScript. So playlist building is limited until
+  catalog-add exists. Some user playlists also silently reject AppleScript edits.
+- **queue / up-next** — add to Up Next; the AppleScript dictionary exposes this
+  only thinly.
+- **airplay** — list output devices and choose one; set per-device volume.
+- **eq** — enable/disable and select an equalizer preset.
+
+**Apple Music API engine (heavy — needs auth).** Everything the local world
+can't reach, behind an Apple Developer account, a signing key, and a one-time
+interactive Music-User-Token bootstrap (a GUI popup for an otherwise-headless
+CLI):
+
+- **catalog search / play** — find and play songs not in your library.
+- **add-to-library** — the bridge that pulls catalog picks into the local world,
+  after which every zero-auth read/control above works on them.
+- **true recent-played history** — the authoritative cross-device listening feed
+  (`/v1/me/recent/played`), which is what makes real "top plays in the last N
+  days" possible (impossible locally — Music keeps only a lifetime count and one
+  last-played timestamp per track).
+- **recommendations / charts / editorial**.
