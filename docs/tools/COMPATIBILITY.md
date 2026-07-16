@@ -19,9 +19,13 @@ When you verify a tool on a new OS or after nontrivial changes, add/update its
 row with the current `apple-tools --version`, `git rev-parse --short HEAD`,
 `sw_vers`, and today's date.
 
+Every registered tool must have a row here (enforced by
+`CompatibilityDocTests`); a tool with no OS dependency is marked `n/a`.
+
 | Tool | apple-tools | Commit | macOS | Verified | Notes |
 |------|-------------|--------|-------|----------|-------|
 | music | 0.19.0 | bed3809 | 26.5.2 (25F84) Tahoe | 2026-07-16 | Reads + Group B playback control. Tahoe: `loved`→`favorited` (fallback in place); transport/shuffle/repeat need a settle delay before read-back. |
+| echo | n/a | n/a | n/a | n/a | Diagnostic tool; no OS interaction. |
 | calendar | — | — | not recorded | — | |
 | reminders | — | — | not recorded | — | |
 | notes | — | — | not recorded | — | |
