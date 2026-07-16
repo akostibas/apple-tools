@@ -1,0 +1,73 @@
+# music — Apple Music / Music.app
+
+Read the local Music.app: see what's playing, search the local library, and
+rank the library by local play history. Drives `application "Music"` via
+AppleScript — **zero auth** beyond the one-time Automation grant (no Apple
+Developer account, MusicKit token, or sign-in popup).
+
+**Access:** read-only
+**Permissions:** Automation → Music (TCC). The first call triggers the system
+dialog; grant in System Settings → Privacy & Security → Automation.
+
+## Actions
+
+- **now-playing** — the current track and player `state` (`playing` / `paused`
+  / `stopped`) plus `position` (seconds elapsed). Works for a streamed Apple
+  Music track too, which shows up as `kind: "URL track"` with no `cloud_status`.
+- **search** — find tracks in the local library. `query` is a case-insensitive
+  substring; `field` selects what it matches — `any` (default: name, artist, or
+  album), `title`, `artist`, or `album`. Bounded by `limit` (default 25).
+- **stats** — rank the whole library by a local play statistic (`by`, required):
+  - `most-played` — highest `played_count` first (unplayed tracks excluded).
+  - `recently-played` — most recent `played_date` first (never-played excluded).
+  - `most-loved` — favorited/loved tracks, highest `played_count` first.
+
+  Bounded by `limit` (default 20).
+
+Run `apple-tools music --help` for the exact parameters of each action.
+
+## Track fields
+
+Every track carries: `name`, `artist`, `album`, `duration` (seconds),
+`played_count`, `played_date` (ISO-8601 UTC, omitted if never played), `rating`
+(0–100) and `stars` (0–5), `loved` (favorite state), `database_id`, and two
+fields that reveal which "world" the track belongs to:
+
+- **`kind`** — `file track` (a real file on disk), `shared track` (added from
+  Apple Music, not downloaded), or `URL track` (a pure catalog stream, only ever
+  seen as the current track).
+- **`cloud_status`** — `subscription` (streamed-in Apple Music content),
+  `purchased`, `matched`, `uploaded`, or omitted. Use it to tell your own files
+  apart from Apple Music content.
+
+## Examples
+
+```bash
+apple-tools music now-playing
+apple-tools music search --query "kid a" --field album
+apple-tools music search --query radiohead --field artist --limit 10
+apple-tools music stats --by most-played --limit 10
+apple-tools music stats --by recently-played
+```
+
+## Shortcomings
+
+- **Play stats are local, not your true Apple Music history.** `stats` output is
+  labeled `"source": "local"` for a reason: it reflects what *this Mac* recorded.
+  Streamed plays don't reliably increment `played_count`, and for iCloud-synced
+  (`shared`) tracks the cloud is authoritative — so this is not a faithful
+  cross-device listening history. The real recent-played feed lives behind the
+  Apple Music API (out of scope — see issue #55).
+- **Library only — no catalog.** `search` matches the local library. It can't
+  reach the Apple Music streaming catalog; a song you've never added won't
+  appear. Catalog search needs MusicKit / the Apple Music API and its auth.
+- **Read-only.** No playback control, no rating/favoriting, no playlist edits —
+  those are later phases (#56 Groups B/C). This tool never mutates.
+- **iCloud sync volatility.** A track added from Apple Music becomes visible here
+  once it syncs to the local library (as a `shared`/`file track`), but that add
+  can also silently revert on a later sync — so a track present one moment may be
+  absent the next. Not a tool bug; it's how iCloud Music Library behaves.
+- **macOS version drift.** The "Love" → "Favorite" rename in macOS 26 (Tahoe)
+  broke the old `loved` AppleScript property; the tool tries `favorited` first
+  and falls back to `loved` on older macOS. Apple has broken Music AppleScript
+  terms across releases before, so expect occasional drift.

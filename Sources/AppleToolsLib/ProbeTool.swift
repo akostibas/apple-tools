@@ -62,6 +62,7 @@ public func allAppleTools(host: ToolHost, documentsRoots: [DocumentRoot]? = nil)
         EmailTool(host: host),
         IMessageTool(host: host),
         OpenURITool(host: host),
+        MusicTool(),
     ]
 }
 
