@@ -28,38 +28,38 @@ public enum NotesMarkdown {
         var html = ""
         var i = 0
 
-        func flushListGroup(ordered: Bool, items: [String]) {
-            let tag = ordered ? "ol" : "ul"
-            html += "<\(tag)>"
-            for item in items { html += "<li>\(inlineToHTML(item))</li>" }
-            html += "</\(tag)>"
+        // Emit a contiguous run of list lines as (possibly nested) Notes HTML.
+        // Notes represents a sub-list as a sibling <ul>/<ol> placed right after
+        // its parent <li> (not inside it), e.g.
+        //   <ul><li>a</li><ul><li>b</li></ul><li>c</li></ul>
+        // so we just open/close list tags as the indent level changes.
+        func flushList(_ items: [ListItem]) {
+            var openTags: [String] = []   // one entry per currently-open level
+            for item in items {
+                let want = item.level + 1
+                while openTags.count > want { html += "</\(openTags.removeLast())>" }
+                while openTags.count < want {
+                    let tag = item.ordered ? "ol" : "ul"
+                    html += "<\(tag)>"
+                    openTags.append(tag)
+                }
+                html += "<li>\(inlineToHTML(item.content))</li>"
+            }
+            while !openTags.isEmpty { html += "</\(openTags.removeLast())>" }
         }
 
         while i < lines.count {
             let line = lines[i]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-            // Unordered / checklist list group
-            if let _ = bulletContent(trimmed) {
-                var items: [String] = []
-                while i < lines.count,
-                      let content = bulletContent(lines[i].trimmingCharacters(in: .whitespaces)) {
-                    items.append(content)
+            // List group (bulleted or numbered, with nesting by indentation).
+            if listMarker(line) != nil {
+                var raw: [(indent: Int, ordered: Bool, content: String)] = []
+                while i < lines.count, let m = listMarker(lines[i]) {
+                    raw.append(m)
                     i += 1
                 }
-                flushListGroup(ordered: false, items: items)
-                continue
-            }
-
-            // Ordered list group
-            if let _ = orderedContent(trimmed) {
-                var items: [String] = []
-                while i < lines.count,
-                      let content = orderedContent(lines[i].trimmingCharacters(in: .whitespaces)) {
-                    items.append(content)
-                    i += 1
-                }
-                flushListGroup(ordered: true, items: items)
+                flushList(assignLevels(raw))
                 continue
             }
 
@@ -78,6 +78,41 @@ public enum NotesMarkdown {
             i += 1
         }
         return html
+    }
+
+    /// One list line, with its nesting level resolved from indentation.
+    private struct ListItem { let level: Int; let ordered: Bool; let content: String }
+
+    /// Parse a raw line as a list item, capturing leading-indent width (tabs
+    /// count as 4 columns) alongside its marker kind and text. nil if not a
+    /// list line.
+    private static func listMarker(_ line: String) -> (indent: Int, ordered: Bool, content: String)? {
+        var indent = 0
+        var idx = line.startIndex
+        while idx < line.endIndex {
+            if line[idx] == " " { indent += 1 }
+            else if line[idx] == "\t" { indent += 4 }
+            else { break }
+            idx = line.index(after: idx)
+        }
+        let body = String(line[idx...])
+        if let c = bulletContent(body) { return (indent, false, c) }
+        if let c = orderedContent(body) { return (indent, true, c) }
+        return nil
+    }
+
+    /// Map each item's raw indent width to a 0-based nesting level. A stack of
+    /// open-level widths makes this tolerant of any consistent step (2 spaces,
+    /// 4 spaces, tabs): deeper than the top opens a level, shallower pops.
+    private static func assignLevels(_ raw: [(indent: Int, ordered: Bool, content: String)]) -> [ListItem] {
+        var widths: [Int] = []
+        var out: [ListItem] = []
+        for item in raw {
+            while let last = widths.last, last > item.indent { widths.removeLast() }
+            if widths.last != item.indent { widths.append(item.indent) }
+            out.append(ListItem(level: widths.count - 1, ordered: item.ordered, content: item.content))
+        }
+        return out
     }
 
     /// Strip a leading list marker, returning the item content, or nil if the
@@ -179,12 +214,15 @@ public enum NotesMarkdown {
         if !checklist.isEmpty {
             var queue = checklist
             lines = lines.map { line in
-                guard line.hasPrefix("- "), !line.hasPrefix("- [") else { return line }
-                let text = String(line.dropFirst(2))
+                // Tolerate leading indentation from nested bullets.
+                let stripped = line.drop(while: { $0 == " " })
+                let indent = String(line.prefix(line.count - stripped.count))
+                guard stripped.hasPrefix("- "), !stripped.hasPrefix("- [") else { return line }
+                let text = String(stripped.dropFirst(2))
                 if let idx = queue.firstIndex(where: { $0.text == text }) {
                     let done = queue[idx].done
                     queue.remove(at: idx)
-                    return "- [\(done ? "x" : " ")] \(text)"
+                    return "\(indent)- [\(done ? "x" : " ")] \(text)"
                 }
                 return line
             }
@@ -348,11 +386,15 @@ public enum NotesMarkdown {
                     if !listOrdered.isEmpty { listOrdered.removeLast() }
                     if !orderedCounters.isEmpty { orderedCounters.removeLast() }
                 case tag == "li":
+                    // Indent by nesting depth so sub-lists round-trip. Notes
+                    // nests with sibling <ul>/<ol>, so the open-list stack depth
+                    // is the level; 2 spaces per level mirrors the write path.
+                    let indent = String(repeating: "  ", count: max(0, listOrdered.count - 1))
                     if listOrdered.last == true {
                         orderedCounters[orderedCounters.count - 1] += 1
-                        prefix = "\(orderedCounters.last!). "
+                        prefix = "\(indent)\(orderedCounters.last!). "
                     } else {
-                        prefix = "- "
+                        prefix = "\(indent)- "
                     }
                 case tag == "/li":
                     flushBlock()

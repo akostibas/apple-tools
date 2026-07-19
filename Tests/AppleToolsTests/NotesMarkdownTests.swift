@@ -46,6 +46,35 @@ final class NotesMarkdownTests: XCTestCase {
                        "<ol><li>one</li><li>two</li></ol>")
     }
 
+    func testWriteNestedBulletList() {
+        // Notes nests with a sibling <ul> after the parent <li> (issue #58).
+        XCTAssertEqual(
+            NotesMarkdown.markdownToNotesHTML("- a\n  - b\n  - c\n- d"),
+            "<ul><li>a</li><ul><li>b</li><li>c</li></ul><li>d</li></ul>")
+    }
+
+    func testWriteNestedNumberedList() {
+        XCTAssertEqual(
+            NotesMarkdown.markdownToNotesHTML("1. a\n  1. b\n2. c"),
+            "<ol><li>a</li><ol><li>b</li></ol><li>c</li></ol>")
+    }
+
+    func testWriteDeepAndMixedIndentRoundTrips() {
+        // 4-space indent and a third level both resolve by the width stack.
+        let md = "- a\n    - b\n        - c\n- d"
+        let html = NotesMarkdown.markdownToNotesHTML(md)
+        XCTAssertEqual(html,
+            "<ul><li>a</li><ul><li>b</li><ul><li>c</li></ul></ul><li>d</li></ul>")
+        XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html),
+                       "- a\n  - b\n    - c\n- d")
+    }
+
+    func testReadNestedListIndents() {
+        let html = "<ul><li>a</li><ul><li>b</li><li>c</li></ul><li>d</li></ul>"
+        XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html),
+                       "- a\n  - b\n  - c\n- d")
+    }
+
     func testWriteChecklistBecomesPlainBullet() {
         // Notes can't store real checkboxes; markers are dropped to text.
         XCTAssertEqual(NotesMarkdown.markdownToNotesHTML("- [ ] todo\n- [x] done"),
