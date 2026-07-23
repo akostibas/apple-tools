@@ -165,4 +165,39 @@ final class DateFormattingTests: XCTestCase {
             "1970-01-01T00:00:00Z"
         )
     }
+
+    // MARK: - resolveTimeZone — --timezone / APPLE_TOOLS_TIMEZONE parsing
+
+    func testResolveTimeZoneLocalKeyword() {
+        XCTAssertEqual(DateFormatting.resolveTimeZone("local"), .current)
+        XCTAssertEqual(DateFormatting.resolveTimeZone("LOCAL"), .current)
+        XCTAssertEqual(DateFormatting.resolveTimeZone("  Local  "), .current)
+    }
+
+    func testResolveTimeZoneUTCKeywords() {
+        let utc = TimeZone(identifier: "UTC")
+        XCTAssertEqual(DateFormatting.resolveTimeZone("utc"), utc)
+        XCTAssertEqual(DateFormatting.resolveTimeZone("UTC"), utc)
+        XCTAssertEqual(DateFormatting.resolveTimeZone("gmt"), utc)
+        XCTAssertEqual(DateFormatting.resolveTimeZone("Z"), utc)
+    }
+
+    func testResolveTimeZoneIANAIdentifier() {
+        XCTAssertEqual(
+            DateFormatting.resolveTimeZone("America/New_York"),
+            TimeZone(identifier: "America/New_York")
+        )
+    }
+
+    func testResolveTimeZoneOffsetAbbreviation() {
+        XCTAssertEqual(
+            DateFormatting.resolveTimeZone("gmt-0700"),
+            TimeZone(abbreviation: "GMT-0700")
+        )
+    }
+
+    func testResolveTimeZoneReturnsNilOnGarbage() {
+        XCTAssertNil(DateFormatting.resolveTimeZone("Not/AZone"))
+        XCTAssertNil(DateFormatting.resolveTimeZone("banana"))
+    }
 }
