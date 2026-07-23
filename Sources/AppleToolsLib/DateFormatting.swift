@@ -59,6 +59,30 @@ public enum DateFormatting {
         outputFormatter.string(from: date)
     }
 
+    /// Resolve a user-supplied timezone string to a `TimeZone`, for wiring the
+    /// CLI `--timezone` flag (and `APPLE_TOOLS_TIMEZONE`) into ``outputTimeZone``.
+    /// Accepts, case-insensitively for the keywords:
+    /// - `local` → the machine's current timezone (``TimeZone/current``)
+    /// - `utc` / `gmt` / `z` → UTC (the default)
+    /// - any IANA identifier (`America/New_York`) or offset (`GMT-0700`),
+    ///   passed through to ``TimeZone/init(identifier:)`` / abbreviation lookup
+    ///
+    /// Returns `nil` if the string names no known zone, so the caller can emit a
+    /// clear error rather than silently falling back to UTC.
+    public static func resolveTimeZone(_ raw: String) -> TimeZone? {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        switch trimmed.lowercased() {
+        case "local": return .current
+        case "utc", "gmt", "z": return TimeZone(identifier: "UTC")
+        default:
+            // Identifiers are case-sensitive (`America/New_York`), so try the
+            // raw value first; fall back to the uppercased form for offset
+            // abbreviations like `gmt-0700` → `GMT-0700`.
+            return TimeZone(identifier: trimmed)
+                ?? TimeZone(abbreviation: trimmed.uppercased())
+        }
+    }
+
     /// Format floating wall-clock `DateComponents` as a **zone-less** local
     /// string — `"YYYY-MM-DDTHH:MM:SS"` when a time-of-day is present, or a bare
     /// `"YYYY-MM-DD"` when it isn't (a date-only reminder). Used for values that

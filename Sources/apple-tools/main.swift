@@ -91,6 +91,11 @@ func printTopUsage() {
                            sensitive actions (screenshot, open-uri).
       --quiet              Suppress the macOS completion notification
                            (also: APPLE_TOOLS_QUIET=1).
+      --timezone <zone>    Render output timestamps in <zone>: 'local', 'UTC'
+        (--tz <zone>)      (default), or an IANA id like 'America/New_York'.
+                           Only shifts absolute instants; floating dates
+                           (all-day events, reminder due dates) are unchanged.
+                           (also: APPLE_TOOLS_TIMEZONE).
       --output-dir <dir>   Where file-producing tools write output
                            (default: $APPLE_TOOLS_OUTPUT_DIR or a temp dir).
       --root <name>=<path> Add a named documents root alongside the built-in
@@ -177,6 +182,10 @@ var quiet = ProcessInfo.processInfo.environment["APPLE_TOOLS_QUIET"] == "1"
 // under an agent (the agent's own per-invocation approval is the gate).
 // `--confirm` (or APPLE_TOOLS_CONFIRM=1) opts into a blocking Allow/Deny dialog.
 var confirm = ["1", "true", "yes"].contains(ProcessInfo.processInfo.environment["APPLE_TOOLS_CONFIRM"] ?? "")
+// Timezone all output timestamps render in. Defaults to UTC (see
+// DateFormatting). `APPLE_TOOLS_TIMEZONE` sets it for the shell; `--timezone`/
+// `--tz` overrides per-invocation. Resolved and applied after flag scanning.
+var timeZoneSpec: String? = ProcessInfo.processInfo.environment["APPLE_TOOLS_TIMEZONE"]
 // Extra documents roots (additive — the ~/Documents default is always
 // present). Parsed from repeatable `--root name=path`.
 var extraDocumentRoots: [DocumentRoot] = []
@@ -212,6 +221,10 @@ do {
         case "--quiet":
             quiet = true
             i += 1
+        case "--timezone", "--tz":
+            guard i + 1 < argv.count else { fail("\(arg) needs a value (local, UTC, or an IANA zone like America/New_York)") }
+            timeZoneSpec = argv[i + 1]
+            i += 2
         case "--output-dir":
             guard i + 1 < argv.count else { fail("--output-dir needs a value") }
             outputDir = argv[i + 1]
@@ -225,6 +238,10 @@ do {
             // swallow the following token (#34).
             if arg.hasPrefix("--output-dir=") {
                 outputDir = String(arg.dropFirst("--output-dir=".count))
+            } else if arg.hasPrefix("--timezone=") {
+                timeZoneSpec = String(arg.dropFirst("--timezone=".count))
+            } else if arg.hasPrefix("--tz=") {
+                timeZoneSpec = String(arg.dropFirst("--tz=".count))
             } else if arg.hasPrefix("--root=") {
                 extraDocumentRoots.append(parseRootFlag(String(arg.dropFirst("--root=".count))))
             } else {
@@ -235,6 +252,16 @@ do {
     }
 }
 argv = globalArgs
+
+// Apply the resolved output timezone before any tool runs, so every timestamp
+// this invocation emits renders in the requested zone. An empty spec (e.g.
+// `APPLE_TOOLS_TIMEZONE=`) is treated as unset, keeping the UTC default.
+if let spec = timeZoneSpec, !spec.trimmingCharacters(in: .whitespaces).isEmpty {
+    guard let tz = DateFormatting.resolveTimeZone(spec) else {
+        fail("unknown timezone: \(spec)\n\nUse 'local', 'UTC', or an IANA identifier like 'America/New_York'.")
+    }
+    DateFormatting.outputTimeZone = tz
+}
 
 let host = ToolHost(
     fileSink: LocalFileSink(outputDir: outputDir),
