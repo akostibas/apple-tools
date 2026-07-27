@@ -62,6 +62,36 @@ public enum MusicIntegration {
         public let track: Track?
     }
 
+    /// Result of a curation write (love / rate). `verified` is the in-script
+    /// read-back: did Music report the new value right after the write? A
+    /// `false` means the edit didn't stick (a silent no-op). Note the read-back
+    /// only proves Music accepted it *locally* — iCloud can still revert a
+    /// cloud-track edit on a later sync, which this can't see (issue #55).
+    public struct CurationResult {
+        public let verified: Bool
+        public let value: Int           // loved → 0/1; rate → rating 0–100
+        public let track: Track?
+    }
+
+    /// Result of a playlist mutation. `verified` is the read-back (playlist
+    /// exists / track count changed as intended); `already` is set for a
+    /// create that found an identically-named playlist and made none.
+    public struct PlaylistResult {
+        public let verified: Bool
+        public let already: Bool
+        public let playlistID: String?
+        public let track: Track?
+    }
+
+    /// One AirPlay output device. `selected` marks the currently-active
+    /// output(s); `volume` is per-device (nil if Music doesn't report one).
+    public struct AirPlayDevice {
+        public let name: String
+        public let selected: Bool
+        public let kind: String
+        public let volume: Int?
+    }
+
     /// Which field(s) a `search` matches against.
     public enum SearchField: String {
         case any, title, artist, album
@@ -364,6 +394,394 @@ public enum MusicIntegration {
     /// Seek to `seconds` within the current track; returns the new now-playing.
     public static func seek(toSeconds seconds: Int) throws -> NowPlaying {
         return try controlAndReport(command: "set player position to \(max(0, seconds))", env: [:])
+    }
+
+    // MARK: - Curation (Group C — mutating, with read-back verify)
+    //
+    // Every mutating script below carries `applescript-runner: no-verifier`
+    // (ADR-032 opt-out). The async post-verify hook exists to disambiguate a
+    // SIGKILL-during-pre-commit by polling an external store (chat.db, Mail
+    // index). Music.app has no such store — the authoritative record IS
+    // Music's own state — so these scripts verify *in-script*: they issue the
+    // write, then read the property / count back before returning and report
+    // `verified`. PHASE markers are still emitted so a deadline-kill classifies
+    // as outcome_unknown. Caveat: the read-back proves Music accepted the edit
+    // locally; iCloud can still revert a cloud-track edit on a later sync (#55).
+
+    /// AppleScript that binds `theTrack` to the mutation target: the first
+    /// library match for `query`, or the current track when `query` is nil.
+    /// `prelude` runs before any tell (reads the env var); `command` runs
+    /// inside the Music tell and may `error "NO_MATCH"` / `"NO_CURRENT"`.
+    private struct TrackTarget {
+        let prelude: String
+        let command: String
+        let env: [String: String]
+    }
+
+    private static func trackTarget(query: String?, field: SearchField) -> TrackTarget {
+        if let query = query, !query.isEmpty {
+            return TrackTarget(
+                prelude: #"set theQuery to do shell script "printenv APPLE_TOOLS_MUSIC_QUERY""#,
+                command: """
+                set matches to (every track of library playlist 1 whose \(matchClause(field)))
+                        if (count of matches) is 0 then error "NO_MATCH"
+                        set theTrack to item 1 of matches
+                """,
+                env: ["APPLE_TOOLS_MUSIC_QUERY": query]
+            )
+        }
+        // No query → operate on whatever's cued. `current track` throws when
+        // stopped, so probe it defensively and surface a clean NO_CURRENT.
+        return TrackTarget(
+            prelude: "",
+            command: """
+            set theTrack to missing value
+                    try
+                        set theTrack to current track
+                    end try
+                    if theTrack is missing value then error "NO_CURRENT"
+            """,
+            env: [:]
+        )
+    }
+
+    /// Map a raw script failure carrying one of our sentinel markers to a
+    /// friendly ``MusicError/notFound``; rethrow anything else.
+    private static func mapTargetError(_ error: Error, query: String?) throws -> Never {
+        guard case let MusicError.scriptFailed(detail) = error else { throw error }
+        if detail.contains("NO_MATCH") {
+            throw MusicError.notFound("no library track matches: \(query ?? "")")
+        }
+        if detail.contains("NO_CURRENT") {
+            throw MusicError.notFound("nothing is playing — pass --query to target a library track")
+        }
+        throw error
+    }
+
+    /// Favorite / unfavorite the target track, then read the flag back.
+    /// macOS 26 renamed `loved` → `favorited`; try the new name, fall back.
+    public static func setLoved(_ on: Bool, query: String?, field: SearchField) throws -> CurationResult {
+        let target = trackTarget(query: query, field: field)
+        let lit = on ? "true" : "false"
+        let script = """
+        \(target.prelude)
+        \(handlers)
+        set fieldSep to (character id 31)
+        set sectionSep to (character id 30)
+        log "PHASE: prepare"
+        tell application "Music"
+            \(target.command)
+            log "PHASE: pre-commit"
+            -- The write can be rejected (a URL-track stream, or an iCloud
+            -- permission error -54): swallow it and let the read-back below
+            -- report verified=false, rather than hard-erroring. macOS 26
+            -- renamed `loved` → `favorited`; try the new name, fall back.
+            try
+                set favorited of theTrack to \(lit)
+            on error
+                try
+                    set loved of theTrack to \(lit)
+                end try
+            end try
+            log "PHASE: committed"
+            delay 0.2
+            set nowVal to false
+            try
+                set nowVal to (favorited of theTrack)
+            on error
+                try
+                    set nowVal to (loved of theTrack)
+                end try
+            end try
+            set trackLine to my trackRecord(theTrack)
+        end tell
+        return (nowVal as text) & sectionSep & trackLine
+        """
+        let out: String
+        do {
+            out = try runMutation(script, env: target.env)
+        } catch {
+            try mapTargetError(error, query: query)
+        }
+        let (head, track) = splitHeaderTrack(out)
+        let readBack = (head == "true")
+        return CurationResult(verified: readBack == on, value: readBack ? 1 : 0, track: track)
+    }
+
+    /// Set the target track's star rating (0–5 → Music's 0–100), then read it
+    /// back. `verified` is whether the stored rating matches what we set.
+    public static func setRating(stars: Int, query: String?, field: SearchField) throws -> CurationResult {
+        let value = max(0, min(5, stars)) * 20
+        let target = trackTarget(query: query, field: field)
+        let script = """
+        \(target.prelude)
+        \(handlers)
+        set fieldSep to (character id 31)
+        set sectionSep to (character id 30)
+        log "PHASE: prepare"
+        tell application "Music"
+            \(target.command)
+            log "PHASE: pre-commit"
+            -- A URL-track stream or an iCloud permission error (-54) rejects
+            -- the write; swallow it so the read-back reports verified=false
+            -- instead of hard-erroring (matches `love`'s behavior).
+            try
+                set rating of theTrack to \(value)
+            end try
+            log "PHASE: committed"
+            delay 0.2
+            set nowVal to 0
+            try
+                set nowVal to (rating of theTrack)
+            end try
+            set trackLine to my trackRecord(theTrack)
+        end tell
+        return (nowVal as text) & sectionSep & trackLine
+        """
+        let out: String
+        do {
+            out = try runMutation(script, env: target.env)
+        } catch {
+            try mapTargetError(error, query: query)
+        }
+        let (head, track) = splitHeaderTrack(out)
+        let readBack = Int(head) ?? -1
+        return CurationResult(verified: readBack == value, value: readBack, track: track)
+    }
+
+    // MARK: - Playlists
+
+    /// Create a user playlist. Idempotent: if one with the exact name already
+    /// exists we make none and report `already`, so repeated calls can't spawn
+    /// duplicate playlists.
+    public static func createPlaylist(_ name: String) throws -> PlaylistResult {
+        // applescript-runner: no-verifier — verified in-script via read-back
+        // (playlist existence count); Music has no external store to poll.
+        let script = """
+        set theName to do shell script "printenv APPLE_TOOLS_MUSIC_PLAYLIST"
+        set fieldSep to (character id 31)
+        tell application "Music"
+            set existing to (every user playlist whose name is theName)
+            if (count of existing) > 0 then
+                set plId to ""
+                try
+                    set plId to (persistent ID of item 1 of existing as text)
+                end try
+                return "existed" & fieldSep & plId
+            end if
+            log "PHASE: pre-commit"
+            set newPl to make new user playlist with properties {name:theName}
+            log "PHASE: committed"
+            delay 0.2
+            set check to (count of (every user playlist whose name is theName))
+            set plId to ""
+            try
+                set plId to (persistent ID of newPl as text)
+            end try
+            return (check as text) & fieldSep & plId
+        end tell
+        """
+        let out = try runMutation(script, env: ["APPLE_TOOLS_MUSIC_PLAYLIST": name])
+        let f = out.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: fieldSep)
+        let head = f.first ?? ""
+        let plId = (f.count > 1 && !f[1].isEmpty) ? f[1] : nil
+        if head == "existed" {
+            return PlaylistResult(verified: true, already: true, playlistID: plId, track: nil)
+        }
+        let count = Int(head) ?? 0
+        return PlaylistResult(verified: count >= 1, already: false, playlistID: plId, track: nil)
+    }
+
+    /// Add the first library track matching `query` to the named user playlist
+    /// (`duplicate` — the dictionary's track→playlist verb), then verify the
+    /// track's count in the playlist went up. Only library tracks can be added;
+    /// a pure catalog item must be added to the library first (issue #55).
+    public static func playlistAdd(name: String, query: String, field: SearchField) throws -> PlaylistResult {
+        // applescript-runner: no-verifier — verified in-script via read-back
+        // (playlist track-count delta); Music has no external store to poll.
+        let script = """
+        set thePlaylist to do shell script "printenv APPLE_TOOLS_MUSIC_PLAYLIST"
+        set theQuery to do shell script "printenv APPLE_TOOLS_MUSIC_QUERY"
+        \(handlers)
+        set fieldSep to (character id 31)
+        set sectionSep to (character id 30)
+        tell application "Music"
+            set pls to (every user playlist whose name is thePlaylist)
+            if (count of pls) is 0 then error "NO_PLAYLIST"
+            set thePl to item 1 of pls
+            set matches to (every track of library playlist 1 whose \(matchClause(field)))
+            if (count of matches) is 0 then error "NO_MATCH"
+            set theTrack to item 1 of matches
+            set dbid to (database ID of theTrack)
+            set beforeCount to (count of (every track of thePl whose database ID is dbid))
+            log "PHASE: pre-commit"
+            duplicate theTrack to thePl
+            log "PHASE: committed"
+            delay 0.3
+            set afterCount to (count of (every track of thePl whose database ID is dbid))
+            set trackLine to my trackRecord(theTrack)
+        end tell
+        return (afterCount as text) & fieldSep & (beforeCount as text) & sectionSep & trackLine
+        """
+        return try runPlaylistTrackMutation(
+            script,
+            env: ["APPLE_TOOLS_MUSIC_PLAYLIST": name, "APPLE_TOOLS_MUSIC_QUERY": query],
+            name: name, query: query,
+            verified: { after, before in after > before }
+        )
+    }
+
+    /// Remove the first track matching `query` from the named user playlist,
+    /// then verify the playlist's matching-track count dropped.
+    public static func playlistRemove(name: String, query: String, field: SearchField) throws -> PlaylistResult {
+        // applescript-runner: no-verifier — verified in-script via read-back
+        // (playlist track-count delta); Music has no external store to poll.
+        let script = """
+        set thePlaylist to do shell script "printenv APPLE_TOOLS_MUSIC_PLAYLIST"
+        set theQuery to do shell script "printenv APPLE_TOOLS_MUSIC_QUERY"
+        \(handlers)
+        set fieldSep to (character id 31)
+        set sectionSep to (character id 30)
+        tell application "Music"
+            set pls to (every user playlist whose name is thePlaylist)
+            if (count of pls) is 0 then error "NO_PLAYLIST"
+            set thePl to item 1 of pls
+            set matches to (every track of thePl whose \(matchClause(field)))
+            if (count of matches) is 0 then error "NO_MATCH"
+            set beforeCount to (count of matches)
+            set theTrack to item 1 of matches
+            set trackLine to my trackRecord(theTrack)
+            log "PHASE: pre-commit"
+            delete theTrack
+            log "PHASE: committed"
+            delay 0.3
+            set afterCount to (count of (every track of thePl whose \(matchClause(field))))
+        end tell
+        return (afterCount as text) & fieldSep & (beforeCount as text) & sectionSep & trackLine
+        """
+        return try runPlaylistTrackMutation(
+            script,
+            env: ["APPLE_TOOLS_MUSIC_PLAYLIST": name, "APPLE_TOOLS_MUSIC_QUERY": query],
+            name: name, query: query,
+            verified: { after, before in after < before }
+        )
+    }
+
+    /// Shared runner for playlist add/remove: run, map the NO_PLAYLIST/NO_MATCH
+    /// sentinels, and decide `verified` from the before/after counts the script
+    /// returns in its header (`after<FS>before<SS>trackLine`).
+    private static func runPlaylistTrackMutation(
+        _ script: String, env: [String: String], name: String, query: String,
+        verified: (_ after: Int, _ before: Int) -> Bool
+    ) throws -> PlaylistResult {
+        let out: String
+        do {
+            out = try runMutation(script, env: env)
+        } catch let MusicError.scriptFailed(detail) where detail.contains("NO_PLAYLIST") {
+            throw MusicError.notFound("no playlist named: \(name)")
+        } catch let MusicError.scriptFailed(detail) where detail.contains("NO_MATCH") {
+            throw MusicError.notFound("no track matches: \(query)")
+        }
+        let (head, track) = splitHeaderTrack(out)
+        let parts = head.components(separatedBy: fieldSep)
+        let after = Int(parts.first ?? "") ?? 0
+        let before = parts.count > 1 ? (Int(parts[1]) ?? 0) : 0
+        return PlaylistResult(verified: verified(after, before), already: false,
+                              playlistID: nil, track: track)
+    }
+
+    // MARK: - AirPlay
+
+    /// List AirPlay output devices Music can see, marking the active one(s).
+    public static func airplayList() throws -> [AirPlayDevice] {
+        let script = """
+        set fieldSep to (character id 31)
+        tell application "Music"
+            set devs to (every AirPlay device)
+            set rows to {}
+            repeat with d in devs
+                set nm to (name of d)
+                set sel to (selected of d as text)
+                set knd to ""
+                try
+                    set knd to (kind of d as text)
+                end try
+                set vol to ""
+                try
+                    set vol to (sound volume of d as text)
+                end try
+                set end of rows to nm & fieldSep & sel & fieldSep & knd & fieldSep & vol
+            end repeat
+            set AppleScript's text item delimiters to (character id 10)
+            return rows as text
+        end tell
+        """
+        let (out, err) = runAppleScript(script, [:], nil)
+        if let err = err { throw MusicError.scriptFailed(err) }
+        return out.components(separatedBy: "\n").compactMap { line in
+            let f = line.components(separatedBy: fieldSep)
+            guard f.count >= 2, !f[0].isEmpty else { return nil }
+            return AirPlayDevice(
+                name: f[0],
+                selected: f[1] == "true",
+                kind: f.count > 2 ? f[2] : "",
+                volume: (f.count > 3 && !f[3].isEmpty) ? Int(f[3]) : nil
+            )
+        }
+    }
+
+    /// Route Music's output to the AirPlay device named exactly `device`, then
+    /// read `selected` back. Exact-name match (not substring) so an ambiguous
+    /// name can't silently switch the wrong output.
+    public static func airplaySelect(_ device: String) throws -> (verified: Bool, name: String) {
+        // applescript-runner: no-verifier — verified in-script via read-back
+        // (device `selected` flag); Music has no external store to poll.
+        let script = """
+        set theDevice to do shell script "printenv APPLE_TOOLS_MUSIC_DEVICE"
+        set fieldSep to (character id 31)
+        tell application "Music"
+            set devs to (every AirPlay device whose name is theDevice)
+            if (count of devs) is 0 then error "NO_DEVICE"
+            set theDev to item 1 of devs
+            log "PHASE: pre-commit"
+            set current AirPlay devices to {theDev}
+            log "PHASE: committed"
+            delay 0.3
+            set sel to (selected of theDev as text)
+            set nm to (name of theDev)
+        end tell
+        return sel & fieldSep & nm
+        """
+        let out: String
+        do {
+            out = try runMutation(script, env: ["APPLE_TOOLS_MUSIC_DEVICE": device])
+        } catch let MusicError.scriptFailed(detail) where detail.contains("NO_DEVICE") {
+            throw MusicError.notFound("no AirPlay device named: \(device)")
+        }
+        let f = out.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: fieldSep)
+        return (verified: f.first == "true", name: f.count > 1 ? f[1] : device)
+    }
+
+    // MARK: - Curation helpers
+
+    /// Run a mutating script and surface any failure as ``MusicError``.
+    private static func runMutation(_ script: String, env: [String: String]) throws -> String {
+        let (out, err) = runAppleScript(script, env, nil)
+        if let err = err { throw MusicError.scriptFailed(err) }
+        return out
+    }
+
+    /// Split a `header<SS>trackLine` payload into the header string and the
+    /// parsed ``Track`` (nil when no track line was emitted).
+    private static func splitHeaderTrack(_ out: String) -> (header: String, track: Track?) {
+        let sections = out.components(separatedBy: sectionSep)
+        let header = (sections.first ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        var track: Track? = nil
+        if sections.count > 1 {
+            let line = sections[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !line.isEmpty { track = parseTrackRecord(line) }
+        }
+        return (header, track)
     }
 
     // MARK: - Search

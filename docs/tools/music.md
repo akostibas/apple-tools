@@ -1,16 +1,18 @@
 # music — Apple Music / Music.app
 
 Read and control the local Music.app: see what's playing, search the local
-library, rank it by play history, get "what to play now" picks, and drive
-playback (play/pause/skip/volume/shuffle/repeat/seek). Drives `application
-"Music"` via AppleScript — **zero auth** beyond the one-time Automation grant
-(no Apple Developer account, MusicKit token, or sign-in popup).
+library, rank it by play history, get "what to play now" picks, drive playback
+(play/pause/skip/volume/shuffle/repeat/seek), and curate (favorite, rate,
+playlists, AirPlay output). Drives `application "Music"` via AppleScript —
+**zero auth** beyond the one-time Automation grant (no Apple Developer account,
+MusicKit token, or sign-in popup).
 
-**Access:** read/write — reads (now-playing, search, stats, mix) are read-only;
-playback controls (play, pause, next, volume, …) mutate player state.
+**Access:** read/write — reads (now-playing, search, stats, mix, airplay-list)
+are read-only; playback controls, curation writes (love, rate, playlist edits),
+and airplay-select mutate player or library state.
 **Permissions:** Automation → Music (TCC). The first call triggers the system
 dialog; grant in System Settings → Privacy & Security → Automation.
-**Verified on:** macOS 26.5.2 (Tahoe), apple-tools 0.19.0 — see
+**Verified on:** macOS 26.5.2 (Tahoe), apple-tools 0.24.0 — see
 [COMPATIBILITY.md](./COMPATIBILITY.md) for the pinned commit and caveats. Music's
 AppleScript terminology drifts across macOS releases (Tahoe renamed `loved` to
 `favorited` and made transport commands settle asynchronously), so a newer macOS
@@ -75,6 +77,38 @@ with the resulting `state` and current `track`.
 - **repeat** — `--mode off|one|all`.
 - **seek** — `--position <seconds>` jumps within the current track.
 
+### Curation
+
+These edit your **library** (not just player state). Each one issues the write,
+then **reads the value back before returning** and reports `verified` — so a
+silent no-op or an iCloud/permission rejection shows up as `verified: false`
+rather than a false success. `ok: true` means "the command was issued";
+`verified` means "the change was there when I looked." (See *Shortcomings* for
+the iCloud-revert caveat: a read-back can pass and still revert on a later sync.)
+
+- **love** — `--state on|off` favorites/unfavorites a track. Targets the current
+  track, or the top library match for `--query` (+ optional `--field`). Returns
+  `loved` (the read-back state) and `verified`.
+- **rate** — `--stars 0-5` sets a star rating (0 clears it). Same targeting as
+  `love`. Returns `rating` (0–100), `stars`, and `verified`.
+- **playlist-create** — `--name <n>` makes a user playlist. **Idempotent by
+  name**: if one already exists it makes none and returns `already_existed: true`,
+  so repeated calls can't spawn duplicates.
+- **playlist-add** — `--name <n> --query <q>` adds the top matching **library**
+  track to the playlist; `verified` is the track-count going up. Only tracks
+  already in your library can be added (see *Shortcomings*).
+- **playlist-remove** — `--name <n> --query <q>` removes the first matching track
+  from the playlist; `verified` is the count going down.
+- **airplay-list** — list AirPlay output devices (`name`, `selected`, `kind`,
+  per-device `volume`). Read-only.
+- **airplay-select** — `--device <name>` (exact match) routes output to that
+  device; `verified` is the device's `selected` flag reading back true.
+
+> **Streams can't be favorited/rated.** The *current* track is often a `URL
+> track` (a pure Apple Music stream not in your library). Music silently ignores
+> `love`, and rejects `rate`, on those — both come back `verified: false`. Pass
+> `--query` to target a real library track instead.
+
 Run `apple-tools music --help` for the exact parameters of each action.
 
 ## Track fields
@@ -109,6 +143,13 @@ apple-tools music next
 apple-tools music volume --level 60
 apple-tools music shuffle --state on
 apple-tools music repeat --mode all
+apple-tools music love --state on
+apple-tools music rate --stars 5 --query "chariots of fire"
+apple-tools music playlist-create --name "Road Trip"
+apple-tools music playlist-add --name "Road Trip" --query "hey jude"
+apple-tools music playlist-remove --name "Road Trip" --query "hey jude"
+apple-tools music airplay-list
+apple-tools music airplay-select --device "Living Room"
 ```
 
 ## Shortcomings
@@ -122,10 +163,20 @@ apple-tools music repeat --mode all
 - **Library only — no catalog.** `search` matches the local library. It can't
   reach the Apple Music streaming catalog; a song you've never added won't
   appear. Catalog search needs MusicKit / the Apple Music API and its auth.
-- **No curation writes yet.** Playback control works, but rating/favoriting,
-  playlist edits, queue management, and AirPlay/EQ are a later phase (#56 Group
-  C). Reads never mutate; playback controls only change *player* state, never
-  your library.
+- **Curation writes can be reverted by iCloud.** `love`/`rate`/playlist edits
+  return `verified` from an *immediate* read-back, which catches silent no-ops
+  and permission rejections. But it only proves Music accepted the edit
+  *locally* — for iCloud-synced (`shared`/`subscription`) tracks the cloud is
+  authoritative and can revert the change on a later sync (seconds to minutes),
+  which a same-call read-back can't see. Local `file track`s are reliable.
+- **Playlists take library tracks only.** `playlist-add` can add a track that's
+  already in your library, but not a pure Apple Music catalog item you haven't
+  added — that needs a catalog add-to-library, an Apple Music API operation
+  (issue #55). Do the add in the Music.app UI, then `playlist-add` works on it.
+- **No Up Next / queue control, and no EQ.** Music's AppleScript dictionary
+  exposes *no* enqueue / "add to Up Next" verb at all (only `duplicate`/`add`
+  into playlists), so queue management isn't a deferral — it's a hard platform
+  ceiling here. EQ control is deferred (see *Future ideas*).
 - **Transport commands settle asynchronously.** Music applies `pause`/`play`/
   `next`/`seek` just after returning control, so the tool waits a brief moment
   before reading back the resulting `state`/`position`. Expect a ~0.3s pause on
@@ -145,22 +196,17 @@ Deferred, not built. Tracked under [issue #56](https://github.com/akostibas/appl
 (local, zero-auth) and [#55](https://github.com/akostibas/apple-tools/issues/55)
 (the Apple Music API engine).
 
-**Curation writes (zero-auth, but caveated).** These mutate the library rather
-than just player state, so each would need a read-back "did it persist?" check:
+**Shipped (#56 Group C).** `love`, `rate`, `playlist-create/add/remove`, and
+`airplay-list`/`airplay-select` are now built (see *Curation* above), each with
+the read-back verify these caveats called for. Two items from the original Group
+C did **not** ship:
 
-- **love / rate** — set favorite + star rating. Reliable for local `file
-  track`s, but iCloud is authoritative for `shared`/`subscription` tracks and
-  can silently revert the edit on next sync.
-- **playlist create / add / remove** — manage user playlists. Note the ceiling:
-  via AppleScript you can only add tracks *already in the library*. The
-  compelling case — "add that Apple Music song I just found to a playlist" —
-  needs adding a catalog item to the library first, which is an Apple Music API
-  operation (see below), not AppleScript. So playlist building is limited until
-  catalog-add exists. Some user playlists also silently reject AppleScript edits.
-- **queue / up-next** — add to Up Next; the AppleScript dictionary exposes this
-  only thinly.
-- **airplay** — list output devices and choose one; set per-device volume.
-- **eq** — enable/disable and select an equalizer preset.
+- **queue / up-next** — *not deferred, not possible here.* Music's AppleScript
+  dictionary has no enqueue / "add to Up Next" verb (verified against the sdef),
+  so there's nothing to build against. Would need the Apple Music API.
+- **eq** — enable/disable + select an equalizer preset. Deferrable and
+  low-priority; left out by request. Straightforward to add later (`current EQ
+  preset` / `EQ enabled`) if wanted.
 
 **Apple Music API engine (heavy — needs auth).** Everything the local world
 can't reach, behind an Apple Developer account, a signing key, and a one-time
