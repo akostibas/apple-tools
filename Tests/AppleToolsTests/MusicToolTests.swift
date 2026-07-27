@@ -529,6 +529,292 @@ final class MusicToolTests: XCTestCase {
         XCTAssertTrue(result.contains("position"))
     }
 
+    // MARK: - curation (Group C)
+
+    func testCurationActionsAreReadWrite() {
+        guard case .perAction(let map) = tool.accessPolicy else { return XCTFail() }
+        for action in ["love", "rate", "playlist-create", "playlist-add",
+                       "playlist-remove", "airplay-select"] {
+            XCTAssertEqual(map[action], .readWrite, "\(action) must be read/write")
+        }
+        XCTAssertEqual(map["airplay-list"], .read, "airplay-list is read-only")
+    }
+
+    // love
+
+    func testLoveOnSetsFavoritedAndVerifiesFromReadBack() {
+        var captured = ""
+        MusicIntegration.runAppleScript = { [ss] script, _, _ in
+            captured = script
+            // Read-back returns true → matches intent → verified.
+            return ("true\(ss)\(self.trackLine(name: "Song", loved: true))", nil)
+        }
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("love"),
+            "state": AnyCodable("on"),
+        ])
+        XCTAssertFalse(isError)
+        XCTAssertTrue(captured.contains("set favorited of theTrack to true"))
+        let obj = json(result)
+        XCTAssertEqual(obj["ok"] as? Bool, true)
+        XCTAssertEqual(obj["verified"] as? Bool, true)
+        XCTAssertEqual(obj["loved"] as? Bool, true)
+    }
+
+    func testLoveReportsUnverifiedWhenReadBackDisagrees() {
+        // iCloud/no-op revert: we asked for on, read-back says false.
+        MusicIntegration.runAppleScript = { [ss] _, _, _ in
+            ("false\(ss)\(self.trackLine(name: "Cloud Song"))", nil)
+        }
+        let (result, _) = tool.handle(params: [
+            "action": AnyCodable("love"),
+            "state": AnyCodable("on"),
+        ])
+        let obj = json(result)
+        XCTAssertEqual(obj["ok"] as? Bool, true, "the command was issued")
+        XCTAssertEqual(obj["verified"] as? Bool, false, "read-back didn't stick")
+    }
+
+    func testLoveWithQueryPassesEnvAndMatchesField() {
+        var env: [String: String] = [:]
+        var script = ""
+        MusicIntegration.runAppleScript = { [ss] s, e, _ in
+            script = s; env = e
+            return ("true\(ss)\(self.trackLine(name: "Match"))", nil)
+        }
+        _ = tool.handle(params: [
+            "action": AnyCodable("love"),
+            "state": AnyCodable("off"),
+            "query": AnyCodable("hey jude"),
+            "field": AnyCodable("title"),
+        ])
+        XCTAssertEqual(env["APPLE_TOOLS_MUSIC_QUERY"], "hey jude")
+        XCTAssertTrue(script.contains("name contains theQuery"))
+        XCTAssertTrue(script.contains("set favorited of theTrack to false"))
+    }
+
+    func testLoveNoCurrentTrackReturnsError() {
+        MusicIntegration.runAppleScript = { _, _, _ in ("", "error \"NO_CURRENT\"") }
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("love"),
+            "state": AnyCodable("on"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("nothing is playing"))
+    }
+
+    func testLoveRejectsBadState() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("love"),
+            "state": AnyCodable("perhaps"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("on or off"))
+    }
+
+    // rate
+
+    func testRateSetsRatingFromStarsAndVerifies() {
+        var captured = ""
+        MusicIntegration.runAppleScript = { [ss] script, _, _ in
+            captured = script
+            return ("100\(ss)\(self.trackLine(name: "Song", rating: 100))", nil)
+        }
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("rate"),
+            "stars": AnyCodable(5),
+        ])
+        XCTAssertFalse(isError)
+        XCTAssertTrue(captured.contains("set rating of theTrack to 100"))
+        let obj = json(result)
+        XCTAssertEqual(obj["verified"] as? Bool, true)
+        XCTAssertEqual(obj["rating"] as? Int, 100)
+        XCTAssertEqual(obj["stars"] as? Int, 5)
+    }
+
+    func testRateUnverifiedWhenStoredRatingDiffers() {
+        MusicIntegration.runAppleScript = { [ss] _, _, _ in
+            ("0\(ss)\(self.trackLine(name: "Song"))", nil)  // asked 4★ (80), stored 0
+        }
+        let (result, _) = tool.handle(params: [
+            "action": AnyCodable("rate"),
+            "stars": AnyCodable(4),
+        ])
+        XCTAssertEqual(json(result)["verified"] as? Bool, false)
+    }
+
+    func testRateRejectsOutOfRange() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("rate"),
+            "stars": AnyCodable(9),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("0–5"))
+    }
+
+    // playlist-create
+
+    func testPlaylistCreateMakesAndVerifies() {
+        var script = ""
+        MusicIntegration.runAppleScript = { [fs] s, env, _ in
+            script = s
+            XCTAssertEqual(env["APPLE_TOOLS_MUSIC_PLAYLIST"], "Road Trip")
+            return ("1\(fs)ABC123", nil)  // count=1, persistent id
+        }
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("playlist-create"),
+            "name": AnyCodable("Road Trip"),
+        ])
+        XCTAssertFalse(isError)
+        XCTAssertTrue(script.contains("make new user playlist"))
+        let obj = json(result)
+        XCTAssertEqual(obj["verified"] as? Bool, true)
+        XCTAssertEqual(obj["playlist_id"] as? String, "ABC123")
+        XCTAssertNil(obj["already_existed"])
+    }
+
+    func testPlaylistCreateIsIdempotentByName() {
+        MusicIntegration.runAppleScript = { [fs] _, _, _ in ("existed\(fs)OLD", nil) }
+        let (result, _) = tool.handle(params: [
+            "action": AnyCodable("playlist-create"),
+            "name": AnyCodable("Road Trip"),
+        ])
+        let obj = json(result)
+        XCTAssertEqual(obj["already_existed"] as? Bool, true)
+        XCTAssertEqual(obj["verified"] as? Bool, true)
+    }
+
+    func testPlaylistCreateRequiresName() {
+        let (result, isError) = tool.handle(params: ["action": AnyCodable("playlist-create")])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("name"))
+    }
+
+    // playlist-add / remove
+
+    func testPlaylistAddVerifiesCountIncrease() {
+        var script = ""
+        MusicIntegration.runAppleScript = { [fs, ss] s, env, _ in
+            script = s
+            XCTAssertEqual(env["APPLE_TOOLS_MUSIC_PLAYLIST"], "Road Trip")
+            XCTAssertEqual(env["APPLE_TOOLS_MUSIC_QUERY"], "hey jude")
+            // after=1, before=0 → added
+            return ("1\(fs)0\(ss)\(self.trackLine(name: "Hey Jude"))", nil)
+        }
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("playlist-add"),
+            "name": AnyCodable("Road Trip"),
+            "query": AnyCodable("hey jude"),
+        ])
+        XCTAssertFalse(isError)
+        XCTAssertTrue(script.contains("duplicate theTrack to thePl"))
+        let obj = json(result)
+        XCTAssertEqual(obj["verified"] as? Bool, true)
+        XCTAssertEqual((obj["track"] as? [String: Any])?["name"] as? String, "Hey Jude")
+    }
+
+    func testPlaylistAddUnverifiedWhenCountUnchanged() {
+        MusicIntegration.runAppleScript = { [fs, ss] _, _, _ in
+            ("0\(fs)0\(ss)\(self.trackLine(name: "X"))", nil)  // silent no-op
+        }
+        let (result, _) = tool.handle(params: [
+            "action": AnyCodable("playlist-add"),
+            "name": AnyCodable("P"),
+            "query": AnyCodable("x"),
+        ])
+        XCTAssertEqual(json(result)["verified"] as? Bool, false)
+    }
+
+    func testPlaylistRemoveVerifiesCountDecrease() {
+        var script = ""
+        MusicIntegration.runAppleScript = { [fs, ss] s, _, _ in
+            script = s
+            return ("0\(fs)1\(ss)\(self.trackLine(name: "Hey Jude"))", nil)  // after<before
+        }
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("playlist-remove"),
+            "name": AnyCodable("Road Trip"),
+            "query": AnyCodable("hey jude"),
+        ])
+        XCTAssertFalse(isError)
+        XCTAssertTrue(script.contains("delete theTrack"))
+        XCTAssertEqual(json(result)["verified"] as? Bool, true)
+    }
+
+    func testPlaylistAddMissingPlaylistReturnsError() {
+        MusicIntegration.runAppleScript = { _, _, _ in ("", "error \"NO_PLAYLIST\"") }
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("playlist-add"),
+            "name": AnyCodable("Nope"),
+            "query": AnyCodable("x"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("no playlist named"))
+    }
+
+    func testPlaylistAddRequiresQuery() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("playlist-add"),
+            "name": AnyCodable("P"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("query"))
+    }
+
+    // airplay
+
+    func testAirplayListParsesDevices() {
+        MusicIntegration.runAppleScript = { [fs] _, _, _ in
+            ([
+                "solitaire\(fs)true\(fs)computer\(fs)",
+                "Living Room\(fs)false\(fs)AirPlay device\(fs)50",
+            ].joined(separator: "\n"), nil)
+        }
+        let (result, isError) = tool.handle(params: ["action": AnyCodable("airplay-list")])
+        XCTAssertFalse(isError)
+        let obj = json(result)
+        XCTAssertEqual(obj["count"] as? Int, 2)
+        let devices = obj["devices"] as? [[String: Any]]
+        XCTAssertEqual(devices?[0]["name"] as? String, "solitaire")
+        XCTAssertEqual(devices?[0]["selected"] as? Bool, true)
+        XCTAssertNil(devices?[0]["volume"], "no volume reported → key absent")
+        XCTAssertEqual(devices?[1]["volume"] as? Int, 50)
+    }
+
+    func testAirplaySelectPassesDeviceAndVerifies() {
+        var script = ""
+        MusicIntegration.runAppleScript = { [fs] s, env, _ in
+            script = s
+            XCTAssertEqual(env["APPLE_TOOLS_MUSIC_DEVICE"], "Living Room")
+            return ("true\(fs)Living Room", nil)
+        }
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("airplay-select"),
+            "device": AnyCodable("Living Room"),
+        ])
+        XCTAssertFalse(isError)
+        XCTAssertTrue(script.contains("set current AirPlay devices to {theDev}"))
+        let obj = json(result)
+        XCTAssertEqual(obj["verified"] as? Bool, true)
+        XCTAssertEqual(obj["device"] as? String, "Living Room")
+    }
+
+    func testAirplaySelectUnknownDeviceReturnsError() {
+        MusicIntegration.runAppleScript = { _, _, _ in ("", "error \"NO_DEVICE\"") }
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("airplay-select"),
+            "device": AnyCodable("Ghost"),
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("no AirPlay device named"))
+    }
+
+    func testAirplaySelectRequiresDevice() {
+        let (result, isError) = tool.handle(params: ["action": AnyCodable("airplay-select")])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("device"))
+    }
+
     // MARK: - parsing
 
     func testParseTrackRecordRatingToStars() {
