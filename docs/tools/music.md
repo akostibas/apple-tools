@@ -176,7 +176,7 @@ apple-tools music airplay-select --device "Living Room"
 - **No Up Next / queue control, and no EQ.** Music's AppleScript dictionary
   exposes *no* enqueue / "add to Up Next" verb at all (only `duplicate`/`add`
   into playlists), so queue management isn't a deferral — it's a hard platform
-  ceiling here. EQ control is deferred (see *Future ideas*).
+  ceiling here. EQ control is a deliberate non-goal (not planned).
 - **Transport commands settle asynchronously.** Music applies `pause`/`play`/
   `next`/`seek` just after returning control, so the tool waits a brief moment
   before reading back the resulting `state`/`position`. Expect a ~0.3s pause on
@@ -204,9 +204,9 @@ C did **not** ship:
 - **queue / up-next** — *not deferred, not possible here.* Music's AppleScript
   dictionary has no enqueue / "add to Up Next" verb (verified against the sdef),
   so there's nothing to build against. Would need the Apple Music API.
-- **eq** — enable/disable + select an equalizer preset. Deferrable and
-  low-priority; left out by request. Straightforward to add later (`current EQ
-  preset` / `EQ enabled`) if wanted.
+
+**Deliberate non-goal.** EQ control (equalizer presets, enable/disable) is **not
+planned** — an intentional scope decision, not a backlog item.
 
 **Apple Music API engine (heavy — needs auth).** Everything the local world
 can't reach, behind an Apple Developer account, a signing key, and a one-time
