@@ -31,8 +31,12 @@ final class VoiceMemosIntegrationTests: XCTestCase {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         let sql = """
-            CREATE TABLE ZFOLDER (Z_PK INTEGER PRIMARY KEY, ZENCRYPTEDNAME VARCHAR);
-            INSERT INTO ZFOLDER (Z_PK, ZENCRYPTEDNAME) VALUES (1, 'Amelia');
+            CREATE TABLE ZFOLDER (Z_PK INTEGER PRIMARY KEY, ZENCRYPTEDNAME VARCHAR, ZRANK INTEGER);
+            -- Ranks are deliberately not in Z_PK or alphabetical order, so the
+            -- folder listing's ORDER BY ZRANK is actually exercised. 'Sundries'
+            -- holds no recordings.
+            INSERT INTO ZFOLDER (Z_PK, ZENCRYPTEDNAME, ZRANK) VALUES (1, 'Amelia', 1);
+            INSERT INTO ZFOLDER (Z_PK, ZENCRYPTEDNAME, ZRANK) VALUES (2, 'Sundries', 0);
             CREATE TABLE ZCLOUDRECORDING (
                 Z_PK INTEGER PRIMARY KEY, ZFOLDER INTEGER, ZDATE FLOAT, ZDURATION FLOAT,
                 ZENCRYPTEDTITLE VARCHAR, ZPATH VARCHAR, ZUNIQUEID VARCHAR, ZAUDIODIGEST BLOB
@@ -150,6 +154,45 @@ final class VoiceMemosIntegrationTests: XCTestCase {
         let fx = try makeFixture(); defer { cleanup(fx) }
         let recs = try XCTUnwrap(VoiceMemosIntegration.list(limit: 1, dbPath: fx.dbPath))
         XCTAssertEqual(recs.map { $0.id }, ["BBB"])
+    }
+
+    // MARK: - folders
+
+    func testListFoldersOrdersByRank() throws {
+        let fx = try makeFixture(); defer { cleanup(fx) }
+        let listing = try XCTUnwrap(VoiceMemosIntegration.listFolders(dbPath: fx.dbPath))
+        XCTAssertEqual(listing.folders.map { $0.name }, ["Sundries", "Amelia"],
+                       "ZRANK order, not Z_PK or alphabetical")
+    }
+
+    func testListFoldersCountsMatchFolderFilter() throws {
+        let fx = try makeFixture(); defer { cleanup(fx) }
+        let listing = try XCTUnwrap(VoiceMemosIntegration.listFolders(dbPath: fx.dbPath))
+        let amelia = try XCTUnwrap(listing.folders.first { $0.name == "Amelia" })
+        let viaFilter = try XCTUnwrap(VoiceMemosIntegration.list(folder: "Amelia", dbPath: fx.dbPath))
+        XCTAssertEqual(amelia.recordingCount, viaFilter.count)
+        XCTAssertEqual(amelia.recordingCount, 2)
+    }
+
+    func testListFoldersIncludesEmptyFolderWithZeroCount() throws {
+        let fx = try makeFixture(); defer { cleanup(fx) }
+        let listing = try XCTUnwrap(VoiceMemosIntegration.listFolders(dbPath: fx.dbPath))
+        let sundries = try XCTUnwrap(listing.folders.first { $0.name == "Sundries" })
+        XCTAssertEqual(sundries.recordingCount, 0, "an empty folder still appears")
+    }
+
+    func testListFoldersReportsTopLevelRecordings() throws {
+        let fx = try makeFixture(); defer { cleanup(fx) }
+        let listing = try XCTUnwrap(VoiceMemosIntegration.listFolders(dbPath: fx.dbPath))
+        XCTAssertEqual(listing.topLevelCount, 1, "beta sits outside any folder")
+        let filed = listing.folders.reduce(0) { $0 + $1.recordingCount }
+        let all = try XCTUnwrap(VoiceMemosIntegration.list(dbPath: fx.dbPath))
+        XCTAssertEqual(filed + listing.topLevelCount, all.count,
+                       "every recording is accounted for by a folder or the top-level bucket")
+    }
+
+    func testListFoldersWithBogusDBPathReturnsNil() {
+        XCTAssertNil(VoiceMemosIntegration.listFolders(dbPath: "/nonexistent/CloudRecordings.db"))
     }
 
     // MARK: - find

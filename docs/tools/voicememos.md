@@ -15,6 +15,9 @@ Recognition and **macOS 26+** (on-device `SpeechTranscriber`); on older systems
 - **list** — recent recordings, newest first. Defaults to the **last 30 days**;
   pass `--all` for the full history. Optional `--folder`, `--start-date` /
   `--end-date`, `--limit`.
+- **folders** — every folder in the app's own ordering, each with its recording
+  count, plus `top_level_count` for recordings filed outside any folder. Names
+  come back in the form `--folder` expects.
 - **search** — filter the **full** history by title substring (`--query`),
   `--folder`, and/or date range. No default window — the filters are the scope.
 - **export** — copy a recording's `.m4a` into the output dir and return its
@@ -32,6 +35,7 @@ Run `apple-tools voicememos --help` for the exact parameters of each action.
 ## Examples
 
 ```bash
+apple-tools voicememos folders
 apple-tools voicememos list --all --folder "Tours"
 apple-tools voicememos search --query "senior living" --start-date 2026-01-01
 apple-tools voicememos export --id "<RECORDING-ID>" --with-waveform

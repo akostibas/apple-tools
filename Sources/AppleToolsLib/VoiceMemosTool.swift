@@ -6,17 +6,18 @@ import Foundation
 /// Actions:
 ///   - list   — recent recordings (defaults to the last 30 days; `--all` for
 ///              the full history), newest first.
+///   - folders — the folders recordings can be filed under, with counts.
 ///   - search — filter the full history by title substring, folder, and/or
 ///              date range.
 ///   - export — copy a recording's `.m4a` into the output dir; returns its path.
 public struct VoiceMemosTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "voicememos",
-        description: "Read Apple Voice Memos (read-only). Actions: 'list' (recent recordings, last 30 days by default), 'search' (filter all recordings by title/folder/date), 'export' (copy a recording's .m4a audio into the local output dir; returns its path), 'transcribe' (on-device transcript of a recording; writes a .txt to the output dir and returns its path plus a preview; cached per recording; macOS 26+).",
+        description: "Read Apple Voice Memos (read-only). Actions: 'list' (recent recordings, last 30 days by default), 'folders' (the folders recordings are filed under, with recording counts), 'search' (filter all recordings by title/folder/date), 'export' (copy a recording's .m4a audio into the local output dir; returns its path), 'transcribe' (on-device transcript of a recording; writes a .txt to the output dir and returns its path plus a preview; cached per recording; macOS 26+).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "list, search, export, or transcribe"),
+                "action": PropertySchema(type_: "string", description: "list, folders, search, export, or transcribe"),
                 "query": PropertySchema(type_: "string", description: "Title keywords, case-insensitive (for search). Multi-word queries are AND-of-terms: every word must appear in the title, in any order.",
                     summary: "Title keywords (AND-of-terms)", actions: ["search"]),
                 "folder": PropertySchema(type_: "string", description: "Restrict to a named Voice Memos folder, case-insensitive (for list/search)",
@@ -48,6 +49,8 @@ public struct VoiceMemosTool: ProbeTool {
         actions: [
             ActionHelp(name: "list", summary: "List recent recordings (last 30 days by default), newest first",
                 example: "apple-tools voicememos list [--all] [--folder <name>] [--limit <n>]"),
+            ActionHelp(name: "folders", summary: "List folders with their recording counts",
+                example: "apple-tools voicememos folders"),
             ActionHelp(name: "search", summary: "Filter all recordings by title, folder, or date",
                 example: "apple-tools voicememos search [--query <text>] [--folder <name>] [--start_date <date>] ..."),
             ActionHelp(name: "export", summary: "Copy a recording's .m4a audio into the output dir",
@@ -61,6 +64,7 @@ public struct VoiceMemosTool: ProbeTool {
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
         "list":       .read,
+        "folders":    .read,
         "search":     .read,
         "export":     .read,
         // Reads audio + writes only our own derived transcript cache, never any
@@ -88,6 +92,8 @@ public struct VoiceMemosTool: ProbeTool {
         switch action {
         case "list":
             return listRecordings(params: params, isSearch: false)
+        case "folders":
+            return listFolders()
         case "search":
             return listRecordings(params: params, isSearch: true)
         case "export":
@@ -106,7 +112,7 @@ public struct VoiceMemosTool: ProbeTool {
             let inline = params?["inline"]?.value as? Bool ?? false
             return transcribe(id: id, locale: locale, refresh: refresh, timestamps: timestamps, inline: inline)
         default:
-            return ("unknown action: \(action) (use list, search, export, or transcribe)", true)
+            return ("unknown action: \(action) (use list, folders, search, export, or transcribe)", true)
         }
     }
 
@@ -156,6 +162,30 @@ public struct VoiceMemosTool: ProbeTool {
             response["window"] = "last_\(Self.defaultWindowDays)_days"
             response["note"] = "Showing the last \(Self.defaultWindowDays) days. Use all=true (or a date range) to see the full history."
         }
+        return (jsonEncode(response), false)
+    }
+
+    // MARK: - Folders
+
+    private func listFolders() -> (String, Bool) {
+        guard let listing = VoiceMemosIntegration.listFolders() else {
+            return ("could not read the Voice Memos database (missing, unreadable, or unrecognized schema).", true)
+        }
+
+        let entries = listing.folders.map { folder -> [String: Any] in
+            [
+                "name": folder.name,
+                "recording_count": folder.recordingCount,
+            ]
+        }
+        let response: [String: Any] = [
+            "count": entries.count,
+            "folders": entries,
+            // Recordings outside any folder aren't reachable via --folder, so
+            // name the bucket rather than leaving the shortfall unexplained.
+            "top_level_count": listing.topLevelCount,
+            "note": "Folder names work verbatim as the folder parameter on list/search. top_level_count is recordings filed outside any folder.",
+        ]
         return (jsonEncode(response), false)
     }
 

@@ -80,6 +80,30 @@ public enum VoiceMemosIntegration {
         }
     }
 
+    /// A Voice Memos folder and how many recordings are filed in it.
+    public struct Folder {
+        public let id: Int               // ZFOLDER.Z_PK
+        public let name: String          // ZENCRYPTEDNAME (plaintext)
+        public let recordingCount: Int
+
+        public init(id: Int, name: String, recordingCount: Int) {
+            self.id = id
+            self.name = name
+            self.recordingCount = recordingCount
+        }
+    }
+
+    /// Folders plus the recordings that sit outside any folder.
+    public struct FolderListing {
+        public let folders: [Folder]
+        public let topLevelCount: Int
+
+        public init(folders: [Folder], topLevelCount: Int) {
+            self.folders = folders
+            self.topLevelCount = topLevelCount
+        }
+    }
+
     // MARK: - Paths
 
     /// Directory holding the metadata store and audio files.
@@ -214,6 +238,61 @@ public enum VoiceMemosIntegration {
         return results
     }
 
+    /// List every folder in the user's own Voice Memos ordering (`ZRANK`), with
+    /// a recording count each, plus the count of recordings filed at top level.
+    /// Returns nil only when the database can't be opened or the schema doesn't
+    /// match — no folders at all returns an empty list.
+    ///
+    /// Counts use the same row predicates as `list`, so a folder's count matches
+    /// what `list(folder:)` will actually hand back.
+    public static func listFolders(dbPath: String? = nil) -> FolderListing? {
+        let path = dbPath ?? databasePath
+        guard let db = openDB(path: path) else { return nil }
+        defer { sqlite3_close(db) }
+        guard validateSchema(db) else { return nil }
+
+        let sql = """
+            SELECT f.Z_PK, f.ZENCRYPTEDNAME, COUNT(r.Z_PK)
+            FROM ZFOLDER f
+            LEFT JOIN ZCLOUDRECORDING r
+              ON r.ZFOLDER = f.Z_PK
+             AND r.ZUNIQUEID IS NOT NULL AND r.ZPATH IS NOT NULL
+            GROUP BY f.Z_PK, f.ZENCRYPTEDNAME, f.ZRANK
+            ORDER BY f.ZRANK
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else {
+            return nil
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var folders: [Folder] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let name = columnString(stmt, 1), !name.isEmpty else { continue }
+            folders.append(Folder(id: Int(sqlite3_column_int64(stmt, 0)),
+                                  name: name,
+                                  recordingCount: Int(sqlite3_column_int64(stmt, 2))))
+        }
+
+        return FolderListing(folders: folders, topLevelCount: topLevelCount(db) ?? 0)
+    }
+
+    /// Recordings with no folder. Separate query rather than a UNION so a folder
+    /// row and the top-level bucket never get confused for each other.
+    private static func topLevelCount(_ db: OpaquePointer) -> Int? {
+        let sql = """
+            SELECT COUNT(*) FROM ZCLOUDRECORDING
+            WHERE ZFOLDER IS NULL AND ZUNIQUEID IS NOT NULL AND ZPATH IS NOT NULL
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else {
+            return nil
+        }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return Int(sqlite3_column_int64(stmt, 0))
+    }
+
     /// Fetch a single recording by its `ZUNIQUEID`. Returns nil if not found or
     /// the database is unreadable.
     public static func find(id: String, dbPath: String? = nil) -> Recording? {
@@ -317,7 +396,7 @@ public enum VoiceMemosIntegration {
     private static func validateSchema(_ db: OpaquePointer) -> Bool {
         let expectations: [(table: String, columns: Set<String>)] = [
             ("ZCLOUDRECORDING", ["ZUNIQUEID", "ZENCRYPTEDTITLE", "ZDATE", "ZDURATION", "ZPATH", "ZFOLDER"]),
-            ("ZFOLDER", ["Z_PK", "ZENCRYPTEDNAME"]),
+            ("ZFOLDER", ["Z_PK", "ZENCRYPTEDNAME", "ZRANK"]),
         ]
         for (table, required) in expectations {
             var stmt: OpaquePointer?

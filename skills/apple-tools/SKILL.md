@@ -71,7 +71,8 @@ Allow/Deny dialog; off by default.)
   attachments), `fetch_attachment`.
 - **photos** — `search`, `fetch` (export a photo locally → path).
 - **voicememos** — `list` (recent recordings; last 30 days by default, `--all`
-  for the full history), `search` (by title/folder/date), `export` (copy a
+  for the full history), `folders` (folder names + recording counts; names feed
+  straight into `--folder`), `search` (by title/folder/date), `export` (copy a
   recording's `.m4a` locally → path), `transcribe` (on-device transcript of a
   recording; writes a `.txt` to the output dir and returns its path plus a short
   preview; cached per recording, so repeat calls are instant; `--timestamps`
