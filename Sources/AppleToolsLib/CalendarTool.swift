@@ -11,9 +11,9 @@ public struct CalendarTool: ProbeTool {
                 "action": PropertySchema(type_: "string", description: "calendars, list, create, or search"),
                 "calendar_name": PropertySchema(type_: "string", description: "Calendar name to filter by (for list, search) or create in (for create)",
                     summary: "Calendar to filter by (list/search) or create in (create)", actions: ["list", "search", "create"]),
-                "start": PropertySchema(type_: "string", description: "Start date/time, ISO 8601 e.g. 2026-04-15T09:00:00Z (required for create; for list defaults to start of today; for search defaults to 30 days ago)",
+                "start": PropertySchema(type_: "string", description: "Start date/time, ISO 8601 e.g. 2026-04-15T09:00:00Z (required for create; for list defaults to start of today; for search defaults to 30 days ago). For an all-day event pass a bare date, 2026-04-15.",
                     summary: "Start date/time, ISO 8601 (e.g. 2026-04-15T09:00:00Z)", actions: ["list", "search", "create"]),
-                "end": PropertySchema(type_: "string", description: "End date/time, ISO 8601 (required for create; for list defaults to end of start day; for search defaults to 30 days from now)",
+                "end": PropertySchema(type_: "string", description: "End date/time, ISO 8601 (required for create; for list defaults to end of start day; for search defaults to 30 days from now). For an all-day event pass a bare date — it is the LAST day, inclusive: 2026-04-15 to 2026-04-16 covers both days, and a one-day event ends on its own date.",
                     summary: "End date/time, ISO 8601", actions: ["list", "search", "create"]),
                 "title": PropertySchema(type_: "string", description: "Event title (required for create)",
                     summary: "Event title", actions: ["create"]),
@@ -21,6 +21,8 @@ public struct CalendarTool: ProbeTool {
                     summary: "Event location", actions: ["create"]),
                 "notes": PropertySchema(type_: "string", description: "Event notes (for create)",
                     summary: "Event notes", actions: ["create"]),
+                "all_day": PropertySchema(type_: "boolean", description: "For create: make a true all-day event (banner at the top of the day) instead of a timed one. Inferred when start and end are both bare dates, so pass it explicitly only to force the flag.",
+                    summary: "Create a true all-day event", actions: ["create"]),
                 "query": PropertySchema(type_: "string", description: "Search keywords, matched across title/notes/location/attendees (required for search). Multi-word queries are AND-of-terms: every word must appear in some field, in any order.",
                     summary: "Search keywords (AND-of-terms)", actions: ["search"]),
                 "dedupe_by_id": PropertySchema(type_: "boolean", description: "For list/search: collapse the same event appearing on multiple calendars into one row with a 'calendars' array (opt-in; default false)",
@@ -37,7 +39,7 @@ public struct CalendarTool: ProbeTool {
             ActionHelp(name: "search", summary: "Find events by keyword",
                 example: "apple-tools calendar search --query <text> [--start <d>] [--end <d>] [--calendar_name <n>] [--dedupe_by_id]", required: ["query"]),
             ActionHelp(name: "create", summary: "Add an event (does not send invites)",
-                example: "apple-tools calendar create --title <t> --start <d> --end <d> [--location <l>] [--notes <n>] [--calendar_name <n>]", required: ["title", "start", "end"]),
+                example: "apple-tools calendar create --title <t> --start <d> --end <d> [--all_day] [--location <l>] [--notes <n>] [--calendar_name <n>]", required: ["title", "start", "end"]),
         ]
     )
 
@@ -81,7 +83,8 @@ public struct CalendarTool: ProbeTool {
             let calendarName = params?["calendar_name"]?.value as? String
             let location = params?["location"]?.value as? String
             let notes = params?["notes"]?.value as? String
-            return createEvent(title: title, start: startStr, end: endStr, calendarName: calendarName, location: location, notes: notes)
+            let allDay = params?["all_day"]?.value as? Bool
+            return createEvent(title: title, start: startStr, end: endStr, allDay: allDay, calendarName: calendarName, location: location, notes: notes)
         case "search":
             guard let query = params?["query"]?.value as? String, !query.isEmpty else {
                 return ("missing required parameter: query", true)
@@ -165,11 +168,18 @@ public struct CalendarTool: ProbeTool {
 
     // MARK: - Create
 
-    private func createEvent(title: String, start: String, end: String, calendarName: String?, location: String?, notes: String?) -> (String, Bool) {
-        guard let startDate = CalendarIntegration.parseDate(start) else {
+    private func createEvent(title: String, start: String, end: String, allDay: Bool?, calendarName: String?, location: String?, notes: String?) -> (String, Bool) {
+        // Bare dates on both ends mean an all-day event; an explicit flag wins.
+        // All-day spans whole local days (end inclusive), so anchor to the day
+        // rather than the instant — EventKit takes the day containing endDate
+        // as the last day.
+        let isAllDay = allDay ?? (CalendarIntegration.isDateOnly(start) && CalendarIntegration.isDateOnly(end))
+        let parse = isAllDay ? CalendarIntegration.parseDay : CalendarIntegration.parseDate
+
+        guard let startDate = parse(start) else {
             return ("invalid start date format (use ISO 8601, e.g. 2026-04-15T09:00:00Z)", true)
         }
-        guard let endDate = CalendarIntegration.parseDate(end) else {
+        guard let endDate = parse(end) else {
             return ("invalid end date format", true)
         }
 
@@ -189,7 +199,8 @@ public struct CalendarTool: ProbeTool {
                 end: endDate,
                 calendar: calendar,
                 location: location,
-                notes: notes
+                notes: notes,
+                allDay: isAllDay
             )
         } catch let error as CalendarIntegration.CalendarError {
             return (error.description, true)
@@ -203,6 +214,7 @@ public struct CalendarTool: ProbeTool {
             "calendar": event.calendar.title,
             "start": DateFormatting.calendarTime(event.startDate, allDay: event.isAllDay),
             "end": DateFormatting.calendarTime(event.endDate, allDay: event.isAllDay),
+            "all_day": event.isAllDay,
         ]
         return (jsonString(response) ?? "{}", false)
     }

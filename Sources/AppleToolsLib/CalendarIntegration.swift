@@ -125,10 +125,12 @@ public enum CalendarIntegration {
         end: Date,
         calendar: EKCalendar?,
         location: String?,
-        notes: String?
+        notes: String?,
+        allDay: Bool = false
     ) throws -> EKEvent {
         let event = EKEvent(eventStore: store)
         event.title = title
+        event.isAllDay = allDay
         event.startDate = start
         event.endDate = end
         event.calendar = calendar ?? store.defaultCalendarForNewEvents
@@ -162,5 +164,24 @@ public enum CalendarIntegration {
             if let d = df.date(from: str) { return d }
         }
         return nil
+    }
+
+    /// Parse the leading `yyyy-MM-dd` of a date string as local midnight of that
+    /// calendar day. All-day events anchor to days, not instants: a UTC-suffixed
+    /// midnight (`2026-09-02T00:00:00Z`) would otherwise land on Sep 1 west of
+    /// Greenwich.
+    public static func parseDay(_ str: String) -> Date? {
+        let df = DateFormatter()
+        df.calendar = Calendar(identifier: .gregorian)
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = .current
+        df.dateFormat = "yyyy-MM-dd"
+        return df.date(from: String(str.prefix(10)))
+    }
+
+    /// True for a bare `yyyy-MM-dd` with no time component — the natural shape
+    /// for an all-day event, which `create` treats as one.
+    public static func isDateOnly(_ str: String) -> Bool {
+        str.count == 10 && parseDay(str) != nil
     }
 }

@@ -21,8 +21,10 @@ system dialog).
   location, and attendee names) within `start`/`end` (defaults to −30…+30 days);
   same `calendar_name` and `dedupe_by_id` options as `list`.
 - **create** — add an event: `title`, `start`, `end` required; optional
-  `calendar_name` (defaults to the default calendar), `location`, `notes`. Does
-  **not** send invites.
+  `calendar_name` (defaults to the default calendar), `location`, `notes`,
+  `all_day`. Does **not** send invites. Bare dates (`2026-08-26`) on both ends
+  make a true all-day event without the flag; `end` is then the **last day,
+  inclusive** — `2026-08-26` to `2026-08-27` covers both days.
 
 Each returned event carries `is_organizer`, `my_status` (the current user's
 RSVP), and an `attendees` array plus `organizer`.
@@ -52,10 +54,9 @@ apple-tools calendar create --title "Dentist" --start 2026-07-10T15:00:00Z --end
   `span: .thisEvent`; there is no recurrence-rule parameter, so every created
   event is one-off. (Reading a recurring series returns its individual
   occurrences.)
-- **No all-day, alarms, URL, or availability on create.** `createEvent` sets no
-  `isAllDay`, alarms, `url`, or availability, so every created event is a plain
-  timed event with none of these — even though read events surface `all_day`,
-  `url`, and RSVP fields.
+- **No alarms, URL, or availability on create.** `createEvent` sets no alarms,
+  `url`, or availability, so a created event carries none of these — even though
+  read events surface `url` and RSVP fields.
 - **Calendar names must match exactly (case-insensitively).** `resolveCalendars`
   filters on `title.lowercased() == name.lowercased()`, not a substring match, so
   a partial or misspelled `calendar_name` yields "no calendar found" rather than

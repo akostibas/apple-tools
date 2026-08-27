@@ -57,7 +57,8 @@ Allow/Deny dialog; off by default.)
 ## Tools
 
 - **calendar** — `calendars` (list calendars), `list` (events in a range),
-  `search` (by keyword), `create` (add event; does not send invites).
+  `search` (by keyword), `create` (add event; does not send invites — bare
+  `YYYY-MM-DD` start/end make it all-day, `end` being the inclusive last day).
 - **reminders** — `lists`, `search`, `get`, `create`, `create-list` (new list,
   optional `--account`; rejects duplicate names), `complete`.
 - **notes** — `folders`, `search`, `read`, `create`, `append`. Content is
