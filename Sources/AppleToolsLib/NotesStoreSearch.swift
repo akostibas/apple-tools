@@ -49,6 +49,18 @@ public enum NotesStoreSearch {
         if terms.isEmpty { terms = QueryTerms.tokenize(query, stopwords: []) }
         guard !terms.isEmpty else { return [] }
 
+        return scan(terms: terms, folder: folder, fullText: fullText)
+    }
+
+    /// Every note in `folder` (or the whole store), newest first. `search`
+    /// cannot answer this — it needs a term to match on — so enumeration, and
+    /// the change detection built on it, needs its own entry point.
+    public static func list(folder: String?) -> [Hit] {
+        return scan(terms: [], folder: folder, fullText: false)
+    }
+
+    /// Shared store read. No terms means no title filter, i.e. match everything.
+    private static func scan(terms: [String], folder: String?, fullText: Bool) -> [Hit] {
         var db: OpaquePointer?
         guard sqlite3_open_v2(NotesChecklistStore.storePath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
             sqlite3_close(db); return []

@@ -267,6 +267,21 @@ public enum NotesIntegration {
     /// reader; swappable in tests so the search path stays offline.
     public static var searchLookup: (_ query: String, _ folder: String?, _ fullText: Bool) -> [NotesStoreSearch.Hit] = NotesStoreSearch.search
 
+    /// Every note in a folder, newest first. `searchNotes` needs a term to
+    /// match on, so enumerating a folder — and diffing it for changes — has no
+    /// path through search.
+    public static func listNotes(folder: String?, offset: Int, limit: Int) throws -> (total: Int, notes: [NoteSummary]) {
+        let hits = listLookup(folder)
+        let page = hits.dropFirst(max(0, offset)).prefix(max(0, limit))
+        let notes = page.map {
+            NoteSummary(id: $0.id, title: $0.title, modified: $0.modified, snippet: $0.snippet)
+        }
+        return (hits.count, notes)
+    }
+
+    /// Test seam, as `searchLookup`.
+    public static var listLookup: (_ folder: String?) -> [NotesStoreSearch.Hit] = NotesStoreSearch.list
+
     // MARK: - Read
 
     public static func readNote(id: String?, title: String?) throws -> Note {
