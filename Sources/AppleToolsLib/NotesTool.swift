@@ -3,15 +3,15 @@ import Foundation
 public struct NotesTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "notes",
-        description: "Access Apple Notes. Actions: 'folders' (list folders), 'search' (find notes by keyword with pagination; matches titles by default, pass full_text=true to also search note bodies; a multi-word query is AND-of-terms — every word must appear, in any order, not only as an adjacent phrase; returns snippets only — use 'read' for full content), 'read' (get note content by ID or title), 'create' (new note in a folder), 'append' (add content to an existing note). Content is Markdown: headings (#, ##), **bold**, *italic*, ~~strike~~, `mono`, and -/1. lists round-trip. Apple Notes can't store links or checkboxes via this API, so [text](url) becomes 'text (url)' and '- [ ]' becomes a plain bullet on write; checkbox state on read may lag (read from the on-disk store).",
+        description: "Access Apple Notes. Actions: 'folders' (list folders), 'list' (every note in a folder, newest first, with modification times — use this to enumerate or to detect what changed; 'search' cannot, it needs a keyword), 'search' (find notes by keyword with pagination; matches titles by default, pass full_text=true to also search note bodies; a multi-word query is AND-of-terms — every word must appear, in any order, not only as an adjacent phrase; returns snippets only — use 'read' for full content), 'read' (get note content by ID or title), 'create' (new note in a folder), 'append' (add content to an existing note). Content is Markdown: headings (#, ##), **bold**, *italic*, ~~strike~~, `mono`, and -/1. lists round-trip. Apple Notes can't store links or checkboxes via this API, so [text](url) becomes 'text (url)' and '- [ ]' becomes a plain bullet on write; checkbox state on read may lag (read from the on-disk store).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "folders, search, read, create, or append"),
+                "action": PropertySchema(type_: "string", description: "folders, list, search, read, create, or append"),
                 "query": PropertySchema(type_: "string", description: "Search keyword(s) (required for search). Multiple words are AND-of-terms: every word must appear, in any order",
                     summary: "Search keyword", actions: ["search"]),
-                "folder": PropertySchema(type_: "string", description: "Folder name or '/'-separated path as reported by 'folders' (for search, create). On create, an existing folder is used as-is; a path with missing segments creates them nested",
-                    summary: "Folder name or '/'-separated path", actions: ["search", "create"]),
+                "folder": PropertySchema(type_: "string", description: "For list and search, the folder's own name as reported by 'folders' — the leaf, not its path; a '/'-separated path matches nothing. For create, a '/'-separated path: an existing folder is used as-is, and missing segments are created nested",
+                    summary: "Folder name (list, search) or '/'-separated path (create)", actions: ["list", "search", "create"]),
                 "id": PropertySchema(type_: "string", description: "Note ID, x-coredata:// URI (for read, append)",
                     summary: "Note ID (x-coredata:// URI)", actions: ["read", "append"]),
                 "title": PropertySchema(type_: "string", description: "Note title (for read, append, create)",
@@ -20,10 +20,10 @@ public struct NotesTool: ProbeTool {
                     summary: "Note body as Markdown", actions: ["create"]),
                 "text": PropertySchema(type_: "string", description: "Markdown to append (required for append)",
                     summary: "Markdown to append", actions: ["append"]),
-                "offset": PropertySchema(type_: "integer", description: "Pagination offset, 0-based (for search, default 0)",
-                    summary: "Pagination offset, 0-based (default 0)", actions: ["search"]),
-                "limit": PropertySchema(type_: "integer", description: "Max results to return (for search, default 20, max 50)",
-                    summary: "Max results (default 20, max 50)", actions: ["search"]),
+                "offset": PropertySchema(type_: "integer", description: "Pagination offset, 0-based (for list, search, default 0)",
+                    summary: "Pagination offset, 0-based (default 0)", actions: ["list", "search"]),
+                "limit": PropertySchema(type_: "integer", description: "Max results to return (for search, default 20, max 50; for list, default 50, max 500)",
+                    summary: "Max results (search: default 20, max 50; list: default 50, max 500)", actions: ["list", "search"]),
                 "full_text": PropertySchema(type_: "boolean", description: "Search note bodies, not just titles (for search, default false). Reads the on-disk store; results may lag a just-edited note by Notes' sync cadence.",
                     summary: "Search note bodies, not just titles (default false)", actions: ["search"]),
             ],
@@ -33,6 +33,8 @@ public struct NotesTool: ProbeTool {
         actions: [
             ActionHelp(name: "folders", summary: "List folders",
                 example: "apple-tools notes folders"),
+            ActionHelp(name: "list", summary: "List notes in a folder, newest first",
+                example: "apple-tools notes list [--folder <f>] [--limit <n>] [--offset <n>]"),
             ActionHelp(name: "search", summary: "Find notes by keyword (titles, or bodies with --full_text)",
                 example: "apple-tools notes search --query <text> [--folder <f>] [--full_text] [--limit <n>] [--offset <n>]", required: ["query"]),
             ActionHelp(name: "read", summary: "Get note content by ID or title",
@@ -46,6 +48,7 @@ public struct NotesTool: ProbeTool {
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
         "folders": .read,
+        "list":    .read,
         "search":  .read,
         "read":    .read,
         "create":  .readWrite,
@@ -62,6 +65,11 @@ public struct NotesTool: ProbeTool {
         switch action {
         case "folders":
             return listFolders()
+        case "list":
+            let folder = params?["folder"]?.value as? String
+            let offset = max(0, intParam(params, key: "offset") ?? 0)
+            let limit = clamp(intParam(params, key: "limit") ?? 50, min: 1, max: 500)
+            return list(folder: folder, offset: offset, limit: limit)
         case "search":
             guard let query = params?["query"]?.value as? String, !query.isEmpty else {
                 return ("missing required parameter: query", true)
@@ -96,7 +104,7 @@ public struct NotesTool: ProbeTool {
             }
             return append(id: id, title: title, text: text)
         default:
-            return ("unknown action: \(action) (use folders, search, read, create, or append)", true)
+            return ("unknown action: \(action) (use folders, list, search, read, create, or append)", true)
         }
     }
 
@@ -136,6 +144,37 @@ public struct NotesTool: ProbeTool {
         let response: [String: Any] = [
             "count": entries.count,
             "folders": entries,
+        ]
+        return (jsonEncode(response), false)
+    }
+
+    // MARK: - List
+
+    private func list(folder: String?, offset: Int, limit: Int) -> (String, Bool) {
+        let total: Int
+        let notes: [NotesIntegration.NoteSummary]
+        do {
+            (total, notes) = try NotesIntegration.listNotes(folder: folder, offset: offset, limit: limit)
+        } catch let error as NotesIntegration.NotesError {
+            return (error.description, true)
+        } catch {
+            return (error.localizedDescription, true)
+        }
+
+        let entries = notes.map { n -> [String: Any] in
+            return [
+                "id": n.id,
+                "title": n.title,
+                "modified": n.modified,
+            ]
+        }
+
+        let response: [String: Any] = [
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "count": entries.count,
+            "notes": entries,
         ]
         return (jsonEncode(response), false)
     }
