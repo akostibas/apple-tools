@@ -55,8 +55,11 @@ apple-tools reminders create --title "Renew passport" --list_name "Errands" --du
   sets no recurrence rule, alarm, priority, or URL. Priority is *reported* when
   present (high/medium/low) and `is_flagged` is *reported* on every reminder, but
   you can't *set* either here. Flag state has no public EventKit API, so it's read
-  from the Reminders SQLite DB (like subtasks) and degrades to `false` if that DB
-  is unreadable.
+  from the Reminders SQLite DB (like subtasks). If that DB is unreadable, the
+  reminders still come back but `is_flagged`, `parent`, and `subtasks` are
+  *omitted* and a `warnings` entry says why — they're never reported as absent.
+  `--flagged` is an error in that case, since the filter would otherwise return
+  a confident, empty, wrong answer.
 - **Search keyword matching is a plain substring on title + notes only.** No
   fuzzy/token matching and no matching on other fields; a `query` word that isn't
   a literal substring of the title or notes won't match. Notes in `search`

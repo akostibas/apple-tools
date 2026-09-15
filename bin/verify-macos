@@ -71,7 +71,8 @@ fi
 
 if [ ! -x "$binary" ]; then
   echo "verify-macos: building apple-tools first..." >&2
-  ( cd "$repo_root" && swift build ) >&2 || exit 2
+  # xcrun: the Xcode toolchain is the one that matches the installed SDK.
+  ( cd "$repo_root" && xcrun swift build ) >&2 || exit 2
 fi
 
 default_min_percent="$(jq -r '.min_percent // 50' "$config" 2>/dev/null)"

@@ -131,25 +131,39 @@ public enum IMessageIntegration {
             return (false, "messages access denied: \(err)")
         }
 
-        // Verify chat.db is actually readable.
-        var db: OpaquePointer?
-        let rc = sqlite3_open_v2(chatDBPath, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil)
-        defer { sqlite3_close(db) }
-        if rc != SQLITE_OK {
-            return (false, "cannot read chat.db — grant Full Disk Access to the probe in System Settings → Privacy & Security → Full Disk Access")
-        }
+        let db = checkChatDB()
+        if !db.ok { return db }
 
         return (true, "messages access granted, chat.db readable")
     }
 
     /// Lightweight preflight: only checks chat.db readability (no AppleScript).
     public static func preflightDBOnly() -> (ok: Bool, message: String) {
+        return checkChatDB()
+    }
+
+    /// Open chat.db *and* confirm the schema we query is still there.
+    ///
+    /// `sqlite3_open_v2` alone proves nothing — SQLite opens lazily, so a
+    /// reformatted or missing store still returns SQLITE_OK and only fails
+    /// later, one query at a time, looking like "no messages" (ADR-0004).
+    private static func checkChatDB() -> (ok: Bool, message: String) {
         var db: OpaquePointer?
         let rc = sqlite3_open_v2(chatDBPath, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil)
         defer { sqlite3_close(db) }
-        if rc != SQLITE_OK {
-            return (false, "cannot read chat.db — grant Full Disk Access")
+        guard rc == SQLITE_OK, let db = db else {
+            return (false, "cannot read chat.db — grant Full Disk Access to the probe in System Settings → Privacy & Security → Full Disk Access")
         }
+
+        guard SQLiteSchema.validate(db, expectations: [
+            ("message", ["ROWID", "guid", "text", "date", "is_from_me", "attributedBody"]),
+            ("handle", ["ROWID", "id"]),
+            ("chat", ["ROWID", "chat_identifier"]),
+            ("chat_message_join", ["chat_id", "message_id"]),
+        ]) else {
+            return (false, "chat.db is in an unrecognized format — the Messages schema has changed and message reading will not work")
+        }
+
         return (true, "chat.db readable")
     }
 

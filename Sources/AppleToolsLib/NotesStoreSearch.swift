@@ -21,8 +21,11 @@ import SQLite3
 ///    note created/renamed seconds ago may not match yet. Callers that need a
 ///    just-written note should `read` it by id/title (real-time), not search.
 ///  - **Read-only.** Never writes the store.
-///  - **Best-effort.** Returns [] on any store-access failure; encrypted notes
-///    (whose body won't gunzip) are skipped under `fullText` rather than failing.
+///  - **Fails loudly.** A store that can't be opened, or whose schema Apple has
+///    moved, throws — it is never reported as "nothing matched", which for a
+///    search tool is the most convincing possible way to be wrong (ADR-0004).
+///    Encrypted notes (whose body won't gunzip) are still skipped under
+///    `fullText` rather than failing: that's a per-note limit, not a store one.
 public enum NotesStoreSearch {
 
     /// One search hit. Mirrors NotesIntegration.NoteSummary's fields so the
@@ -35,9 +38,8 @@ public enum NotesStoreSearch {
     }
 
     /// Title substring search (default) or title+body (`fullText`), newest
-    /// first, case-insensitive. Returns [] on any store-access failure so the
-    /// caller degrades to an empty result rather than throwing.
-    public static func search(query: String, folder: String?, fullText: Bool) -> [Hit] {
+    /// first, case-insensitive. Throws if the store can't be read.
+    public static func search(query: String, folder: String?, fullText: Bool) throws -> [Hit] {
         guard !query.isEmpty else { return [] }
 
         // AND-of-terms: a multi-word query matches when every word appears
@@ -49,23 +51,45 @@ public enum NotesStoreSearch {
         if terms.isEmpty { terms = QueryTerms.tokenize(query, stopwords: []) }
         guard !terms.isEmpty else { return [] }
 
-        return scan(terms: terms, folder: folder, fullText: fullText)
+        return try scan(terms: terms, folder: folder, fullText: fullText)
     }
 
     /// Every note in `folder` (or the whole store), newest first. `search`
     /// cannot answer this — it needs a term to match on — so enumeration, and
     /// the change detection built on it, needs its own entry point.
-    public static func list(folder: String?) -> [Hit] {
-        return scan(terms: [], folder: folder, fullText: false)
+    public static func list(folder: String?) throws -> [Hit] {
+        return try scan(terms: [], folder: folder, fullText: false)
+    }
+
+    /// Columns this reader cannot work without. `ZDATA` only matters under
+    /// `fullText`; requiring it for a title scan would strand title search on a
+    /// change that never touched it.
+    static func expectations(fullText: Bool) -> [(table: String, columns: Set<String>)] {
+        return [
+            ("ZICCLOUDSYNCINGOBJECT",
+             ["Z_PK", "ZTITLE1", "ZTITLE2", "ZMODIFICATIONDATE1", "ZMARKEDFORDELETION", "ZNOTEDATA", "ZFOLDER"]),
+            ("ZICNOTEDATA", fullText ? ["Z_PK", "ZDATA"] : ["Z_PK"]),
+        ]
     }
 
     /// Shared store read. No terms means no title filter, i.e. match everything.
-    private static func scan(terms: [String], folder: String?, fullText: Bool) -> [Hit] {
+    private static func scan(terms: [String], folder: String?, fullText: Bool) throws -> [Hit] {
+        let storePath = NotesChecklistStore.storePath
+        guard FileManager.default.isReadableFile(atPath: storePath) else {
+            throw NotesIntegration.NotesError.storeUnreadable(
+                "the Notes store is not readable at \(storePath) — grant Full Disk Access in System Settings → Privacy & Security")
+        }
+
         var db: OpaquePointer?
-        guard sqlite3_open_v2(NotesChecklistStore.storePath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
-            sqlite3_close(db); return []
+        guard sqlite3_open_v2(storePath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db = db else {
+            sqlite3_close(db)
+            throw NotesIntegration.NotesError.storeUnreadable("the Notes store could not be opened for reading")
         }
         defer { sqlite3_close(db) }
+
+        guard SQLiteSchema.validate(db, expectations: expectations(fullText: fullText)) else {
+            throw NotesIntegration.NotesError.storeUnreadable("the Notes store is in an unrecognized format")
+        }
 
         let storeUUID = persistentStoreUUID(db)
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)  // SQLITE_TRANSIENT
@@ -88,7 +112,10 @@ public enum NotesStoreSearch {
         if folder != nil { sql += " AND f.ZTITLE2 = ?" }
 
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NotesIntegration.NotesError.storeUnreadable(
+                "the Notes store could not be queried: \(String(cString: sqlite3_errmsg(db)))")
+        }
         defer { sqlite3_finalize(stmt) }
 
         var bindIdx: Int32 = 1

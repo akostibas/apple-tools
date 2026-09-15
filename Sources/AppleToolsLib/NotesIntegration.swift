@@ -29,12 +29,16 @@ public enum NotesIntegration {
         case scriptFailed(String)
         case notFound
         case parseFailure(String)
+        /// The on-disk store could not be read. Distinct from "nothing matched"
+        /// on purpose: a search that answers empty to every query looks healthy.
+        case storeUnreadable(String)
 
         public var description: String {
             switch self {
             case .scriptFailed(let msg): return msg
             case .notFound: return "note not found"
             case .parseFailure(let msg): return msg
+            case .storeUnreadable(let msg): return "notes search is unavailable: \(msg)"
             }
         }
     }
@@ -253,7 +257,7 @@ public enum NotesIntegration {
     /// problem. `total` is the full match count; pagination is applied here so
     /// the output schema is unchanged.
     public static func searchNotes(query: String, folder: String?, offset: Int, limit: Int, fullText: Bool = false) throws -> (total: Int, notes: [NoteSummary]) {
-        let hits = searchLookup(query, folder, fullText)
+        let hits = try searchLookup(query, folder, fullText)
         // Clamp: dropFirst/prefix trap on negative counts, and library callers
         // bypass NotesTool's parameter validation.
         let page = hits.dropFirst(max(0, offset)).prefix(max(0, limit))
@@ -265,13 +269,13 @@ public enum NotesIntegration {
 
     /// Test seam: store-backed search lookup. Defaults to the on-disk store
     /// reader; swappable in tests so the search path stays offline.
-    public static var searchLookup: (_ query: String, _ folder: String?, _ fullText: Bool) -> [NotesStoreSearch.Hit] = NotesStoreSearch.search
+    public static var searchLookup: (_ query: String, _ folder: String?, _ fullText: Bool) throws -> [NotesStoreSearch.Hit] = NotesStoreSearch.search
 
     /// Every note in a folder, newest first. `searchNotes` needs a term to
     /// match on, so enumerating a folder — and diffing it for changes — has no
     /// path through search.
     public static func listNotes(folder: String?, offset: Int, limit: Int) throws -> (total: Int, notes: [NoteSummary]) {
-        let hits = listLookup(folder)
+        let hits = try listLookup(folder)
         let page = hits.dropFirst(max(0, offset)).prefix(max(0, limit))
         let notes = page.map {
             NoteSummary(id: $0.id, title: $0.title, modified: $0.modified, snippet: $0.snippet)
@@ -280,7 +284,7 @@ public enum NotesIntegration {
     }
 
     /// Test seam, as `searchLookup`.
-    public static var listLookup: (_ folder: String?) -> [NotesStoreSearch.Hit] = NotesStoreSearch.list
+    public static var listLookup: (_ folder: String?) throws -> [NotesStoreSearch.Hit] = NotesStoreSearch.list
 
     // MARK: - Read
 
