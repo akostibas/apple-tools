@@ -22,6 +22,15 @@ row with the current `apple-tools --version`, `git rev-parse --short HEAD`,
 Every registered tool must have a row here (enforced by
 `CompatibilityDocTests`); a tool with no OS dependency is marked `n/a`.
 
+**This table is read by automation.** `bin/macos-compat-status` runs at session
+start and compares the running macOS build against the builds recorded below,
+speaking up when a tool has no row for the OS you're actually on. It is
+deliberately a notice and not a test: a test would fail every commit after an
+upgrade, on something that isn't a code defect, and would be silenced within a
+day. It stays quiet unless a row is genuinely stale — rows marked `n/a` or
+`not recorded` never trigger it on their own, or it would fire every session
+and stop being read.
+
 | Tool | apple-tools | Commit | macOS | Verified | Notes |
 |------|-------------|--------|-------|----------|-------|
 | calendar | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `calendars` and `list` over a real multi-calendar setup (CalDAV + shared). No drift from 26. |

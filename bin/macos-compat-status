@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+#
+# macos-compat-status — tell the agent when this macOS build has no verification
+# record, so the next session knows to re-check rather than assume.
+#
+# apple-tools reads Apple's private app data stores. Apple moves them between
+# releases and the failures are SILENT: a tool returns an empty result with a
+# success exit code, which is indistinguishable from "you genuinely have none."
+# macOS 27 broke Podcasts and Photos this way and both reported healthy; it
+# surfaced only because someone ran a sweep by hand after upgrading.
+#
+# So this compares the running macOS build against the builds recorded in
+# docs/tools/COMPATIBILITY.md and speaks up when they don't match. It is
+# deliberately NOT a test: a test would fail every commit after an OS upgrade,
+# on something that is not a code defect, and would be suppressed within a day.
+#
+# Wired into the Claude Code SessionStart hook (.claude/settings.json).
+#
+# Usage:
+#   macos-compat-status            # repo containing this script
+#   macos-compat-status <doc-path> # a specific matrix (used for testing)
+#
+# Fail-quiet: anything missing or unparseable yields NO output and a clean
+# exit, so it can never disrupt session start.
+
+set -uo pipefail
+
+command -v sw_vers >/dev/null 2>&1 || exit 0
+
+doc="${1:-}"
+if [ -z "$doc" ]; then
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 0
+  doc="$script_dir/../docs/tools/COMPATIBILITY.md"
+fi
+[ -r "$doc" ] || exit 0
+
+product="$(sw_vers -productVersion 2>/dev/null)" || exit 0
+build="$(sw_vers -buildVersion 2>/dev/null)" || exit 0
+[ -n "$product" ] && [ -n "$build" ] || exit 0
+
+# Matrix rows are `| tool | version | commit | macOS | verified | notes |`.
+# Field 5 is the macOS cell because a leading pipe makes field 1 empty.
+# `n/a` marks a tool with no OS dependency; it can never go stale.
+#
+# Only a row recorded against a DIFFERENT build triggers this hook. A row that
+# was never recorded at all (open_uri, which we decline to exercise because it
+# opens a real URI) is reported alongside, but must not trigger on its own —
+# otherwise the hook fires every session forever and stops being read.
+stale="$(awk -F'|' -v build="$build" '
+  /^\|/ {
+    name = $2; os = $5
+    gsub(/^[ \t]+|[ \t]+$/, "", name)
+    gsub(/^[ \t]+|[ \t]+$/, "", os)
+    if (name == "" || name == "Tool" || name ~ /^-+$/) next
+    if (os == "n/a" || os == "not recorded" || os == "—" || os == "") next
+    if (index(os, build) > 0) next
+    printf "%s%s", (n++ ? ", " : ""), name
+  }
+' "$doc" 2>/dev/null)" || exit 0
+
+[ -n "$stale" ] || exit 0
+
+never="$(awk -F'|' '
+  /^\|/ {
+    name = $2; os = $5
+    gsub(/^[ \t]+|[ \t]+$/, "", name)
+    gsub(/^[ \t]+|[ \t]+$/, "", os)
+    if (name == "" || name == "Tool" || name ~ /^-+$/) next
+    if (os == "not recorded" || os == "—" || os == "") {
+      printf "%s%s", (n++ ? ", " : ""), name
+    }
+  }
+' "$doc" 2>/dev/null)"
+
+recorded="$(awk -F'|' '
+  /^\|/ {
+    os = $5
+    gsub(/^[ \t]+|[ \t]+$/, "", os)
+    if (os == "" || os == "macOS" || os == "n/a" || os ~ /^-+$/) next
+    if (os == "not recorded" || os == "—") next
+    if (!(os in seen)) { seen[os] = 1; printf "%s%s", (n++ ? ", " : ""), os }
+  }
+' "$doc" 2>/dev/null)"
+[ -n "$recorded" ] || recorded="nothing"
+
+cat <<EOF
+⚠️  macOS $product ($build) has no verification record for some tools.
+
+  Recorded in docs/tools/COMPATIBILITY.md: $recorded
+  Unverified on this build: $stale
+EOF
+
+[ -n "$never" ] && echo "  Never verified on any build: $never"
+
+cat <<EOF
+
+Agent: do not assume these still work. apple-tools reads Apple's private data
+stores, and when Apple moves one the tool usually returns an EMPTY result with
+a success exit code rather than an error — so a green 'apple-tools permissions'
+proves nothing, and a caller cannot tell "you have none" from "we could not
+read it". Offer to exercise the unverified tools against real data and record
+the outcome in the matrix. Where a tool returns zero results, confirm with the
+user whether the app itself shows data before recording it as working.
+EOF
+
+exit 0
