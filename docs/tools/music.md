@@ -12,7 +12,8 @@ are read-only; playback controls, curation writes (love, rate, playlist edits),
 and airplay-select mutate player or library state.
 **Permissions:** Automation → Music (TCC). The first call triggers the system
 dialog; grant in System Settings → Privacy & Security → Automation.
-**Verified on:** macOS 26.5.2 (Tahoe), apple-tools 0.24.0 — see
+**Verified on:** macOS 27.0 (26A428), apple-tools 0.26.1 (reads only — `now-playing`,
+`search`, `stats`, `mix`; playback control not re-exercised on 27) — see
 [COMPATIBILITY.md](./COMPATIBILITY.md) for the pinned commit and caveats. Music's
 AppleScript terminology drifts across macOS releases (Tahoe renamed `loved` to
 `favorited` and made transport commands settle asynchronously), so a newer macOS

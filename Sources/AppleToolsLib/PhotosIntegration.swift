@@ -161,18 +161,65 @@ public enum PhotosIntegration {
 
     // MARK: - PSI (ML label) search
 
-    /// Search Photos using the ML label index in psi.sqlite. Returns nil when
-    /// the database is unavailable, the schema doesn't match, or there are
-    /// no label matches — the caller should fall back to other modes.
-    public static func searchByPSI(query: String, start: Date?, end: Date?, limit: Int) -> PSIResult? {
-        var db: OpaquePointer?
-        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
-        guard sqlite3_open_v2(psiDatabasePath, &db, flags, nil) == SQLITE_OK, let db = db else {
-            return nil
-        }
-        defer { sqlite3_close(db) }
+    /// Why a content search produced no results. "The index says no photos of
+    /// dogs" and "there is no index" look identical to a caller unless we say
+    /// which — and the second must never be reported as the first.
+    public enum ContentSearchOutcome {
+        case matched(PSIResult)
+        /// Index read successfully; the library genuinely has no such photos.
+        case noMatch
+        /// Could not consult an index at all. Carries a human-readable reason.
+        case unavailable(String)
+    }
 
-        guard validatePSISchema(db) else { return nil }
+    /// Search Photos by ML label, probing for whichever index this macOS ships:
+    /// `psi.sqlite` through macOS 26, `leo.sqlite` from 27. Probed by presence
+    /// and schema rather than by OS version, because Apple moves these stores in
+    /// point releases and an iCloud sync can migrate one under an older OS
+    /// (ADR-0004).
+    public static func searchByContentLabels(query: String, start: Date?, end: Date?, limit: Int) -> ContentSearchOutcome {
+        let fm = FileManager.default
+        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
+
+        if fm.isReadableFile(atPath: psiDatabasePath) {
+            var db: OpaquePointer?
+            guard sqlite3_open_v2(psiDatabasePath, &db, flags, nil) == SQLITE_OK, let db = db else {
+                return .unavailable("the Photos search index could not be opened for reading")
+            }
+            defer { sqlite3_close(db) }
+
+            guard validatePSISchema(db) else {
+                return .unavailable("the Photos search index is in an unrecognized format")
+            }
+            return searchPSI(db: db, query: query, start: start, end: end, limit: limit)
+        }
+
+        if fm.isReadableFile(atPath: leoDatabasePath) {
+            var db: OpaquePointer?
+            guard sqlite3_open_v2(leoDatabasePath, &db, flags, nil) == SQLITE_OK, let db = db else {
+                return .unavailable("the Photos search index could not be opened for reading")
+            }
+            defer { sqlite3_close(db) }
+
+            guard validateLeoSchema(db) else {
+                return .unavailable("the Photos search index is in an unrecognized format")
+            }
+            return searchLeo(db: db, query: query, start: start, end: end, limit: limit)
+        }
+
+        return .unavailable("the Photos search index is not present on this Mac")
+    }
+
+    /// Legacy entry point: collapses the outcome back to an optional. Prefer
+    /// `searchByContentLabels` — this cannot distinguish empty from broken.
+    public static func searchByPSI(query: String, start: Date?, end: Date?, limit: Int) -> PSIResult? {
+        if case .matched(let result) = searchByContentLabels(query: query, start: start, end: end, limit: limit) {
+            return result
+        }
+        return nil
+    }
+
+    private static func searchPSI(db: OpaquePointer, query: String, start: Date?, end: Date?, limit: Int) -> ContentSearchOutcome {
 
         // Match labels in categories that cover people, keywords, and ML content.
         // Escape LIKE wildcards so a query like `100%` matches literally rather
@@ -188,7 +235,9 @@ public enum PhotosIntegration {
             """
 
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, groupSQL, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_prepare_v2(db, groupSQL, -1, &stmt, nil) == SQLITE_OK else {
+            return .unavailable("the Photos search index could not be queried")
+        }
         defer { sqlite3_finalize(stmt) }
 
         sqlite3_bind_text(stmt, 1, searchPattern, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
@@ -205,7 +254,8 @@ public enum PhotosIntegration {
             }
         }
 
-        if groupIDs.isEmpty { return nil }
+        // Index consulted fine, no label matched: a real "no such photos".
+        if groupIDs.isEmpty { return .noMatch }
 
         let placeholders = groupIDs.map { _ in "?" }.joined(separator: ",")
 
@@ -227,7 +277,9 @@ public enum PhotosIntegration {
             """
 
         var assetStmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, assetSQL, -1, &assetStmt, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_prepare_v2(db, assetSQL, -1, &assetStmt, nil) == SQLITE_OK else {
+            return .unavailable("the Photos search index could not be queried")
+        }
         defer { sqlite3_finalize(assetStmt) }
 
         var bindIdx: Int32 = 1
@@ -245,7 +297,17 @@ public enum PhotosIntegration {
             }
         }
 
-        if localIdentifiers.isEmpty { return nil }
+        return resolveAssets(localIdentifiers: localIdentifiers, matchedLabels: matchedLabels,
+                             start: start, end: end, limit: limit)
+    }
+
+    /// Turn index-derived UUIDs into assets. Date filtering, newest-first
+    /// ordering and the limit all happen HERE, against PhotoKit's real
+    /// `creationDate` — never against an index's own timestamp column, which in
+    /// both psi and leo is an indexing time, not a capture time (issue #32).
+    private static func resolveAssets(localIdentifiers: [String], matchedLabels: [String],
+                                      start: Date?, end: Date?, limit: Int) -> ContentSearchOutcome {
+        if localIdentifiers.isEmpty { return .noMatch }
 
         let fetchOptions = PHFetchOptions()
         var predicates: [NSPredicate] = [NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)]
@@ -262,7 +324,105 @@ public enum PhotosIntegration {
         fetchOptions.fetchLimit = limit
 
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: localIdentifiers, options: fetchOptions)
-        return PSIResult(assets: assets, matchedLabels: matchedLabels)
+        return .matched(PSIResult(assets: assets, matchedLabels: matchedLabels))
+    }
+
+    // MARK: - leo (macOS 27 ML label index)
+
+    /// Scene labels in `lexicon`: category 4000, keyed `scene/N`, canonical term
+    /// (type 1) plus synonyms (type 2) sharing one lexeme_id — "Dog"/"Dogs"/"Doggy".
+    ///
+    /// Deliberately NOT 4120, which is OCR'd text from inside the image. Mixing
+    /// it in means "dog" matches a billboard reading DOG, and "the" matches half
+    /// the library — that is a text search wearing a content search's label.
+    /// Worth having as its own match mode; it is not this one.
+    private static let leoLabelCategories = "4000"
+
+    /// macOS 27's index inverts psi's layout: instead of a `ga` join table,
+    /// each item carries a packed list of the lexeme ids that describe it.
+    private static func searchLeo(db: OpaquePointer, query: String, start: Date?, end: Date?, limit: Int) -> ContentSearchOutcome {
+        guard let match = leoMatches(db: db, query: query) else {
+            return .unavailable("the Photos search index could not be queried")
+        }
+        return resolveAssets(localIdentifiers: match.identifiers, matchedLabels: match.labels,
+                             start: start, end: end, limit: limit)
+    }
+
+    /// The index half of a leo search: query in, asset UUIDs out. Split from
+    /// PhotoKit resolution so the schema assumptions can be tested against a
+    /// fixture. Returns nil only when the index itself could not be queried —
+    /// an empty result means the library genuinely has no such photos.
+    static func leoMatches(db: OpaquePointer, query: String) -> (identifiers: [String], labels: [String])? {
+        let searchPattern = "%\(SQLEscaping.escapeLIKE(query.lowercased()))%"
+        let lexiconSQL = """
+            SELECT DISTINCT lexeme_id, content FROM lexicon
+            WHERE content LIKE ?1 ESCAPE '\\' AND category IN (\(leoLabelCategories))
+            ORDER BY
+                CASE WHEN length(content) = length(?2) THEN 0 ELSE 1 END,
+                length(content)
+            LIMIT 20
+            """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, lexiconSQL, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, searchPattern, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        sqlite3_bind_text(stmt, 2, query.lowercased(), -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+
+        var wanted = Set<UInt32>()
+        var matchedLabels: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let lexemeID = sqlite3_column_int64(stmt, 0)
+            guard lexemeID >= 0, lexemeID <= Int64(UInt32.max) else { continue }
+            wanted.insert(UInt32(lexemeID))
+            if let cStr = sqlite3_column_text(stmt, 1) {
+                matchedLabels.append(String(cString: cStr))
+            }
+        }
+
+        // Index consulted fine, no label matched: a real "no such photos".
+        if wanted.isEmpty { return ([], []) }
+
+        var itemStmt: OpaquePointer?
+        let itemSQL = "SELECT identifier, lexeme_ids FROM items WHERE lexeme_ids IS NOT NULL"
+        guard sqlite3_prepare_v2(db, itemSQL, -1, &itemStmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(itemStmt) }
+
+        // ponytail: full scan, decoding each item's blob. There is no index on
+        // blob contents, so SQL cannot do this for us. ~2k items here; if a
+        // library ever makes this slow, cache lexeme_id -> identifiers.
+        var localIdentifiers: [String] = []
+        while sqlite3_step(itemStmt) == SQLITE_ROW {
+            guard let idStr = sqlite3_column_text(itemStmt, 0) else { continue }
+            guard let blob = sqlite3_column_blob(itemStmt, 1) else { continue }
+            let byteCount = Int(sqlite3_column_bytes(itemStmt, 1))
+            guard byteCount >= 4 else { continue }
+
+            if lexemeBlob(blob, byteCount: byteCount, intersects: wanted) {
+                localIdentifiers.append("\(String(cString: idStr))/L0/001")
+            }
+        }
+
+        return (localIdentifiers, matchedLabels)
+    }
+
+    /// `items.lexeme_ids` is a packed array of little-endian UInt32 lexeme ids.
+    /// Read unaligned: SQLite makes no alignment promise about blob storage.
+    private static func lexemeBlob(_ blob: UnsafeRawPointer, byteCount: Int, intersects wanted: Set<UInt32>) -> Bool {
+        for offset in stride(from: 0, to: byteCount - (byteCount % 4), by: 4) {
+            let id = UInt32(littleEndian: blob.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
+            if wanted.contains(id) { return true }
+        }
+        return false
+    }
+
+    /// Validate leo.sqlite's shape before trusting it.
+    static func validateLeoSchema(_ db: OpaquePointer) -> Bool {
+        validateSchema(db, expectations: [
+            ("lexicon", ["lexeme_id", "category", "content"]),
+            ("items", ["identifier", "lexeme_ids"]),
+        ])
     }
 
     private static var psiDatabasePath: String {
@@ -270,14 +430,43 @@ public enum PhotosIntegration {
         return "\(home)/Pictures/Photos Library.photoslibrary/database/search/psi.sqlite"
     }
 
+    /// Non-nil when keyword/content search cannot work on this Mac, describing
+    /// why. Permissions can be fully granted and this still be broken.
+    public static func contentSearchDegradation() -> String? {
+        switch searchByContentLabels(query: "_probe_", start: nil, end: nil, limit: 1) {
+        case .unavailable(let reason):
+            return "photo keyword/content search unavailable: \(reason)"
+        case .matched, .noMatch:
+            return nil
+        }
+    }
+
+    /// macOS 27's replacement for psi.sqlite.
+    private static var leoDatabasePath: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return "\(home)/Pictures/Photos Library.photoslibrary/database/search/leo.sqlite"
+    }
+
     /// Validate that psi.sqlite has the expected schema. Returns false if anything is unexpected.
     private static func validatePSISchema(_ db: OpaquePointer) -> Bool {
-        let expectations: [(table: String, columns: Set<String>)] = [
+        guard validateSchema(db, expectations: [
             ("groups", ["category", "content_string", "normalized_string"]),
             ("ga", ["groupid", "assetid"]),
             ("assets", ["uuid_0", "uuid_1", "creationDate"]),
-        ]
+        ]) else { return false }
 
+        var checkStmt: OpaquePointer?
+        let checkSQL = "SELECT 1 FROM groups WHERE category = 1500 LIMIT 1"
+        guard sqlite3_prepare_v2(db, checkSQL, -1, &checkStmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(checkStmt) }
+
+        return sqlite3_step(checkStmt) == SQLITE_ROW
+    }
+
+    /// Every required column must be present. Only ever add a column here when a
+    /// result WITHOUT it is worthless — an optional field in the required set is
+    /// what silently killed the whole podcast source on macOS 27 (ADR-0004).
+    private static func validateSchema(_ db: OpaquePointer, expectations: [(table: String, columns: Set<String>)]) -> Bool {
         for (table, requiredColumns) in expectations {
             var stmt: OpaquePointer?
             let sql = "PRAGMA table_info(\(table))"
@@ -292,13 +481,7 @@ public enum PhotosIntegration {
             }
             if !requiredColumns.isSubset(of: foundColumns) { return false }
         }
-
-        var checkStmt: OpaquePointer?
-        let checkSQL = "SELECT 1 FROM groups WHERE category = 1500 LIMIT 1"
-        guard sqlite3_prepare_v2(db, checkSQL, -1, &checkStmt, nil) == SQLITE_OK else { return false }
-        defer { sqlite3_finalize(checkStmt) }
-
-        return sqlite3_step(checkStmt) == SQLITE_ROW
+        return true
     }
 
     private static func decodePhotosUUID(uuid0: Int64, uuid1: Int64) -> String? {

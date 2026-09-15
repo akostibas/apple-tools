@@ -11,7 +11,12 @@ here, which is the main reason the tool is useful.
 
 **Access:** read-only
 **Permissions:** none (the databases live under your own `~/Library`).
-**Verified on:** macOS 26.5.2 (Tahoe) — see [COMPATIBILITY.md](./COMPATIBILITY.md).
+**Verified on:** macOS 27.0 (26A428) — see [COMPATIBILITY.md](./COMPATIBILITY.md).
+
+> **macOS 27 note.** Podcasts moved episode duration out of `ZMTEPISODE` into a
+> separate `ZMTMEDIAENCLOSURE` row. Duration is now probed wherever it lives, and
+> a missing one no longer suppresses the whole podcast source — it only drops the
+> `percent` field.
 
 ## Actions
 

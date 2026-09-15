@@ -59,6 +59,36 @@ final class MediaIntegrationTests: XCTestCase {
         return path
     }
 
+    /// macOS 27 shape: ZMTEPISODE has no ZDURATION — it moved to a separate
+    /// ZMTMEDIAENCLOSURE row joined on the episode. Same data, new home.
+    private func makePodcastsDBMacOS27(includeEnclosure: Bool = true) -> String {
+        let path = dir.appendingPathComponent("MTLibrary-27.sqlite").path
+        runSQLite(path, """
+            CREATE TABLE ZMTPODCAST (Z_PK INTEGER PRIMARY KEY, ZTITLE VARCHAR);
+            INSERT INTO ZMTPODCAST VALUES (1, 'The Weekly Show');
+            INSERT INTO ZMTPODCAST VALUES (2, 'Inner Cosmos');
+            CREATE TABLE ZMTEPISODE (
+                Z_PK INTEGER PRIMARY KEY, ZPODCAST INTEGER, ZTITLE VARCHAR,
+                ZLASTDATEPLAYED FLOAT, ZPLAYHEAD FLOAT, ZHASBEENPLAYED INTEGER
+            );
+            INSERT INTO ZMTEPISODE VALUES (1, 1, 'Recent Ep', 999000, 1800, 0);
+            INSERT INTO ZMTEPISODE VALUES (2, 2, 'Newest Ep', 999500, 0, 0);
+            INSERT INTO ZMTEPISODE VALUES (3, 1, 'Old Ep', 900000, 500, 1);
+            INSERT INTO ZMTEPISODE VALUES (4, 2, 'Unplayed Ep', NULL, 0, 0);
+            """)
+        if includeEnclosure {
+            runSQLite(path, """
+                CREATE TABLE ZMTMEDIAENCLOSURE (
+                    Z_PK INTEGER PRIMARY KEY, ZEPISODE INTEGER, ZDURATION FLOAT
+                );
+                INSERT INTO ZMTMEDIAENCLOSURE VALUES (1, 1, 3600);
+                INSERT INTO ZMTMEDIAENCLOSURE VALUES (2, 2, 2000);
+                INSERT INTO ZMTMEDIAENCLOSURE VALUES (3, 3, 1000);
+                """)
+        }
+        return path
+    }
+
     private func makeBooksDB() -> String {
         let path = dir.appendingPathComponent("BKLibrary-1-test.sqlite").path
         runSQLite(path, """
@@ -116,34 +146,65 @@ final class MediaIntegrationTests: XCTestCase {
         XCTAssertEqual(noAuthor.percent, 50)
     }
 
+    // MARK: - Schema drift (macOS 27)
+
+    /// The macOS 27 regression: duration moved tables and the whole podcast
+    /// source went silently empty. Same results expected from either shape.
+    func testMacOS27EpisodeDurationFromEnclosureTable() {
+        let items = MediaIntegration.recentPodcasts(
+            since: Date(timeIntervalSinceReferenceDate: nowRef - 86400),
+            dbPath: makePodcastsDBMacOS27())
+        XCTAssertNotNil(items, "macOS 27 schema must not read as unavailable")
+        XCTAssertEqual(items!.map { $0.title }, ["Newest Ep", "Recent Ep"])
+
+        let recent = items!.first { $0.title == "Recent Ep" }!
+        XCTAssertEqual(recent.durationSeconds, 3600)
+        XCTAssertEqual(recent.percent, 50, "1800s of 3600s")
+    }
+
+    /// Duration only feeds the percentage, so losing it entirely must still
+    /// yield episodes — that over-strict column check caused the outage.
+    func testEpisodesSurviveWithNoDurationSourceAtAll() {
+        let items = MediaIntegration.recentPodcasts(
+            since: Date(timeIntervalSinceReferenceDate: nowRef - 86400),
+            dbPath: makePodcastsDBMacOS27(includeEnclosure: false))
+        XCTAssertNotNil(items)
+        XCTAssertEqual(items!.map { $0.title }, ["Newest Ep", "Recent Ep"])
+        XCTAssertNil(items!.first!.durationSeconds)
+        XCTAssertNil(items!.first!.percent)
+    }
+
     // MARK: - Merge
 
     func testRecentMergesAndSortsAcrossSources() {
-        let items = MediaIntegration.recent(
+        let result = MediaIntegration.recent(
             hours: 24, limit: nil, now: now,
             podcastsDBPath: makePodcastsDB(), booksDBPath: makeBooksDB())
         // Newest→oldest by last_engaged: Newest Ep (999500), Future Shock
         // (999200), No Author Book (999100), Recent Ep (999000).
-        XCTAssertEqual(items.map { $0.title },
+        XCTAssertEqual(result.items.map { $0.title },
                        ["Newest Ep", "Future Shock", "No Author Book", "Recent Ep"])
-        XCTAssertEqual(Set(items.map { $0.source }), ["podcast", "book"])
+        XCTAssertEqual(Set(result.items.map { $0.source }), ["podcast", "book"])
+        XCTAssertTrue(result.unavailable.isEmpty)
     }
 
     func testRecentRespectsLimit() {
-        let items = MediaIntegration.recent(
+        let result = MediaIntegration.recent(
             hours: 24, limit: 2, now: now,
             podcastsDBPath: makePodcastsDB(), booksDBPath: makeBooksDB())
-        XCTAssertEqual(items.count, 2)
-        XCTAssertEqual(items.map { $0.title }, ["Newest Ep", "Future Shock"])
+        XCTAssertEqual(result.items.count, 2)
+        XCTAssertEqual(result.items.map { $0.title }, ["Newest Ep", "Future Shock"])
     }
 
     func testMissingBooksDBDegradesToPodcastsOnly() {
-        let items = MediaIntegration.recent(
+        let result = MediaIntegration.recent(
             hours: 24, limit: nil, now: now,
             podcastsDBPath: makePodcastsDB(),
             booksDBPath: dir.appendingPathComponent("does-not-exist.sqlite").path)
-        XCTAssertTrue(items.allSatisfy { $0.source == "podcast" })
-        XCTAssertFalse(items.isEmpty)
+        XCTAssertTrue(result.items.allSatisfy { $0.source == "podcast" })
+        XCTAssertFalse(result.items.isEmpty)
+        // Degrading is fine; hiding that it degraded is not.
+        XCTAssertEqual(result.unavailable, ["book"])
     }
 
     func testUnreadablePodcastsDBReturnsNil() {

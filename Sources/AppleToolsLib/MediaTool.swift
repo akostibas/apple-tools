@@ -38,6 +38,10 @@ public struct MediaTool: ProbeTool {
         return MediaIntegration.preflight()
     }
 
+    public func degradations() -> [String] {
+        return MediaIntegration.degradations()
+    }
+
     public func handle(params: [String: AnyCodable]?) -> (result: String, isError: Bool) {
         guard let action = params?["action"]?.value as? String else {
             return ("missing required parameter: action", true)
@@ -54,12 +58,23 @@ public struct MediaTool: ProbeTool {
     }
 
     private func recent(hours: Int, limit: Int?) -> (String, Bool) {
-        let items = MediaIntegration.recent(hours: hours, limit: limit)
-        let response: [String: Any] = [
+        let result = MediaIntegration.recent(hours: hours, limit: limit)
+
+        // Nothing readable at all is a failure, not a quiet empty window —
+        // otherwise a broken store reads as "you played nothing".
+        if result.items.isEmpty && !result.unavailable.isEmpty {
+            let sources = result.unavailable.joined(separator: ", ")
+            return ("could not read media source(s): \(sources) — the store is missing or its schema is unrecognized, so this is not the same as no recent activity", true)
+        }
+
+        var response: [String: Any] = [
             "window_hours": hours,
-            "count": items.count,
-            "items": items.map { itemDict($0) },
+            "count": result.items.count,
+            "items": result.items.map { itemDict($0) },
         ]
+        if !result.unavailable.isEmpty {
+            response["unavailable_sources"] = result.unavailable
+        }
         return (jsonString(response) ?? "{}", false)
     }
 
