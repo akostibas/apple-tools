@@ -33,7 +33,7 @@ Every registered tool must have a row here (enforced by
 | media | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | **Broke on 27 and was fixed.** Podcasts moved episode duration from `ZMTEPISODE.ZDURATION` to `ZMTMEDIAENCLOSURE`; the column was wrongly required, so the whole source returned empty. Duration is now probed wherever it lives. Books unaffected. |
 | music | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `now-playing`, `search`, `stats`, `mix` verified. The 26 `loved`→`favorited` fallback still holds. Playback control (play/pause/next) NOT re-exercised on 27. |
 | notes | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `folders` (63 folders, nested paths) and `search`. No drift from 26. Create/append NOT exercised. |
-| photos | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | **Partially broken on 27.** Listing, `--person`, `--album` and `--match filename` all work. Keyword/content search does NOT: macOS 27 deleted `psi.sqlite` (replaced by an as-yet-unread `leo.sqlite` FTS index), so it now returns an explicit error instead of silently filename-matching. See issue #65. |
+| photos | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | **Broke on 27 and was fixed.** macOS 27 deleted `psi.sqlite`; keyword search now reads its replacement, `leo.sqlite`. Verified by fetching matches for `dog` and `beach` and confirming the images. Listing, `--person`, `--album`, `--match filename` unaffected. |
 | reminders | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `lists` and `search`, including parent/subtask nesting. No drift from 26. |
 | screenshot | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | Capture to the output dir. No drift from 26. |
 | voicememos | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `list` and `search` over the real store; schema still recognized. Export and transcribe NOT exercised. |
@@ -49,9 +49,16 @@ exit code, which is indistinguishable from "you genuinely have none of these":
 - **Podcasts** moved episode duration out of `ZMTEPISODE` into a separate
   `ZMTMEDIAENCLOSURE` row. Fixed by probing for the column rather than
   requiring it.
-- **Photos** deleted `psi.sqlite` entirely. It is replaced by `leo.sqlite` (an
-  FTS5 `lexicon` plus an `items` table keyed by a packed `lexeme_ids` BLOB) and
-  a binary Spotlight V3 index. Keyword search is unrestored — see issue #65.
+- **Photos** deleted `psi.sqlite` entirely, replacing it with `leo.sqlite`.
+  Keyword search now reads the new index. Where psi had a `ga` join table, leo
+  inverts it: each row in `items` carries a `lexeme_ids` BLOB — a packed array
+  of little-endian `UInt32` ids — pointing into a `lexicon` table. Scene labels
+  are category 4000, keyed `scene/N`, with synonyms sharing a lexeme id.
+  Category 4120 holds text scanned out of the image and is deliberately **not**
+  searched as content; see `photos.md`.
+
+Both fixes probe for what's present rather than checking the OS version, per
+[ADR-0004](../adr/0004-macos-version-compatibility.md).
 
 Because of this, `apple-tools permissions` now reports a third state: a `⚠`
 **degraded** line (exit 3) for capabilities lost to an OS change, distinct from

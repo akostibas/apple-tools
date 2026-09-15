@@ -10,13 +10,6 @@ System Settings → Privacy & Security → Photos). `fetch` also writes the expo
 image into the tool's output directory.
 **Verified on:** macOS 27.0 (26A428) — see [COMPATIBILITY.md](./COMPATIBILITY.md).
 
-> **macOS 27: keyword/content search does not work.** Apple deleted
-> `psi.sqlite`, the ML-label index this tool reads, replacing it with
-> `leo.sqlite` (an FTS5 lexicon we do not read yet) and a binary Spotlight
-> index. `--query` therefore returns an error rather than results. Searching by
-> `--person`, `--album`, or `--match filename` is unaffected. Tracked in
-> [issue #65](https://github.com/akostibas/apple-tools/issues/65).
-
 ## Actions
 
 - **search** — find photos and return their metadata (id, dimensions, filename,
@@ -68,20 +61,29 @@ apple-tools photos fetch --id "A1B2C3D4-.../L0/001" --full_resolution
   partial matching — and keyword search *within* an album is filename-based, not
   content-based (the old content check was dead code and was removed).
 - **ML-content and people search read Photos' internal SQLite databases
-  directly** (`psi.sqlite` for labels, `Photos.sqlite` for faces). If those
-  files are missing or their schema changed under an OS update, content search
-  returns an explicit "content search is unavailable" error and people search
-  returns an "unavailable" error. Neither degrades quietly: an empty result is
-  reserved for a search that genuinely matched nothing, because a caller cannot
-  otherwise tell "no photos of dogs" from "we could not look".
+  directly** (`Photos.sqlite` for faces; for labels, `psi.sqlite` on macOS 26
+  and earlier or `leo.sqlite` from macOS 27 — whichever is present, detected by
+  probing rather than by OS version). If neither index is there or its schema is
+  unrecognized, content search returns an explicit "content search is
+  unavailable" error and people search returns an "unavailable" error. Neither
+  degrades quietly: an empty result is reserved for a search that genuinely
+  matched nothing, because a caller cannot otherwise tell "no photos of dogs"
+  from "we could not look".
+- **Content search matches depictions, not text in the photo.** It searches
+  Photos' scene labels — what the image is *of*. macOS 27's index also stores
+  text scanned out of images, and that is deliberately excluded: including it
+  would make `--query dog` return a photo of a billboard reading DOG, and
+  `--query the` match a large share of the library. Searching the text inside
+  photos is a separate capability that doesn't exist here yet.
 - **Filename fallback scan is capped.** A keyword with no ML hit scans at most
   `max(limit*50, 500)` assets newest-first; a matching filename older than that
   cutoff won't be found (the response flags `truncated: true` when the cap is
   hit).
-- **Date filtering deliberately ignores the PSI index's own timestamp.** ML
+- **Date filtering deliberately ignores the search index's own timestamp.** ML
   results are re-fetched through PhotoKit for correct `creationDate` ordering
-  and range filtering, because `psi.sqlite`'s `creationDate` is a quantized index
-  timestamp, not capture time (see the #32 regression note in code).
+  and range filtering, because the index's date column is an *indexing* time,
+  not capture time, in both the old and new formats (see the #32 regression note
+  in code).
 - **iCloud originals are downloaded on `fetch`.** Export sets
   `isNetworkAccessAllowed = true`, so fetching a photo whose original lives only
   in iCloud will pull it over the network (and can be slow or fail offline).

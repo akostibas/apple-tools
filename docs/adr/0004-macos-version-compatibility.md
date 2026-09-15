@@ -113,11 +113,13 @@ reader does not go hunting in System Settings.
 - Photos content search and Podcasts recency both follow this policy as of the
   macOS 27 sweep, and both are covered by fixture tests for the 26 and 27 shapes
   so the older path does not rot unnoticed.
-- Photos keyword search is **unrestored**, not fixed. `leo.sqlite`'s `items`
-  table keys lexemes by a packed BLOB with no join table equivalent to the old
-  index, and both its tables were empty while Photos reindexed, so any query
-  written now would be untested guesswork. Probing correctly reports it as
-  unavailable; see issue #65.
+- Photos keyword search is restored against `leo.sqlite`. It was reported
+  unavailable at first, correctly: both its tables were still empty while Photos
+  reindexed, and decoding the packed `lexeme_ids` BLOB from an empty table would
+  have been guesswork. Once the reindex populated it the format was legible in
+  minutes. Worth remembering that "unavailable" was the right answer for a few
+  hours and the wrong one after — which is an argument for re-probing rather
+  than recording a capability as permanently lost.
 - **Existing readers do not yet meet point 4.** An audit of all nine
   direct-store readers found the silent-empty failure mode still present:
   `NotesStoreSearch` returns `[]` when `sqlite3_prepare_v2` fails on its
