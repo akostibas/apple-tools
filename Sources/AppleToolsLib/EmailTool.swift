@@ -439,8 +439,18 @@ public struct EmailTool: ProbeTool {
             // Message-ID not in Envelope Index. Definitive: not found.
             return ("message not found: \(id)", true)
         }
-        guard let path = EmailMessage.emlxPath(rowID: loc.rowID, mailboxURL: loc.mailboxURL) else {
-            // Unsupported mailbox layout (e.g. local://). Fall back.
+        // A message Mail has indexed but never written to disk reads as "no
+        // path" here, which is indistinguishable from an unsupported layout.
+        // Ask Mail for the body before giving up: mail that is filed without
+        // ever being opened is the common case, and it stays unreadable
+        // forever otherwise.
+        var emlx = EmailMessage.emlxPath(rowID: loc.rowID, mailboxURL: loc.mailboxURL)
+        if emlx == nil, downloadBody(loc) {
+            emlx = EmailMessage.emlxPath(rowID: loc.rowID, mailboxURL: loc.mailboxURL)
+        }
+        guard let path = emlx else {
+            // Unsupported mailbox layout (e.g. local://), or Mail could not
+            // produce the message. Fall back.
             return nil
         }
 
@@ -484,11 +494,35 @@ public struct EmailTool: ProbeTool {
                 Log.info("email.fetch_attachment: found attachment on disk (\(ondiskData.count) bytes)")
                 return uploadAttachment(id: id, name: loaded.filename, mimeType: loaded.mimeType, data: ondiskData)
             }
+            // The structure is on disk but the bytes never were. Same repair as
+            // a missing file: ask Mail to fetch, then read what it wrote.
+            if downloadBody(loc),
+               let fresh = EmailMessage.emlxPath(rowID: loc.rowID, mailboxURL: loc.mailboxURL),
+               let refetched = try? EmailMessage.loadAttachment(atPath: fresh, filename: filename),
+               !refetched.data.isEmpty {
+                Log.info("email.fetch_attachment: Mail fetched the body (\(refetched.data.count) bytes)")
+                return uploadAttachment(id: id, name: refetched.filename,
+                                        mimeType: refetched.mimeType, data: refetched.data)
+            }
             Log.info("email.fetch_attachment: attachment not on disk, falling back to AppleScript")
             return nil
         }
 
         return uploadAttachment(id: id, name: loaded.filename, mimeType: loaded.mimeType, data: loaded.data)
+    }
+
+    /// Ask Mail to download a message body, reporting only whether it worked.
+    /// Failure is routine — Mail quit, offline, no Automation permission — and
+    /// every caller's next move is the same fallback either way.
+    private func downloadBody(_ loc: EmailSearch.MessageLocation) -> Bool {
+        do {
+            try EmailIntegration.downloadMessageBody(rowID: loc.rowID, mailboxURL: loc.mailboxURL)
+            Log.info("email.fetch_attachment: asked Mail to download row \(loc.rowID)")
+            return true
+        } catch {
+            Log.info("email.fetch_attachment: Mail could not download row \(loc.rowID): \(error)")
+            return false
+        }
     }
 
     /// Shared tail for both fast-path and fallback: resize images for LLM
