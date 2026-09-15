@@ -29,8 +29,9 @@ import SQLite3
 ///
 /// `probe-macos/Diagnostics/post-verify-live-check.swift mail` exercises this
 /// path end-to-end against real Mail.app. Run it if you change the SQL query
-/// below or after a macOS update that may bump the Envelope Index version
-/// (currently V10). It is intentionally unbuilt — invoke via
+/// below, or after a macOS update (the store root is resolved at runtime by
+/// `EmailIntegration.mailRoot`, but a version bump can move the schema too —
+/// this is how you find out). It is intentionally unbuilt — invoke via
 /// `swift probe-macos/Diagnostics/post-verify-live-check.swift mail`.
 public enum MailDraftVerifier {
 

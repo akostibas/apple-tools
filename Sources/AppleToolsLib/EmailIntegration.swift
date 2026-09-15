@@ -70,6 +70,31 @@ public enum EmailIntegration {
         public let to: String
     }
 
+    // MARK: - Store location
+
+    /// Root of Mail's on-disk store — `~/Library/Mail/V<n>`, where Mail bumps
+    /// `n` on a storage-format change (V10 since Ventura). Resolved by picking
+    /// the highest `V<n>` present rather than pinning a number: a pinned root
+    /// fails *silently* after an OS upgrade — the Envelope Index and every
+    /// `.emlx` simply aren't there, so search returns zero hits and reads come
+    /// back empty rather than erroring. Falls back to V10 when the directory
+    /// can't be listed, so error messages still name a plausible path.
+    static var mailRoot: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return mailRoot(under: "\(home)/Library/Mail")
+    }
+
+    /// Testable core of `mailRoot`. `base` is the directory holding the `V<n>`
+    /// version directories.
+    static func mailRoot(under base: String) -> String {
+        let entries = (try? FileManager.default.contentsOfDirectory(atPath: base)) ?? []
+        let latest = entries.compactMap { name -> (Int, String)? in
+            guard name.hasPrefix("V"), let n = Int(name.dropFirst()) else { return nil }
+            return (n, name)
+        }.max { $0.0 < $1.0 }?.1
+        return "\(base)/\(latest ?? "V10")"
+    }
+
     // MARK: - AppleScript text protocol
 
     /// Field / section delimiters for the tab-free AppleScript text protocol.

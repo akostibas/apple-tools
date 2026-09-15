@@ -67,11 +67,10 @@ enum EmailSearch {
         return QueryTerms.tokenize(query, stopwords: queryStopwords)
     }
 
-    /// Default path to the Envelope Index on this Mac. Follows the current
-    /// Mail version directory (V10). If Apple bumps this, update here.
+    /// Default path to the Envelope Index on this Mac. Follows whichever Mail
+    /// version directory is current — see `EmailIntegration.mailRoot`.
     static var defaultDatabasePath: String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/Library/Mail/V10/MailData/Envelope Index"
+        return "\(EmailIntegration.mailRoot)/MailData/Envelope Index"
     }
 
     /// Run a search against the Envelope Index. Database is opened read-only.
