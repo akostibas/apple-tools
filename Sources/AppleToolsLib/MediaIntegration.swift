@@ -72,26 +72,67 @@ public enum MediaIntegration {
         return (true, "media databases readable")
     }
 
+    /// Opening the store proves nothing about whether we can still read it, so
+    /// check the columns each query actually needs. macOS 27 passed preflight
+    /// while returning no podcasts at all.
+    public static func degradations(podcastsDBPath: String? = nil) -> [String] {
+        let path = podcastsDBPath ?? Self.podcastsDBPath
+        guard FileManager.default.isReadableFile(atPath: path), let db = openDB(path: path) else {
+            return []  // absence is reported by preflight, not here
+        }
+        defer { sqlite3_close(db) }
+
+        guard validate(db, "ZMTEPISODE", ["ZTITLE", "ZLASTDATEPLAYED", "ZPLAYHEAD", "ZPODCAST"]),
+              validate(db, "ZMTPODCAST", ["Z_PK", "ZTITLE"]) else {
+            return ["podcast history unavailable: the Podcasts database schema is unrecognized"]
+        }
+        if !validate(db, "ZMTEPISODE", ["ZDURATION"]),
+           !validate(db, "ZMTMEDIAENCLOSURE", ["ZDURATION", "ZEPISODE"]) {
+            return ["podcast episode duration and progress unavailable: no known duration column"]
+        }
+        return []
+    }
+
     // MARK: - Public API
 
+    /// Items plus the sources we could not read. An unreadable source is NOT
+    /// the same as an empty one: callers must be able to tell "nothing played"
+    /// from "we couldn't look", or they report the former and mean the latter.
+    public struct RecentResult {
+        public let items: [MediaItem]
+        public let unavailable: [String]
+    }
+
     /// Everything engaged with in the last `hours`, newest first, capped at
-    /// `limit` (nil = uncapped). Sources that are unreadable degrade to nothing
-    /// rather than failing the whole query.
+    /// `limit` (nil = uncapped). A source whose store won't open or whose schema
+    /// we no longer recognize is reported in `unavailable` rather than silently
+    /// contributing nothing. Books simply not being set up is not a failure.
     public static func recent(hours: Int, limit: Int?,
                               now: Date = Date(),
                               podcastsDBPath: String? = nil,
-                              booksDBPath: String? = nil) -> [MediaItem] {
+                              booksDBPath: String? = nil) -> RecentResult {
         let since = now.addingTimeInterval(-Double(hours) * 3600)
         var items: [MediaItem] = []
-        items += recentPodcasts(since: since, dbPath: podcastsDBPath ?? Self.podcastsDBPath) ?? []
-        if let booksPath = booksDBPath ?? Self.booksDBPath {
-            items += recentBooks(since: since, dbPath: booksPath) ?? []
+        var unavailable: [String] = []
+
+        if let podcasts = recentPodcasts(since: since, dbPath: podcastsDBPath ?? Self.podcastsDBPath) {
+            items += podcasts
+        } else {
+            unavailable.append("podcast")
         }
+        if let booksPath = booksDBPath ?? Self.booksDBPath {
+            if let books = recentBooks(since: since, dbPath: booksPath) {
+                items += books
+            } else {
+                unavailable.append("book")
+            }
+        }
+
         items.sort { $0.lastEngaged > $1.lastEngaged }
         if let limit = limit, limit > 0, items.count > limit {
             items = Array(items.prefix(limit))
         }
-        return items
+        return RecentResult(items: items, unavailable: unavailable)
     }
 
     // MARK: - Podcasts
@@ -102,13 +143,32 @@ public enum MediaIntegration {
     static func recentPodcasts(since: Date, dbPath: String) -> [MediaItem]? {
         guard let db = openDB(path: dbPath) else { return nil }
         defer { sqlite3_close(db) }
-        guard validate(db, "ZMTEPISODE", ["ZTITLE", "ZLASTDATEPLAYED", "ZPLAYHEAD", "ZDURATION", "ZPODCAST"]),
+        guard validate(db, "ZMTEPISODE", ["ZTITLE", "ZLASTDATEPLAYED", "ZPLAYHEAD", "ZPODCAST"]),
               validate(db, "ZMTPODCAST", ["Z_PK", "ZTITLE"]) else { return nil }
 
+        // Duration only feeds the progress percentage, so a missing one must
+        // never sink the whole source (it did: macOS 27 moved it out of
+        // ZMTEPISODE into ZMTMEDIAENCLOSURE and podcasts went silently empty).
+        // Probe for where it lives rather than branching on the OS version —
+        // Apple relocates these between point releases too.
+        let durationColumn: String
+        let durationJoin: String
+        if validate(db, "ZMTEPISODE", ["ZDURATION"]) {
+            durationColumn = "e.ZDURATION"
+            durationJoin = ""
+        } else if validate(db, "ZMTMEDIAENCLOSURE", ["ZDURATION", "ZEPISODE"]) {
+            durationColumn = "m.ZDURATION"
+            durationJoin = "LEFT JOIN ZMTMEDIAENCLOSURE m ON m.ZEPISODE = e.Z_PK"
+        } else {
+            durationColumn = "NULL"
+            durationJoin = ""
+        }
+
         let sql = """
-            SELECT p.ZTITLE, e.ZTITLE, e.ZLASTDATEPLAYED, e.ZPLAYHEAD, e.ZDURATION
+            SELECT p.ZTITLE, e.ZTITLE, e.ZLASTDATEPLAYED, e.ZPLAYHEAD, \(durationColumn)
             FROM ZMTEPISODE e
             JOIN ZMTPODCAST p ON e.ZPODCAST = p.Z_PK
+            \(durationJoin)
             WHERE e.ZLASTDATEPLAYED IS NOT NULL AND e.ZLASTDATEPLAYED >= ?
             ORDER BY e.ZLASTDATEPLAYED DESC
             """
