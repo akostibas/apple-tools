@@ -8,6 +8,14 @@ it never modifies the library.
 **Permissions:** Photos (the first access triggers the system dialog; grant in
 System Settings → Privacy & Security → Photos). `fetch` also writes the exported
 image into the tool's output directory.
+**Verified on:** macOS 27.0 (26A428) — see [COMPATIBILITY.md](./COMPATIBILITY.md).
+
+> **macOS 27: keyword/content search does not work.** Apple deleted
+> `psi.sqlite`, the ML-label index this tool reads, replacing it with
+> `leo.sqlite` (an FTS5 lexicon we do not read yet) and a binary Spotlight
+> index. `--query` therefore returns an error rather than results. Searching by
+> `--person`, `--album`, or `--match filename` is unaffected. Tracked in
+> [issue #65](https://github.com/akostibas/apple-tools/issues/65).
 
 ## Actions
 
@@ -61,9 +69,11 @@ apple-tools photos fetch --id "A1B2C3D4-.../L0/001" --full_resolution
   content-based (the old content check was dead code and was removed).
 - **ML-content and people search read Photos' internal SQLite databases
   directly** (`psi.sqlite` for labels, `Photos.sqlite` for faces). If those
-  files are missing or their schema changed under an OS update, the schema
-  validation fails and that path silently degrades — content search falls back
-  to a filename match, and people search returns an "unavailable" error.
+  files are missing or their schema changed under an OS update, content search
+  returns an explicit "content search is unavailable" error and people search
+  returns an "unavailable" error. Neither degrades quietly: an empty result is
+  reserved for a search that genuinely matched nothing, because a caller cannot
+  otherwise tell "no photos of dogs" from "we could not look".
 - **Filename fallback scan is capped.** A keyword with no ML hit scans at most
   `max(limit*50, 500)` assets newest-first; a matching filename older than that
   cutoff won't be found (the response flags `truncated: true` when the cap is
