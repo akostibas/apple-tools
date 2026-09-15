@@ -77,9 +77,7 @@ enum EmailMessage {
             return nil
         }
 
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let mailRoot = "\(home)/Library/Mail/V10"
-        let accountRoot = "\(mailRoot)/\(host)"
+        let accountRoot = "\(EmailIntegration.mailRoot)/\(host)"
 
         // Build the mailbox directory: each path segment becomes `<segment>.mbox`.
         let rawPath = (components.path.removingPercentEncoding ?? components.path)

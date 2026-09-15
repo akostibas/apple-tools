@@ -544,4 +544,43 @@ final class EmailMessageTests: XCTestCase {
         let parts = splitText(raw, boundary: "B")
         XCTAssertEqual(parts, ["alpha", "beta"])
     }
+
+    // MARK: - Mail store root resolution
+
+    /// Makes a temp dir containing the given Mail version directories.
+    private func makeMailBase(_ versions: [String]) throws -> String {
+        let base = NSTemporaryDirectory() + "mailroot-" + UUID().uuidString
+        for v in versions {
+            try FileManager.default.createDirectory(
+                atPath: "\(base)/\(v)", withIntermediateDirectories: true)
+        }
+        if versions.isEmpty {
+            try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
+        }
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: base) }
+        return base
+    }
+
+    /// The whole point: an OS upgrade that migrates V10 → V11 must not strand
+    /// us on the old root (where search silently returns nothing).
+    func testMailRootPicksHighestVersion() throws {
+        let base = try makeMailBase(["V9", "V10", "V11"])
+        XCTAssertEqual(EmailIntegration.mailRoot(under: base), "\(base)/V11")
+    }
+
+    /// Numeric, not lexicographic — "V9" must not beat "V10".
+    func testMailRootComparesNumericallyNotLexically() throws {
+        let base = try makeMailBase(["V9", "V10"])
+        XCTAssertEqual(EmailIntegration.mailRoot(under: base), "\(base)/V10")
+    }
+
+    func testMailRootIgnoresNonVersionEntries() throws {
+        let base = try makeMailBase(["V10", "PersistenceInfo.plist", "Ventura"])
+        XCTAssertEqual(EmailIntegration.mailRoot(under: base), "\(base)/V10")
+    }
+
+    func testMailRootFallsBackWhenUnreadable() {
+        let missing = NSTemporaryDirectory() + "no-such-mail-" + UUID().uuidString
+        XCTAssertEqual(EmailIntegration.mailRoot(under: missing), "\(missing)/V10")
+    }
 }
