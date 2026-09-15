@@ -18,8 +18,9 @@ import SQLite3
 //   - ZCOMPLETED: 0 or 1
 //
 // If Apple changes the schema or locks down the database in a future macOS
-// release, all methods here return empty/nil results — the caller gracefully
-// degrades to showing reminders without subtask info.
+// release, every method here returns empty/nil — which reads exactly like "this
+// reminder has no subtasks". Callers must therefore ask `unavailableReason()`
+// first and report the degradation rather than let it pass as fact (ADR-0004).
 enum RemindersDB {
 
     /// SQLite's `SQLITE_TRANSIENT` sentinel: instructs SQLite to copy the bound
@@ -35,6 +36,34 @@ enum RemindersDB {
         let id: String       // ZDACALENDARITEMUNIQUEIDENTIFIER (= EK calendarItemExternalIdentifier)
         let title: String
         let completed: Bool
+    }
+
+    // MARK: - Availability
+
+    /// Columns every query below depends on. `ZICSDISPLAYORDER` is only an
+    /// ORDER BY, but a missing column fails the whole prepare, so it counts.
+    private static let requiredColumns: Set<String> = [
+        "Z_PK", "ZDACALENDARITEMUNIQUEIDENTIFIER", "ZTITLE", "ZCOMPLETED",
+        "ZPARENTREMINDER", "ZMARKEDFORDELETION", "ZFLAGGED", "ZICSDISPLAYORDER",
+    ]
+
+    /// Why flags and subtasks can't be read, or nil when the store is fine.
+    /// Callers surface this instead of letting an unreadable store pass as
+    /// "no subtasks, not flagged".
+    static func unavailableReason(dbPath: String? = nil) -> String? {
+        let suffix = " — flags and subtasks are unavailable"
+        guard let resolved = dbPath ?? discoverDBPath() else {
+            return "the Reminders database was not found\(suffix)"
+        }
+        guard let db = openDB(path: resolved) else {
+            return "the Reminders database could not be opened for reading\(suffix)"
+        }
+        defer { sqlite3_close(db) }
+
+        guard SQLiteSchema.validate(db, expectations: [("ZREMCDREMINDER", requiredColumns)]) else {
+            return "the Reminders database is in an unrecognized format\(suffix)"
+        }
+        return nil
     }
 
     // MARK: - Public API

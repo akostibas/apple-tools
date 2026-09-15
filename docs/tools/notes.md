@@ -54,8 +54,10 @@ apple-tools notes append --title "Grocery list" --text "- olive oil"
   may not match yet (comment in `NotesStoreSearch`). For freshness, `read` by
   id/title (AppleScript) instead.
 - **`full_text` skips encrypted notes.** Bodies that won't gunzip (encrypted
-  notes) are silently skipped under `full_text` rather than matched; any
-  store-access failure returns an empty result rather than an error.
+  notes) are silently skipped under `full_text` rather than matched. A failure
+  to read the *store itself* is different: `search` and `list` error out rather
+  than report "nothing matched", so a schema change can't masquerade as an
+  empty library (ADR-0004).
 - **Folder lookup is flattened.** On `create`, an exact folder-name match
   *anywhere* in the hierarchy wins before the path walk (`liveFolderByName`), so
   two folders sharing a name in different parents are ambiguous — the first live

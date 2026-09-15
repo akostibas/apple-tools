@@ -22,9 +22,12 @@ repos:
     # vendored verbatim from an upstream macOS probe so it can stay in sync;
     # reformatting it would fork from upstream. A `.swift-format` config is
     # provided for manual use (`swift format`).
+    # `xcrun swift`, not bare `swift`: on macOS the Xcode toolchain is the one
+    # guaranteed to match the installed SDK, and a version manager earlier on
+    # PATH (mise, swiftly) silently builds against a mismatched one (ADR-0004).
     -   id: swift-test
         name: swift-test
-        entry: swift test
+        entry: xcrun swift test
         language: system
         types: [swift]
         pass_filenames: false

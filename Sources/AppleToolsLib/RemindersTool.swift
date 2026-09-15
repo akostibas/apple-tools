@@ -215,38 +215,48 @@ public struct RemindersTool: ProbeTool {
         }
 
         // Flag state and subtask relationships both come from the Reminders
-        // SQLite DB (neither is exposed by EventKit). Look up flags over every
-        // candidate first, since a `flagged` filter runs against the same set;
-        // items degrade to unflagged (and drop out) if the DB is unreadable.
-        let candidateIDs = reminders.map { $0.calendarItemExternalIdentifier ?? $0.calendarItemIdentifier }
-        let flaggedIDs = RemindersDB.flagged(forIDs: candidateIDs)
-        if flaggedOnly {
-            reminders = reminders.filter { flaggedIDs.contains($0.calendarItemExternalIdentifier ?? $0.calendarItemIdentifier) }
+        // SQLite DB (neither is exposed by EventKit). An unreadable store makes
+        // everything look unflagged and childless, so ask once and say so.
+        // Under `flaggedOnly` that's not a footnote — the filter would drop
+        // every reminder and report a confident, wrong "you have none".
+        let dbIssue = RemindersDB.unavailableReason()
+        if flaggedOnly, let reason = dbIssue {
+            return ("cannot filter by flag: \(reason)", true)
         }
 
         var results = reminders.map { reminderToDict($0, truncateNotes: true) }
 
-        // One entry per (surviving) reminder, falling back to the local
-        // identifier when the external one is nil, so ids[i] stays aligned
-        // with results[i].
-        let ids = reminders.map { $0.calendarItemExternalIdentifier ?? $0.calendarItemIdentifier }
-        let parentMap = RemindersDB.parents(forChildIDs: ids)
-        let subtaskMap = RemindersDB.subtasks(forParentIDs: ids)
-        for i in results.indices {
-            let id = ids[i]
-            results[i]["is_flagged"] = flaggedIDs.contains(id)
-            if let parent = parentMap[id] {
-                results[i]["parent"] = liteDict(parent)
+        if dbIssue == nil {
+            let candidateIDs = reminders.map { $0.calendarItemExternalIdentifier ?? $0.calendarItemIdentifier }
+            let flaggedIDs = RemindersDB.flagged(forIDs: candidateIDs)
+            if flaggedOnly {
+                reminders = reminders.filter { flaggedIDs.contains($0.calendarItemExternalIdentifier ?? $0.calendarItemIdentifier) }
             }
-            if let subs = subtaskMap[id], !subs.isEmpty {
-                results[i]["subtasks"] = subs.map { liteDict($0) }
+            results = reminders.map { reminderToDict($0, truncateNotes: true) }
+
+            // One entry per (surviving) reminder, falling back to the local
+            // identifier when the external one is nil, so ids[i] stays aligned
+            // with results[i].
+            let ids = reminders.map { $0.calendarItemExternalIdentifier ?? $0.calendarItemIdentifier }
+            let parentMap = RemindersDB.parents(forChildIDs: ids)
+            let subtaskMap = RemindersDB.subtasks(forParentIDs: ids)
+            for i in results.indices {
+                let id = ids[i]
+                results[i]["is_flagged"] = flaggedIDs.contains(id)
+                if let parent = parentMap[id] {
+                    results[i]["parent"] = liteDict(parent)
+                }
+                if let subs = subtaskMap[id], !subs.isEmpty {
+                    results[i]["subtasks"] = subs.map { liteDict($0) }
+                }
             }
         }
 
-        let response: [String: Any] = [
+        var response: [String: Any] = [
             "count": results.count,
             "reminders": results,
         ]
+        if let reason = dbIssue { response["warnings"] = [reason] }
         return (jsonString(response) ?? "{}", false)
     }
 
@@ -260,16 +270,21 @@ public struct RemindersTool: ProbeTool {
         var dict = reminderToDict(reminder, truncateNotes: false)
 
         // Enrich with flag state and subtask relationships from the Reminders
-        // SQLite DB (neither is exposed by EventKit).
+        // SQLite DB (neither is exposed by EventKit). If that store is
+        // unreadable the enrichment is absent, not false — say which.
         let ekID = reminder.calendarItemExternalIdentifier ?? ""
-        dict["is_flagged"] = ekID.isEmpty ? false : RemindersDB.isFlagged(forID: ekID)
-        if !ekID.isEmpty {
-            if let parent = RemindersDB.parent(forChildID: ekID) {
-                dict["parent"] = liteDict(parent)
-            }
-            let subs = RemindersDB.subtasks(forParentID: ekID)
-            if !subs.isEmpty {
-                dict["subtasks"] = subs.map { liteDict($0) }
+        if let reason = RemindersDB.unavailableReason() {
+            dict["warnings"] = [reason]
+        } else {
+            dict["is_flagged"] = ekID.isEmpty ? false : RemindersDB.isFlagged(forID: ekID)
+            if !ekID.isEmpty {
+                if let parent = RemindersDB.parent(forChildID: ekID) {
+                    dict["parent"] = liteDict(parent)
+                }
+                let subs = RemindersDB.subtasks(forParentID: ekID)
+                if !subs.isEmpty {
+                    dict["subtasks"] = subs.map { liteDict($0) }
+                }
             }
         }
 

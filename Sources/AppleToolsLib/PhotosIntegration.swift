@@ -419,7 +419,7 @@ public enum PhotosIntegration {
 
     /// Validate leo.sqlite's shape before trusting it.
     static func validateLeoSchema(_ db: OpaquePointer) -> Bool {
-        validateSchema(db, expectations: [
+        SQLiteSchema.validate(db, expectations: [
             ("lexicon", ["lexeme_id", "category", "content"]),
             ("items", ["identifier", "lexeme_ids"]),
         ])
@@ -449,7 +449,7 @@ public enum PhotosIntegration {
 
     /// Validate that psi.sqlite has the expected schema. Returns false if anything is unexpected.
     private static func validatePSISchema(_ db: OpaquePointer) -> Bool {
-        guard validateSchema(db, expectations: [
+        guard SQLiteSchema.validate(db, expectations: [
             ("groups", ["category", "content_string", "normalized_string"]),
             ("ga", ["groupid", "assetid"]),
             ("assets", ["uuid_0", "uuid_1", "creationDate"]),
@@ -461,27 +461,6 @@ public enum PhotosIntegration {
         defer { sqlite3_finalize(checkStmt) }
 
         return sqlite3_step(checkStmt) == SQLITE_ROW
-    }
-
-    /// Every required column must be present. Only ever add a column here when a
-    /// result WITHOUT it is worthless — an optional field in the required set is
-    /// what silently killed the whole podcast source on macOS 27 (ADR-0004).
-    private static func validateSchema(_ db: OpaquePointer, expectations: [(table: String, columns: Set<String>)]) -> Bool {
-        for (table, requiredColumns) in expectations {
-            var stmt: OpaquePointer?
-            let sql = "PRAGMA table_info(\(table))"
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
-            defer { sqlite3_finalize(stmt) }
-
-            var foundColumns: Set<String> = []
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                if let name = sqlite3_column_text(stmt, 1) {
-                    foundColumns.insert(String(cString: name))
-                }
-            }
-            if !requiredColumns.isSubset(of: foundColumns) { return false }
-        }
-        return true
     }
 
     private static func decodePhotosUUID(uuid0: Int64, uuid1: Int64) -> String? {

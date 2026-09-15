@@ -11,7 +11,10 @@ if [[ ! -f Package.swift ]]; then
 fi
 
 echo "Building apple-tools (release)..."
-swift build -c release
+# `xcrun swift` pins this to the Xcode toolchain, which is the only one
+# guaranteed to match the installed SDK. A version manager earlier on PATH
+# (mise, swiftly) otherwise builds against a mismatched SDK (ADR-0004).
+xcrun swift build -c release
 
 bin_path="$repo_root/.build/release/apple-tools"
 if [[ ! -x "$bin_path" ]]; then
