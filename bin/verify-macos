@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+#
+# verify-macos — exercise every tool against this machine's real data and flag
+# results that look like a silent breakage rather than genuine emptiness.
+#
+# WHY THIS EXISTS
+#
+# apple-tools reads Apple's private app data stores. Apple moves them between
+# releases, and the failure mode is silent: the tool returns an empty result
+# with a SUCCESS exit code, which is indistinguishable from "you genuinely have
+# none of these". macOS 27 broke Podcasts and Photos exactly this way, both
+# reported healthy, and it surfaced only because someone ran a sweep by hand.
+#
+# Unit tests cannot catch this — they run against fixtures, and a fixture is a
+# copy of the schema we already believe in. Only real data on a real machine
+# proves the tool can still read what's actually there.
+#
+# WHY A BASELINE
+#
+# "Returned 0" is not itself a bug: you may genuinely own no voice memos. What
+# is damning is a tool that used to return 5 and now returns 0. So each check
+# records what it returned when it was last confirmed good, and this compares
+# against that. A count that was always 0 stays quiet; a count that COLLAPSED
+# gets raised.
+#
+# The comparison is a prompt for a human, not a verdict. Only you can tell
+# "Apple moved the store" from "you deleted those podcasts" — so a drop is
+# reported for you to adjudicate, and baselines are only ever written when you
+# explicitly pass --record.
+#
+# Usage:
+#   verify-macos                 # run every check, report, exit 1 on suspicion
+#   verify-macos --record        # re-baseline to current counts (after you confirm)
+#   verify-macos --config PATH   # use a different config
+#   verify-macos --only ID       # run a single check by id
+#   verify-macos --binary PATH   # exercise a different build (default .build/debug)
+#
+# The config is NOT committed: the counts are a fingerprint of how much personal
+# data you have, and the search terms only make sense against your own library.
+# Copy verify-macos.example.json to verify-macos.json to get started.
+
+set -uo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+config="$repo_root/verify-macos.json"
+binary="$repo_root/.build/debug/apple-tools"
+record=0
+only=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --record) record=1; shift ;;
+    --config) config="${2:-}"; shift 2 ;;
+    --only) only="${2:-}"; shift 2 ;;
+    --binary) binary="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "verify-macos: unknown argument '$1'" >&2; exit 2 ;;
+  esac
+done
+
+command -v jq >/dev/null 2>&1 || { echo "verify-macos: jq is required" >&2; exit 2; }
+
+if [ ! -r "$config" ]; then
+  echo "verify-macos: no config at $config"
+  echo ""
+  echo "  cp $repo_root/verify-macos.example.json $config"
+  echo ""
+  echo "Then run with --record once to capture a baseline from a state you trust."
+  exit 2
+fi
+
+if [ ! -x "$binary" ]; then
+  echo "verify-macos: building apple-tools first..." >&2
+  ( cd "$repo_root" && swift build ) >&2 || exit 2
+fi
+
+default_min_percent="$(jq -r '.min_percent // 50' "$config" 2>/dev/null)"
+[[ "$default_min_percent" =~ ^[0-9]+$ ]] || default_min_percent=50
+
+product="$(sw_vers -productVersion 2>/dev/null || echo unknown)"
+build="$(sw_vers -buildVersion 2>/dev/null || echo unknown)"
+
+echo "verify-macos — macOS $product ($build)"
+recorded_on="$(jq -r '.recorded.macos // "never"' "$config" 2>/dev/null)"
+echo "baseline recorded on: $recorded_on"
+echo ""
+
+suspect=0
+newcount=0
+results_json="[]"
+
+check_ids="$(jq -r '.checks[].id' "$config" 2>/dev/null)"
+[ -n "$check_ids" ] || { echo "verify-macos: config has no checks" >&2; exit 2; }
+
+while IFS= read -r id; do
+  [ -n "$id" ] || continue
+  if [ -n "$only" ] && [ "$id" != "$only" ]; then continue; fi
+
+  spec="$(jq -c --arg id "$id" '.checks[] | select(.id == $id)' "$config")"
+  describe="$(printf '%s' "$spec" | jq -r '.describe // .id')"
+  count_expr="$(printf '%s' "$spec" | jq -r '.count // ".count"')"
+  baseline="$(printf '%s' "$spec" | jq -r 'if .baseline == null then "" else (.baseline|tostring) end')"
+  # Counts move on their own — you delete files, people leave your library. Only
+  # a collapse is evidence of breakage, so a check must fall below this share of
+  # its baseline to be raised. Zero is always raised, whatever the tolerance.
+  min_percent="$(printf '%s' "$spec" | jq -r --argjson d "$default_min_percent" '.min_percent // $d')"
+
+  mapfile -t args < <(printf '%s' "$spec" | jq -r '.args[]')
+
+  out="$("$binary" "${args[@]}" 2>/dev/null)"
+  rc=$?
+
+  status=""
+  detail=""
+  count=""
+
+  if [ $rc -ne 0 ]; then
+    status="FAIL"
+    detail="exited $rc — $(printf '%s' "$out" | jq -r '.error // "no error message"' 2>/dev/null)"
+  else
+    count="$(printf '%s' "$out" | jq -r "$count_expr" 2>/dev/null)"
+    if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+      status="FAIL"
+      detail="could not read a count via '$count_expr' (tool output may have changed shape)"
+      count=""
+    elif [ -z "$baseline" ]; then
+      status="NEW"
+      detail="no baseline yet — returned $count"
+      newcount=$((newcount + 1))
+    elif [ "$count" -eq 0 ] && [ "$baseline" -gt 0 ]; then
+      status="SUSPECT"
+      detail="returned 0, baseline was $baseline"
+    elif [ "$count" -lt $(( baseline * min_percent / 100 )) ]; then
+      status="DROP"
+      detail="returned $count, baseline was $baseline (under ${min_percent}%)"
+    else
+      status="OK"
+      detail="$count"
+    fi
+  fi
+
+  case "$status" in
+    OK)      printf '  ✓ %-26s %s\n' "$id" "$detail" ;;
+    NEW)     printf '  · %-26s %s\n' "$id" "$detail" ;;
+    DROP)    printf '  ⚠ %-26s %s\n' "$id" "$detail"; suspect=$((suspect + 1)) ;;
+    SUSPECT) printf '  ✗ %-26s %s\n' "$id" "$detail"; suspect=$((suspect + 1)) ;;
+    FAIL)    printf '  ✗ %-26s %s\n' "$id" "$detail"; suspect=$((suspect + 1)) ;;
+  esac
+
+  results_json="$(printf '%s' "$results_json" | jq -c \
+    --arg id "$id" --arg status "$status" --arg describe "$describe" \
+    --argjson count "${count:-null}" \
+    '. + [{id: $id, status: $status, describe: $describe, count: $count}]')"
+done <<< "$check_ids"
+
+echo ""
+
+if [ "$record" -eq 1 ]; then
+  tmp="$config.tmp.$$"
+  jq --argjson results "$results_json" \
+     --arg macos "$product ($build)" \
+     --arg date "$(date +%Y-%m-%d)" '
+    .recorded = {macos: $macos, date: $date}
+    | .checks = [ .checks[] as $c
+        | ($results[] | select(.id == $c.id)) as $r
+        | if $r and $r.count != null then $c + {baseline: $r.count} else $c end ]
+  ' "$config" > "$tmp" && mv "$tmp" "$config"
+  echo "Baselines updated in $config (macOS $product $build)."
+  exit 0
+fi
+
+if [ "$suspect" -gt 0 ]; then
+  cat <<EOF
+$suspect check(s) need a human.
+
+Agent: do NOT record these as working, and do not assume they are broken either
+— a drop can mean the data genuinely changed. For each one, ask the user to run
+the same search in the app itself (Photos, Notes, Podcasts…) and say whether it
+finds anything. If the app finds results and we return none, that is a real
+breakage worth an issue. If the app agrees with us, the data changed: re-run
+with --record to accept the new numbers.
+EOF
+  exit 1
+fi
+
+if [ "$newcount" -gt 0 ]; then
+  echo "$newcount check(s) have no baseline. Confirm the counts look right, then:"
+  echo "  bin/verify-macos --record"
+  exit 0
+fi
+
+echo "All checks match or exceed their baselines."
+echo "Agent: worth recording this macOS build in docs/tools/COMPATIBILITY.md if it isn't already."
+exit 0

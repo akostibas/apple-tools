@@ -1,0 +1,133 @@
+{
+  "_comment": [
+    "Config for bin/verify-macos. Copy to verify-macos.json (gitignored) and run",
+    "`bin/verify-macos --record` once from a state you trust to capture baselines.",
+    "",
+    "Each check runs apple-tools with `args`, pulls a number out of the JSON with",
+    "the jq expression in `count`, and compares it to `baseline`. Output shapes",
+    "differ per tool — most wrap results in `.count`, `documents` uses `.total`,",
+    "and `reminders lists` returns a bare array — so `count` is per-check rather",
+    "than assumed.",
+    "",
+    "Pick search terms that match YOUR library and are broad enough to stay",
+    "stable: a term with one match today can legitimately reach zero tomorrow.",
+    "",
+    "Not covered here, deliberately: screenshot and open_uri (side-effecting),",
+    "clipboard (depends on what you last copied), echo (no OS dependency), and",
+    "every write path (send, draft, create) — this suite must never mutate",
+    "anything."
+  ],
+  "recorded": {
+    "macos": null,
+    "date": null
+  },
+  "_min_percent_comment": [
+    "A check is raised when it falls below this percentage of its baseline.",
+    "Counts drift on their own — you delete files, people leave your photo",
+    "library — and flagging every decrease would make this noise nobody reads.",
+    "A store that actually breaks collapses, it does not shrink 5%.",
+    "Returning 0 against a positive baseline is always raised, regardless.",
+    "Override per check with a `min_percent` field."
+  ],
+  "min_percent": 50,
+  "checks": [
+    {
+      "id": "media-recent",
+      "describe": "podcast/book activity in the last 30 days",
+      "args": ["media", "recent", "--hours", "720"],
+      "count": ".count",
+      "baseline": null
+    },
+    {
+      "id": "photos-content",
+      "describe": "photos search by ML scene label",
+      "args": ["photos", "search", "--query", "dog", "--match", "content", "--limit", "50"],
+      "count": ".count",
+      "baseline": null
+    },
+    {
+      "id": "photos-people",
+      "describe": "recognized people in the library",
+      "args": ["photos", "search", "--match", "people"],
+      "count": ".count",
+      "baseline": null
+    },
+    {
+      "id": "notes-search",
+      "describe": "notes search by title",
+      "args": ["notes", "search", "--query", "meeting", "--limit", "50"],
+      "count": ".count",
+      "baseline": null
+    },
+    {
+      "id": "notes-fulltext",
+      "describe": "notes search inside note bodies",
+      "args": ["notes", "search", "--query", "meeting", "--full_text", "--limit", "50"],
+      "count": ".count",
+      "baseline": null
+    },
+    {
+      "id": "notes-folders",
+      "describe": "note folder tree",
+      "args": ["notes", "folders"],
+      "count": ".count",
+      "baseline": null
+    },
+    {
+      "id": "imessage-recent",
+      "describe": "recent conversations",
+      "args": ["imessage", "recent", "--limit", "20"],
+      "count": ".count",
+      "baseline": null
+    },
+    {
+      "id": "email-inbox",
+      "describe": "mail inbox",
+      "args": ["email", "inbox", "--limit", "20"],
+      "count": ".count",
+      "baseline": null
+    },
+    {
+      "id": "calendar-list",
+      "describe": "events in the next 30 days",
+      "args": ["calendar", "list", "--days", "30"],
+      "count": ".count",
+      "baseline": null
+    },
+    {
+      "id": "reminders-lists",
+      "describe": "reminder lists (returns a bare array)",
+      "args": ["reminders", "lists"],
+      "count": "length",
+      "baseline": null
+    },
+    {
+      "id": "contacts-search",
+      "describe": "address book search",
+      "args": ["contacts", "search", "--query", "a", "--limit", "50"],
+      "count": ".count",
+      "baseline": null
+    },
+    {
+      "id": "voicememos-list",
+      "describe": "voice memo recordings",
+      "args": ["voicememos", "list", "--limit", "50"],
+      "count": ".count",
+      "baseline": null
+    },
+    {
+      "id": "music-stats",
+      "describe": "most-played tracks from the local library",
+      "args": ["music", "stats", "--by", "most-played", "--limit", "20"],
+      "count": ".count",
+      "baseline": null
+    },
+    {
+      "id": "documents-search",
+      "describe": "Spotlight document search (uses .total, not .count)",
+      "args": ["documents", "search", "--query", "report", "--limit", "20"],
+      "count": ".total",
+      "baseline": null
+    }
+  ]
+}
