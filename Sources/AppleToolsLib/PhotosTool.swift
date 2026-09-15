@@ -84,6 +84,10 @@ public struct PhotosTool: ProbeTool {
         return PhotosIntegration.preflight()
     }
 
+    public func degradations() -> [String] {
+        return PhotosIntegration.contentSearchDegradation().map { [$0] } ?? []
+    }
+
     // MARK: - Search
 
     private func search(query: String?, person: String?, match: String?, album: String?, startDate: String?, endDate: String?, limit: Int) -> (String, Bool) {
@@ -121,7 +125,8 @@ public struct PhotosTool: ProbeTool {
                 endDateObj = d
             }
 
-            if let psi = PhotosIntegration.searchByPSI(query: query, start: startDateObj, end: endDateObj, limit: limit) {
+            switch PhotosIntegration.searchByContentLabels(query: query, start: startDateObj, end: endDateObj, limit: limit) {
+            case .matched(let psi):
                 var results: [[String: Any]] = []
                 psi.assets.enumerateObjects { asset, _, stop in
                     if results.count >= limit {
@@ -137,22 +142,28 @@ public struct PhotosTool: ProbeTool {
                     "photos": results,
                 ]
                 return (jsonEncode(response), false)
-            }
 
-            // PSI produced nothing. If the caller explicitly asked to match ML
-            // content, honor that: return an empty content result rather than
-            // silently falling through to filename matching (which would return
-            // unrelated filename hits the caller never asked for).
-            if match == "content" {
-                let response: [String: Any] = [
-                    "count": 0,
-                    "matched_labels": [],
-                    "search_method": "ml_labels",
-                    "photos": [],
-                ]
-                return (jsonEncode(response), false)
+            case .unavailable(let reason):
+                // Never quietly downgrade to filename matching here: it returns
+                // a plausible-looking empty result that reads as "you have no
+                // photos of X" when we simply could not look.
+                return ("photo content search is unavailable: \(reason)", true)
+
+            case .noMatch:
+                // Index worked and genuinely matched nothing. If the caller
+                // pinned matching to ML content, report the honest empty rather
+                // than falling through to unrelated filename hits.
+                if match == "content" {
+                    let response: [String: Any] = [
+                        "count": 0,
+                        "matched_labels": [],
+                        "search_method": "ml_labels",
+                        "photos": [],
+                    ]
+                    return (jsonEncode(response), false)
+                }
+                // Fall through to filename search.
             }
-            // Fall through to filename search.
         }
 
         return searchViaPhotoKit(query: query, startDate: startDate, endDate: endDate, limit: limit)

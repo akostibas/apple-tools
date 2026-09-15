@@ -161,18 +161,53 @@ public enum PhotosIntegration {
 
     // MARK: - PSI (ML label) search
 
-    /// Search Photos using the ML label index in psi.sqlite. Returns nil when
-    /// the database is unavailable, the schema doesn't match, or there are
-    /// no label matches — the caller should fall back to other modes.
-    public static func searchByPSI(query: String, start: Date?, end: Date?, limit: Int) -> PSIResult? {
+    /// Why a content search produced no results. "The index says no photos of
+    /// dogs" and "there is no index" look identical to a caller unless we say
+    /// which — and the second must never be reported as the first.
+    public enum ContentSearchOutcome {
+        case matched(PSIResult)
+        /// Index read successfully; the library genuinely has no such photos.
+        case noMatch
+        /// Could not consult an index at all. Carries a human-readable reason.
+        case unavailable(String)
+    }
+
+    /// Search Photos by ML label, probing for whichever index this macOS ships.
+    /// macOS 26 and earlier expose a queryable `psi.sqlite`; macOS 27 replaced
+    /// it with `leo.sqlite` (an FTS lexicon we do not read yet — see issue #65).
+    public static func searchByContentLabels(query: String, start: Date?, end: Date?, limit: Int) -> ContentSearchOutcome {
+        let fm = FileManager.default
+        guard fm.isReadableFile(atPath: psiDatabasePath) else {
+            if fm.isReadableFile(atPath: leoDatabasePath) {
+                return .unavailable(
+                    "this macOS replaced the Photos search index (psi.sqlite → leo.sqlite) and content search is not yet supported against the new format; search by --person, --album, or --match filename still works")
+            }
+            return .unavailable("the Photos search index is not present on this Mac")
+        }
+
         var db: OpaquePointer?
         let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
         guard sqlite3_open_v2(psiDatabasePath, &db, flags, nil) == SQLITE_OK, let db = db else {
-            return nil
+            return .unavailable("the Photos search index could not be opened for reading")
         }
         defer { sqlite3_close(db) }
 
-        guard validatePSISchema(db) else { return nil }
+        guard validatePSISchema(db) else {
+            return .unavailable("the Photos search index is in an unrecognized format")
+        }
+        return searchPSI(db: db, query: query, start: start, end: end, limit: limit)
+    }
+
+    /// Legacy entry point: collapses the outcome back to an optional. Prefer
+    /// `searchByContentLabels` — this cannot distinguish empty from broken.
+    public static func searchByPSI(query: String, start: Date?, end: Date?, limit: Int) -> PSIResult? {
+        if case .matched(let result) = searchByContentLabels(query: query, start: start, end: end, limit: limit) {
+            return result
+        }
+        return nil
+    }
+
+    private static func searchPSI(db: OpaquePointer, query: String, start: Date?, end: Date?, limit: Int) -> ContentSearchOutcome {
 
         // Match labels in categories that cover people, keywords, and ML content.
         // Escape LIKE wildcards so a query like `100%` matches literally rather
@@ -188,7 +223,9 @@ public enum PhotosIntegration {
             """
 
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, groupSQL, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_prepare_v2(db, groupSQL, -1, &stmt, nil) == SQLITE_OK else {
+            return .unavailable("the Photos search index could not be queried")
+        }
         defer { sqlite3_finalize(stmt) }
 
         sqlite3_bind_text(stmt, 1, searchPattern, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
@@ -205,7 +242,8 @@ public enum PhotosIntegration {
             }
         }
 
-        if groupIDs.isEmpty { return nil }
+        // Index consulted fine, no label matched: a real "no such photos".
+        if groupIDs.isEmpty { return .noMatch }
 
         let placeholders = groupIDs.map { _ in "?" }.joined(separator: ",")
 
@@ -227,7 +265,9 @@ public enum PhotosIntegration {
             """
 
         var assetStmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, assetSQL, -1, &assetStmt, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_prepare_v2(db, assetSQL, -1, &assetStmt, nil) == SQLITE_OK else {
+            return .unavailable("the Photos search index could not be queried")
+        }
         defer { sqlite3_finalize(assetStmt) }
 
         var bindIdx: Int32 = 1
@@ -245,7 +285,7 @@ public enum PhotosIntegration {
             }
         }
 
-        if localIdentifiers.isEmpty { return nil }
+        if localIdentifiers.isEmpty { return .noMatch }
 
         let fetchOptions = PHFetchOptions()
         var predicates: [NSPredicate] = [NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)]
@@ -262,12 +302,31 @@ public enum PhotosIntegration {
         fetchOptions.fetchLimit = limit
 
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: localIdentifiers, options: fetchOptions)
-        return PSIResult(assets: assets, matchedLabels: matchedLabels)
+        return .matched(PSIResult(assets: assets, matchedLabels: matchedLabels))
     }
 
     private static var psiDatabasePath: String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/Pictures/Photos Library.photoslibrary/database/search/psi.sqlite"
+    }
+
+    /// Non-nil when keyword/content search cannot work on this Mac, describing
+    /// why. Permissions can be fully granted and this still be broken.
+    public static func contentSearchDegradation() -> String? {
+        switch searchByContentLabels(query: "_probe_", start: nil, end: nil, limit: 1) {
+        case .unavailable(let reason):
+            return "photo keyword/content search unavailable: \(reason)"
+        case .matched, .noMatch:
+            return nil
+        }
+    }
+
+    /// macOS 27's replacement for psi.sqlite: an FTS5 `lexicon` plus an `items`
+    /// table whose `lexeme_ids` BLOB we have not decoded yet. Presence of this
+    /// file is how we tell "new OS" from "no index at all".
+    private static var leoDatabasePath: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return "\(home)/Pictures/Photos Library.photoslibrary/database/search/leo.sqlite"
     }
 
     /// Validate that psi.sqlite has the expected schema. Returns false if anything is unexpected.

@@ -189,12 +189,22 @@ final class PhotosToolTests: XCTestCase {
             "limit": AnyCodable(5),
         ])
         if isError && result.contains("Photos access denied") { return }
-        XCTAssertFalse(isError)
-        // On the content path we always report the ml_labels method, never filename.
-        XCTAssertTrue(result.contains("\"search_method\":\"ml_labels\""),
-                      "content-match search must report ml_labels, got: \(result)")
+
+        // The invariant under test holds on every path: content matching must
+        // never silently become filename matching.
         XCTAssertFalse(result.contains("\"search_method\":\"filename\""),
                        "content-match must not fall back to filename search")
+
+        // Where no content index exists at all (macOS 27 replaced psi.sqlite),
+        // erroring out IS the correct behaviour — an empty result would be
+        // indistinguishable from "no photos match".
+        if isError {
+            XCTAssertTrue(result.contains("content search is unavailable"),
+                          "the only acceptable error here is an unavailable index, got: \(result)")
+            return
+        }
+        XCTAssertTrue(result.contains("\"search_method\":\"ml_labels\""),
+                      "content-match search must report ml_labels, got: \(result)")
     }
 
     func testSearchWithInvalidStartDate() {
