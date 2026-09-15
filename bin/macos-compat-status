@@ -98,9 +98,15 @@ Agent: do not assume these still work. apple-tools reads Apple's private data
 stores, and when Apple moves one the tool usually returns an EMPTY result with
 a success exit code rather than an error — so a green 'apple-tools permissions'
 proves nothing, and a caller cannot tell "you have none" from "we could not
-read it". Offer to exercise the unverified tools against real data and record
-the outcome in the matrix. Where a tool returns zero results, confirm with the
-user whether the app itself shows data before recording it as working.
+read it".
+
+Offer to run the integration suite, which exercises every tool against this
+machine's real data and compares the counts to the last known-good run:
+
+  bin/verify-macos
+
+Anything it raises needs the user: ask them to run the same search in the app
+itself and say whether it finds results. Then record the outcome in the matrix.
 EOF
 
 exit 0

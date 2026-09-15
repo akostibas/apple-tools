@@ -186,3 +186,33 @@ OSLog subsystem.
 make build      # release build
 make test       # unit tests (live Notes tests gated behind APPLE_TOOLS_NOTES_LIVE=1)
 ```
+
+### Verifying against a new macOS
+
+Unit tests run against fixtures, which are copies of the schema we already
+believe in — so they cannot tell you that Apple moved a data store. When that
+happens the tool typically returns an **empty result with a success exit code**,
+which looks exactly like "you genuinely have none of these". macOS 27 broke
+podcast history and photo keyword search this way, and `apple-tools permissions`
+reported everything healthy throughout.
+
+```bash
+cp verify-macos.example.json verify-macos.json   # once
+bin/verify-macos --record                        # capture a baseline you trust
+bin/verify-macos                                 # after a macOS upgrade
+```
+
+`verify-macos` runs every read-only tool against your real data and compares the
+result counts with the last run you confirmed was good. A count that was always
+zero stays quiet; one that **collapsed** gets raised. It never writes anything,
+and it never re-baselines unless you pass `--record`.
+
+Exit 1 means something needs a person — the suite can't tell "Apple moved the
+store" from "you deleted those podcasts". Open the app, run the same search, and
+see whether it finds what we couldn't.
+
+`verify-macos.json` is deliberately not committed: the counts describe how much
+personal data you have, and the search terms only mean something against your
+own library. A session-start hook (`bin/macos-compat-status`) notices when
+you're on a macOS build that has no row in
+[COMPATIBILITY.md](docs/tools/COMPATIBILITY.md) and suggests this.
