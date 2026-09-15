@@ -58,18 +58,35 @@ func listTools(_ tools: [ProbeTool]) {
 func runPermissions(_ tools: [ProbeTool]) -> Never {
     print("Preflighting \(tools.count) tools (this triggers macOS permission dialogs)...\n")
     var denied: [String] = []
+    var degraded: [String] = []
     for tool in tools {
         let (ok, message) = tool.preflight()
         print("  \(ok ? "✓" : "✗") \(tool.definition.name): \(message)")
-        if !ok { denied.append(tool.definition.name) }
+        if !ok {
+            denied.append(tool.definition.name)
+            continue
+        }
+        // Permission granted is not the same as working — report capabilities
+        // an OS upgrade took away, which System Settings cannot restore.
+        for note in tool.degradations() {
+            print("  ⚠ \(tool.definition.name): \(note)")
+            degraded.append(tool.definition.name)
+        }
     }
-    if denied.isEmpty {
-        print("\nAll tools ready.")
-        exit(0)
+
+    if !denied.isEmpty {
+        print("\n\(denied.count) tool(s) denied: \(denied.joined(separator: ", "))")
+        print("Grant access in System Settings → Privacy & Security, then re-run.")
+        exit(2)
     }
-    print("\n\(denied.count) tool(s) denied: \(denied.joined(separator: ", "))")
-    print("Grant access in System Settings → Privacy & Security, then re-run.")
-    exit(2)
+    if !degraded.isEmpty {
+        let names = Array(Set(degraded)).sorted().joined(separator: ", ")
+        print("\nAll tools permitted, but \(degraded.count) capability degraded: \(names)")
+        print("This is a macOS/schema change, not a permissions problem — see the warnings above.")
+        exit(3)
+    }
+    print("\nAll tools ready.")
+    exit(0)
 }
 
 func printTopUsage() {

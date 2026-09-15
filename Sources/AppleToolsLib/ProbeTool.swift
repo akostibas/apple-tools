@@ -12,6 +12,15 @@ public protocol ProbeTool {
     /// Returns (ok, message) — ok is true if permission was granted, message describes the result.
     func preflight() -> (ok: Bool, message: String)
 
+    /// Capabilities this tool has lost even though its permissions are fine —
+    /// typically a data store whose schema a macOS upgrade changed. Empty when
+    /// the tool is fully working.
+    ///
+    /// Distinct from `preflight` failing on purpose: a denial is fixed in System
+    /// Settings, a degradation is not. Without this, an OS upgrade that silently
+    /// guts a tool still preflights clean (macOS 27 did exactly that).
+    func degradations() -> [String]
+
     /// Classifies each operation the tool can perform as read or read/write.
     /// Used to enforce probe read-only mode. Every operation MUST be
     /// classified — there is no implicit-RW fallback. If the tool dispatches
@@ -39,6 +48,8 @@ extension ProbeTool {
     public func preflight() -> (ok: Bool, message: String) {
         return (true, "no permissions required")
     }
+
+    public func degradations() -> [String] { [] }
 }
 
 /// All registered Apple tools. `host` supplies the file sink (where
