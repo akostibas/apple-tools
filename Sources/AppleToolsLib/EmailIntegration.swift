@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Shared Apple Mail integration. AppleScript-driven Mail.app access lives
@@ -19,6 +20,7 @@ public enum EmailIntegration {
         case attachmentNotFound(name: String)
         case attachmentSaveFailed(String)
         case parseFailure(String)
+        case mailNotRunning
 
         public var description: String {
             switch self {
@@ -28,6 +30,7 @@ public enum EmailIntegration {
             case .attachmentNotFound(let name): return "attachment '\(name)' not found on message"
             case .attachmentSaveFailed(let msg): return "failed to save attachment: \(msg)"
             case .parseFailure(let msg): return msg
+            case .mailNotRunning: return "Mail is not running, so it cannot fetch this message"
             }
         }
     }
@@ -190,6 +193,74 @@ public enum EmailIntegration {
     /// Mirrors `EmailSearch.resolveMessageID`'s bracket-insensitive lookup.
     static func bareMessageID(_ id: String) -> String {
         return id.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
+    }
+
+    /// Split an Envelope Index `mailboxes.url` into the pieces AppleScript
+    /// addresses a mailbox by. `imap://<account-uuid>/%5BGmail%5D/All%20Mail`
+    /// → (`<account-uuid>`, `[Gmail]/All Mail`). Mail's account `id` is that
+    /// same UUID and it names nested mailboxes with slashes, so both halves go
+    /// straight through with no lookup table.
+    static func accountAndMailbox(fromMailboxURL url: String) -> (account: String, mailbox: String)? {
+        guard let c = URLComponents(string: url), c.scheme == "imap",
+              let host = c.host, !host.isEmpty else { return nil }
+        let path = (c.path.removingPercentEncoding ?? c.path)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !path.isEmpty else { return nil }
+        return (host, path)
+    }
+
+    /// Ask Mail to pull down a message body it has not cached on disk yet.
+    ///
+    /// Mail indexes a message the moment it arrives but writes the `.emlx`
+    /// only when something reads the message, so mail that is filed without
+    /// ever being opened is present in every search and absent from disk. The
+    /// dictionary has no download verb — reading `content` is the fetch, and
+    /// the copy Mail writes on the way is the point.
+    ///
+    /// Addressed by Envelope Index row id inside its own mailbox, so this
+    /// reaches archived mail; `whose message id is …` over INBOX cannot.
+    ///
+    /// Never launches Mail. A background caller must not put a window on
+    /// screen, and a Mail that isn't running has no server connection to fetch
+    /// over anyway.
+    public static func downloadMessageBody(rowID: Int64, mailboxURL: String) throws {
+        guard isMailRunning() else { throw EmailError.mailNotRunning }
+        guard let loc = accountAndMailbox(fromMailboxURL: mailboxURL) else {
+            throw EmailError.parseFailure("unsupported mailbox url: \(mailboxURL)")
+        }
+        let env = [
+            "APPLE_TOOLS_MAIL_ACCOUNT": loc.account,
+            "APPLE_TOOLS_MAIL_MAILBOX": loc.mailbox,
+        ]
+        let script = """
+        set acctID to do shell script "printenv APPLE_TOOLS_MAIL_ACCOUNT"
+        set boxName to do shell script "printenv APPLE_TOOLS_MAIL_MAILBOX"
+        tell application "Mail"
+            set accts to (every account whose id is acctID)
+            if accts is {} then return "NO_ACCOUNT"
+            try
+                set theBox to mailbox boxName of (item 1 of accts)
+            on error
+                return "NO_MAILBOX"
+            end try
+            set msgs to (every message of theBox whose id is \(rowID))
+            if msgs is {} then return "NOT_FOUND"
+            get content of (item 1 of msgs)
+            return "OK"
+        end tell
+        """
+        let (out, err) = runAppleScript(script, env, nil)
+        if let err = err { throw EmailError.scriptFailed(err) }
+        switch out {
+        case "OK": return
+        case "NOT_FOUND", "NO_ACCOUNT", "NO_MAILBOX": throw EmailError.notFound
+        default: throw EmailError.scriptFailed(out)
+        }
+    }
+
+    /// Is Mail up? Checked before driving it so we never launch it ourselves.
+    static var isMailRunning: () -> Bool = {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.mail").isEmpty
     }
 
     public static func readMessageViaAppleScript(id: String) throws -> MessageRead {
