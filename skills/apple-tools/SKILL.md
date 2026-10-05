@@ -50,7 +50,7 @@ temp dir).
 
 These actions change state or are visible to others. Confirm with the user in
 chat before running them: `imessage send`, `email draft` (creates a draft),
-`calendar create`, `reminders create`/`complete`, `notes create`/`append`,
+`calendar create`/`update`/`delete`, `reminders create`/`complete`, `notes create`/`append`,
 `clipboard write`, `open_uri`. (`--confirm` additionally pops a native
 Allow/Deny dialog; off by default.)
 
@@ -58,7 +58,10 @@ Allow/Deny dialog; off by default.)
 
 - **calendar** — `calendars` (list calendars), `list` (events in a range),
   `search` (by keyword), `create` (add event; does not send invites — bare
-  `YYYY-MM-DD` start/end make it all-day, `end` being the inclusive last day).
+  `YYYY-MM-DD` start/end make it all-day, `end` being the inclusive last day;
+  `--recurrence` takes an RRULE, `--timezone` an IANA zone), `update`/`delete`
+  (by `--id`; for a repeating event also `--occurrence <date>` and `--span
+  this|future|all`, default `this`). Refuses invites you don't organize.
 - **reminders** — `lists`, `search`, `get`, `create`, `create-list` (new list,
   optional `--account`; rejects duplicate names), `complete`.
 - **notes** — `folders`, `search`, `read`, `create`, `append`. Content is
