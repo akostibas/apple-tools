@@ -64,6 +64,33 @@ final class RemindersLiveTests: XCTestCase {
         XCTAssertThrowsError(try create(["recurrence": "weekly"]))
     }
 
+    func testListsSearchGetComplete() throws {
+        let lists = tool.handle(params: ["action": AnyCodable("lists")])
+        XCTAssertFalse(lists.isError)
+        XCTAssertTrue(lists.result.contains("\"is_default\" : true") || lists.result.contains("\"is_default\":true"))
+
+        let r = try create(["due_date": "2027-03-02T09:00:00Z", "notes": "live-search-marker"])
+        let id = r["id"] as! String
+        let found = try call(["action": "search", "query": "live-search-marker", "flagged": false])
+        XCTAssertTrue((found["reminders"] as? [[String: Any]])?.contains { $0["id"] as? String == id } == true)
+        let byDate = try call(["action": "search", "due_date": "2027-03-01T00:00:00Z", "due_date_end": "2027-03-03T00:00:00Z"])
+        XCTAssertTrue((byDate["reminders"] as? [[String: Any]])?.contains { $0["id"] as? String == id } == true)
+
+        XCTAssertEqual(try call(["action": "get", "id": id])["notes"] as? String, "live-search-marker")
+        XCTAssertEqual(try call(["action": "complete", "id": id])["completed"] as? Bool, true)
+        XCTAssertEqual(try call(["action": "get", "id": id])["completed"] as? Bool, true)
+    }
+
+    func testCreateList() throws {
+        let name = "apple-tools live list \(UUID().uuidString.prefix(8))"
+        let r = try call(["action": "create-list", "name": name])
+        defer { RemindersIntegration.resolveLists(name: name)?.forEach { try? RemindersIntegration.removeList($0) } }
+        XCTAssertEqual(r["name"] as? String, name)
+        XCTAssertThrowsError(try call(["action": "create-list", "name": name]), "duplicate name must be refused")
+        let inList = try create(["list_name": name])
+        XCTAssertEqual(inList["list"] as? String, name)
+    }
+
     func testDelete() throws {
         let id = try create()["id"] as! String
         XCTAssertEqual(try call(["action": "delete", "id": id])["deleted"] as? Bool, true)

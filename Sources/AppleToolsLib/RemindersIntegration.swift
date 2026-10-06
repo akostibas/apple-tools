@@ -150,6 +150,11 @@ public enum RemindersIntegration {
         return calendar
     }
 
+    /// Live-test cleanup only; the tool deliberately has no list delete.
+    static func removeList(_ list: EKCalendar) throws {
+        try store.removeCalendar(list, commit: true)
+    }
+
     // MARK: - Fetch
 
     /// Synchronously fetch reminders matching a predicate.
