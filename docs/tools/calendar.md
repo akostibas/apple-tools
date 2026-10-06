@@ -26,7 +26,7 @@ system dialog).
   make a true all-day event without the flag; `end` is then the **last day,
   inclusive** — `2026-08-26` to `2026-08-27` covers both days. `recurrence`
   takes an RFC 5545 RRULE (`FREQ=MONTHLY;BYDAY=2TU,4TU`) or plain
-  `daily`/`weekly`/`monthly`/`yearly`; `timezone` (IANA) pins a timed event's
+  `daily`/`weekly`/`monthly`/`yearly`; `event_timezone` (IANA) pins a timed event's
   wall-clock time across DST and is the zone offset-less times are read in.
 - **update** — change an event by `id`: any of the fields `create` takes. An
   empty `location`/`notes` clears it; `recurrence none` stops repeating.
@@ -58,7 +58,7 @@ apple-tools calendar list --start 2026-07-07T00:00:00Z --end 2026-07-14T00:00:00
 apple-tools calendar search --query "standup" --dedupe_by_id true
 apple-tools calendar create --title "Dentist" --start 2026-07-10T15:00:00Z --end 2026-07-10T16:00:00Z --location "123 Main St"
 apple-tools calendar create --title "Staging refresh" --start 2026-10-13T03:00:00 --end 2026-10-13T04:00:00 \
-  --timezone America/New_York --recurrence "FREQ=MONTHLY;BYDAY=2TU,4TU"
+  --event_timezone America/New_York --recurrence "FREQ=MONTHLY;BYDAY=2TU,4TU"
 apple-tools calendar update --id <id> --occurrence 2026-10-27 --start 2026-10-27T05:00:00   # just that one
 apple-tools calendar delete --id <id> --span all
 ```
@@ -90,7 +90,7 @@ apple-tools calendar delete --id <id> --span all
   organizer email, URL, or fuzzy terms), and only over events between `start`
   and `end` (default −30…+30 days) — anything outside that window is silently
   missed.
-- **Zone-less dates are treated as local time** unless `timezone` is passed.
+- **Zone-less dates are treated as local time** unless `event_timezone` is passed.
   `parseDate` accepts `yyyy-MM-dd[THH:mm:ss]` without a `Z` and interprets it in
   the machine's zone, so omitting both can shift an event's real time.
 - **`dedupe_by_id` changes the output schema.** Only in de-duped output is the

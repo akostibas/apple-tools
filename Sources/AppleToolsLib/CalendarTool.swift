@@ -11,7 +11,7 @@ public struct CalendarTool: ProbeTool {
                 "action": PropertySchema(type_: "string", description: "calendars, list, search, create, update, or delete"),
                 "calendar_name": PropertySchema(type_: "string", description: "Calendar name to filter by (for list, search), create in (for create), or move the event to (for update)",
                     summary: "Calendar to filter by (list/search), create in (create), or move to (update)", actions: ["list", "search", "create", "update"]),
-                "start": PropertySchema(type_: "string", description: "Start date/time, ISO 8601 e.g. 2026-04-15T09:00:00Z (required for create; for list defaults to start of today; for search defaults to 30 days ago; for update the new start of the chosen occurrence — with span=all the whole series shifts by the same amount). For an all-day event pass a bare date, 2026-04-15. A time without an offset is read in 'timezone' (or the Mac's zone).",
+                "start": PropertySchema(type_: "string", description: "Start date/time, ISO 8601 e.g. 2026-04-15T09:00:00Z (required for create; for list defaults to start of today; for search defaults to 30 days ago; for update the new start of the chosen occurrence — with span=all the whole series shifts by the same amount). For an all-day event pass a bare date, 2026-04-15. A time without an offset is read in 'event_timezone' (or the Mac's zone).",
                     summary: "Start date/time, ISO 8601 (e.g. 2026-04-15T09:00:00Z)", actions: ["list", "search", "create", "update"]),
                 "end": PropertySchema(type_: "string", description: "End date/time, ISO 8601 (required for create; for list defaults to end of start day; for search defaults to 30 days from now). For an all-day event pass a bare date — it is the LAST day, inclusive: 2026-04-15 to 2026-04-16 covers both days, and a one-day event ends on its own date.",
                     summary: "End date/time, ISO 8601", actions: ["list", "search", "create", "update"]),
@@ -25,7 +25,7 @@ public struct CalendarTool: ProbeTool {
                     summary: "Make it a true all-day event (or false to make it timed)", actions: ["create", "update"]),
                 "recurrence": PropertySchema(type_: "string", description: "Repeat rule for create/update, RFC 5545 RRULE: e.g. FREQ=WEEKLY;BYDAY=MO,WE,FR or FREQ=MONTHLY;BYDAY=2TU,4TU (2nd and 4th Tuesday) or FREQ=DAILY;INTERVAL=2;COUNT=10. Plain daily/weekly/monthly/yearly also work. Supports FREQ, INTERVAL, COUNT, UNTIL, BYDAY, BYMONTHDAY, BYMONTH, BYSETPOS. On update pass 'none' to stop repeating; changing it needs span future or all.",
                     summary: "Repeat rule (RRULE, e.g. FREQ=WEEKLY;BYDAY=MO,WE or 'daily'); 'none' removes", actions: ["create", "update"]),
-                "timezone": PropertySchema(type_: "string", description: "IANA timezone for a timed event, e.g. America/New_York. The event keeps that wall-clock time across daylight-saving changes, and start/end without an offset are read in it. Defaults to the Mac's zone.",
+                "event_timezone": PropertySchema(type_: "string", description: "IANA timezone for a timed event, e.g. America/New_York. The event keeps that wall-clock time across daylight-saving changes, and start/end without an offset are read in it. Defaults to the Mac's zone.",
                     summary: "Event timezone, IANA (e.g. America/New_York)", actions: ["create", "update"]),
                 "id": PropertySchema(type_: "string", description: "Event id from list/search (required for update, delete)",
                     summary: "Event id from list/search", actions: ["update", "delete"]),
@@ -49,7 +49,7 @@ public struct CalendarTool: ProbeTool {
             ActionHelp(name: "search", summary: "Find events by keyword",
                 example: "apple-tools calendar search --query <text> [--start <d>] [--end <d>] [--calendar_name <n>] [--dedupe_by_id]", required: ["query"]),
             ActionHelp(name: "create", summary: "Add an event (does not send invites)",
-                example: "apple-tools calendar create --title <t> --start <d> --end <d> [--all_day] [--location <l>] [--notes <n>] [--calendar_name <n>] [--recurrence <rrule>] [--timezone <tz>]", required: ["title", "start", "end"]),
+                example: "apple-tools calendar create --title <t> --start <d> --end <d> [--all_day] [--location <l>] [--notes <n>] [--calendar_name <n>] [--recurrence <rrule>] [--event_timezone <tz>]", required: ["title", "start", "end"]),
             ActionHelp(name: "update", summary: "Change an event you organize",
                 example: "apple-tools calendar update --id <id> [--occurrence <d>] [--span this|future|all] [--title <t>] [--start <d>] [--end <d>] ...", required: ["id"]),
             ActionHelp(name: "delete", summary: "Delete an event you organize",
@@ -101,7 +101,7 @@ public struct CalendarTool: ProbeTool {
             let notes = params?["notes"]?.value as? String
             let allDay = params?["all_day"]?.value as? Bool
             return createEvent(title: title, start: startStr, end: endStr, allDay: allDay, calendarName: calendarName, location: location, notes: notes,
-                               recurrence: params?["recurrence"]?.value as? String, timeZone: params?["timezone"]?.value as? String)
+                               recurrence: params?["recurrence"]?.value as? String, timeZone: params?["event_timezone"]?.value as? String)
         case "update", "delete":
             guard let id = params?["id"]?.value as? String, !id.isEmpty else {
                 return ("missing required parameter: id", true)
@@ -272,7 +272,7 @@ public struct CalendarTool: ProbeTool {
             if let location = str("location") { event.location = location.isEmpty ? nil : location; changed = true }
             if let notes = str("notes") { event.notes = notes.isEmpty ? nil : notes; changed = true }
 
-            let tz = try timeZone(named: str("timezone"))
+            let tz = try timeZone(named: str("event_timezone"))
             let start = str("start"), end = str("end")
             let given = [start, end].compactMap { $0 }
             // Explicit flag wins; otherwise a time-of-day means timed, bare dates mean all-day.
@@ -315,7 +315,7 @@ public struct CalendarTool: ProbeTool {
             }
 
             guard changed else {
-                throw ToolError("nothing to update: pass at least one of title, start, end, all_day, location, notes, calendar_name, recurrence, timezone")
+                throw ToolError("nothing to update: pass at least one of title, start, end, all_day, location, notes, calendar_name, recurrence, event_timezone")
             }
             try CalendarIntegration.save(event, span: recurring ? span.ek : .thisEvent)
             var result = writeResult(event)
@@ -372,7 +372,7 @@ public struct CalendarTool: ProbeTool {
             "all_day": event.isAllDay,
         ]
         if let rule = event.recurrenceRules?.first { result["recurrence"] = CalendarRecurrence.format(rule) }
-        if !event.isAllDay, let tz = event.timeZone { result["timezone"] = tz.identifier }
+        if !event.isAllDay, let tz = event.timeZone { result["event_timezone"] = tz.identifier }
         return result
     }
 

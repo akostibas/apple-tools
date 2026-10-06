@@ -59,7 +59,7 @@ Allow/Deny dialog; off by default.)
 - **calendar** — `calendars` (list calendars), `list` (events in a range),
   `search` (by keyword), `create` (add event; does not send invites — bare
   `YYYY-MM-DD` start/end make it all-day, `end` being the inclusive last day;
-  `--recurrence` takes an RRULE, `--timezone` an IANA zone), `update`/`delete`
+  `--recurrence` takes an RRULE, `--event_timezone` an IANA zone), `update`/`delete`
   (by `--id`; for a repeating event also `--occurrence <date>` and `--span
   this|future|all`, default `this`). Refuses invites you don't organize.
 - **reminders** — `lists`, `search`, `get`, `create`, `create-list` (new list,

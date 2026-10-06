@@ -175,7 +175,8 @@ public enum CalendarIntegration {
         }
         let day: TimeInterval = 86400
         let candidates = events(from: target.addingTimeInterval(-day), to: target.addingTimeInterval(2 * day))
-            .filter { $0.eventIdentifier == id }
+            // A moved occurrence gets its own id: the series id plus "/RID=<original start>".
+            .filter { $0.eventIdentifier == id || $0.eventIdentifier?.hasPrefix(id + "/RID=") == true }
         let match = candidates.first { ev in
             dayOnly ? Calendar.current.isDate(ev.startDate, inSameDayAs: target)
                     : abs(ev.startDate.timeIntervalSince(target)) < 60
