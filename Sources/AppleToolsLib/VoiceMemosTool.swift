@@ -12,14 +12,14 @@ import Foundation
 public struct VoiceMemosTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "voicememos",
-        description: "Read Apple Voice Memos (read-only). Actions: 'list' (recent recordings, last 30 days by default), 'search' (filter all recordings by title/folder/date), 'export' (copy a recording's .m4a audio into the local output dir; returns its path), 'transcribe' (on-device transcript of a recording; writes a .txt to the output dir and returns its path plus a preview; cached per recording; macOS 26+).",
+        description: "Read Apple Voice Memos (read-only). Actions: 'folders' (every folder with its recording count, plus how many recordings are in no folder), 'list' (recent recordings, last 30 days by default), 'search' (filter all recordings by title/folder/date), 'export' (copy a recording's .m4a audio into the local output dir; returns its path), 'transcribe' (on-device transcript of a recording; writes a .txt to the output dir and returns its path plus a preview; cached per recording; macOS 26+).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "list, search, export, or transcribe"),
+                "action": PropertySchema(type_: "string", description: "folders, list, search, export, or transcribe"),
                 "query": PropertySchema(type_: "string", description: "Title keywords, case-insensitive (for search). Multi-word queries are AND-of-terms: every word must appear in the title, in any order.",
                     summary: "Title keywords (AND-of-terms)", actions: ["search"]),
-                "folder": PropertySchema(type_: "string", description: "Restrict to a named Voice Memos folder, case-insensitive (for list/search)",
+                "folder": PropertySchema(type_: "string", description: "Restrict to a named Voice Memos folder as 'folders' reports it, case-insensitive (for list/search)",
                     summary: "Restrict to a named folder, case-insensitive", actions: ["list", "search"]),
                 "start_date": PropertySchema(type_: "string", description: "Only recordings on/after this date, ISO 8601 e.g. 2026-01-15 (for list/search)",
                     summary: "Recordings on/after this date (ISO 8601, e.g. 2026-01-15)", actions: ["list", "search"]),
@@ -46,6 +46,8 @@ public struct VoiceMemosTool: ProbeTool {
         ),
         cliSummary: "List, search, export, and transcribe Apple Voice Memos.",
         actions: [
+            ActionHelp(name: "folders", summary: "List folders with recording counts",
+                example: "apple-tools voicememos folders"),
             ActionHelp(name: "list", summary: "List recent recordings (last 30 days by default), newest first",
                 example: "apple-tools voicememos list [--all] [--folder <name>] [--limit <n>]"),
             ActionHelp(name: "search", summary: "Filter all recordings by title, folder, or date",
@@ -60,6 +62,7 @@ public struct VoiceMemosTool: ProbeTool {
     public let host: ToolHost
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
+        "folders":    .read,
         "list":       .read,
         "search":     .read,
         "export":     .read,
@@ -86,6 +89,18 @@ public struct VoiceMemosTool: ProbeTool {
         }
 
         switch action {
+        case "folders":
+            guard let result = VoiceMemosIntegration.folders() else {
+                return ("could not read the Voice Memos database (missing, unreadable, or unrecognized schema).", true)
+            }
+            let response: [String: Any] = [
+                "folders": result.folders.map { ["name": $0.name, "count": $0.count] as [String: Any] },
+                "unfiled_count": result.unfiled,
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: response, options: [.prettyPrinted, .sortedKeys]) else {
+                return ("failed to encode folders", true)
+            }
+            return (String(decoding: data, as: UTF8.self), false)
         case "list":
             return listRecordings(params: params, isSearch: false)
         case "search":
@@ -106,7 +121,7 @@ public struct VoiceMemosTool: ProbeTool {
             let inline = params?["inline"]?.value as? Bool ?? false
             return transcribe(id: id, locale: locale, refresh: refresh, timestamps: timestamps, inline: inline)
         default:
-            return ("unknown action: \(action) (use list, search, export, or transcribe)", true)
+            return ("unknown action: \(action) (use folders, list, search, export, or transcribe)", true)
         }
     }
 

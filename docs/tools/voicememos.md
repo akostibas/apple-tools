@@ -12,6 +12,9 @@ Recognition and **macOS 26+** (on-device `SpeechTranscriber`); on older systems
 
 ## Actions
 
+- **folders** — every folder with its recording `count` (empty folders
+  included), plus `unfiled_count` for recordings in no folder. A folder `name`
+  works verbatim as `--folder` on list/search.
 - **list** — recent recordings, newest first. Defaults to the **last 30 days**;
   pass `--all` for the full history. Optional `--folder`, `--start-date` /
   `--end-date`, `--limit`.
@@ -32,6 +35,7 @@ Run `apple-tools voicememos --help` for the exact parameters of each action.
 ## Examples
 
 ```bash
+apple-tools voicememos folders
 apple-tools voicememos list --all --folder "Tours"
 apple-tools voicememos search --query "senior living" --start-date 2026-01-01
 apple-tools voicememos export --id "<RECORDING-ID>" --with-waveform
@@ -45,6 +49,8 @@ apple-tools voicememos transcribe --id "<RECORDING-ID>" --timestamps --inline
   `SQLITE_OPEN_READONLY` (writing "could corrupt it or conflict with sync").
   So there's no way to record a new memo, rename, retitle, move between
   folders, trim, or delete — all mutation happens only in the Voice Memos app.
+  Voice Memos has no scripting interface either, so delete would need a saved
+  Shortcut or UI scripting; it was judged not worth that (#62).
 - **`list` hides older recordings by default.** With no date bounds and no
   `--all`, `list` silently applies a 30-day window (`defaultWindowDays = 30`)
   to keep output short; the response flags this with a `window`/`note` field.

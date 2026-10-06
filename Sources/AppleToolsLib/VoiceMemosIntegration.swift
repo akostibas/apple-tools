@@ -214,6 +214,39 @@ public enum VoiceMemosIntegration {
         return results
     }
 
+    /// Every folder with its recording count (empty folders included), plus the
+    /// count of recordings in no folder. Counts use `list`'s row filter so they agree.
+    public static func folders(dbPath: String? = nil) -> (folders: [(name: String, count: Int)], unfiled: Int)? {
+        let path = dbPath ?? databasePath
+        guard let db = openDB(path: path) else { return nil }
+        defer { sqlite3_close(db) }
+        guard validateSchema(db) else { return nil }
+
+        let sql = """
+            SELECT f.ZENCRYPTEDNAME, count(r.Z_PK)
+            FROM ZFOLDER f
+            LEFT JOIN ZCLOUDRECORDING r
+              ON r.ZFOLDER = f.Z_PK AND r.ZUNIQUEID IS NOT NULL AND r.ZPATH IS NOT NULL
+            WHERE f.ZENCRYPTEDNAME IS NOT NULL
+            GROUP BY f.Z_PK
+            UNION ALL
+            SELECT NULL, count(*) FROM ZCLOUDRECORDING
+            WHERE ZFOLDER IS NULL AND ZUNIQUEID IS NOT NULL AND ZPATH IS NOT NULL
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return nil }
+        defer { sqlite3_finalize(stmt) }
+
+        var folders: [(name: String, count: Int)] = []
+        var unfiled = 0
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let count = Int(sqlite3_column_int64(stmt, 1))
+            if let name = columnString(stmt, 0) { folders.append((name, count)) } else { unfiled = count }
+        }
+        folders.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return (folders, unfiled)
+    }
+
     /// Fetch a single recording by its `ZUNIQUEID`. Returns nil if not found or
     /// the database is unreadable.
     public static func find(id: String, dbPath: String? = nil) -> Recording? {
