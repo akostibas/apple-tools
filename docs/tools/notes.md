@@ -1,7 +1,7 @@
 # notes — Notes
 
 Read and write Apple Notes: list folders, search, read full note content, and
-create or append notes. Note bodies are authored and returned as Markdown.
+create, append, move, or delete notes, and rename folders. Note bodies are authored and returned as Markdown.
 
 **Access:** read/write
 **Permissions:** Automation (AppleScript control of Notes) for `folders`,
@@ -23,6 +23,15 @@ link/checklist recovery on `read`, which read `NoteStore.sqlite` directly.
   with missing segments creates them nested.
 - **append** — add Markdown `text` to the end of an existing note found by `id`
   or `title`.
+- **move** — move a note (by `id` or `title`) to `folder` (a name or folder `id`).
+- **delete** — delete a note by `id` or `title`. It goes to Recently Deleted and
+  can be recovered there for 30 days. A shared note's result carries a `notice`,
+  since the change reaches everyone it's shared with.
+- **rename-folder** — rename `folder` (name or `id`) to `name`. Refused if a
+  sibling folder already has that name.
+
+`move` and `delete` refuse a title that matches more than one live note, and
+list the candidates' ids. Notes in Recently Deleted are never matched.
 
 Run `apple-tools notes --help` for the exact parameters of each action.
 
@@ -34,13 +43,18 @@ apple-tools notes search --query "meeting" --full_text --limit 10
 apple-tools notes read --title "Grocery list"
 apple-tools notes create --title "Trip plan" --body "# Trip plan\n- book flights" --folder "Travel/2026"
 apple-tools notes append --title "Grocery list" --text "- olive oil"
+apple-tools notes move --title "Trip plan" --folder "Archive"
+apple-tools notes rename-folder --folder "Misc" --name "Archive"
 ```
 
 ## Shortcomings
 
-- **No delete, rename, or move.** The only actions are folders/search/read/
-  create/append (`NotesTool.handle`); there is no way to delete a note, rename
-  it, or move it between folders.
+- **Folders can't be deleted or created on their own.** Scripted folder deletes
+  in an iCloud account don't stick: the folder comes back within minutes, with
+  its notes. So there's no delete-folder action. Delete folders in the Notes app.
+  (A folder can still be created as a side effect of `create --folder`.)
+- **Notes can't be renamed.** A note's title is its first line; edit it in Notes.
+- **Locked notes are refused** by `move` and `delete`; unlock them in Notes first.
 - **Append-only editing.** `append` sets `body of theNote` to
   `existingBody & theContent` — content can only be added to the end. There is
   no replace, insert, or edit of existing text, and no way to remove content.

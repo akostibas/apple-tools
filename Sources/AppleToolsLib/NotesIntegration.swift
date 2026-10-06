@@ -549,6 +549,179 @@ public enum NotesIntegration {
         return AppendResult(id: parts[0], title: parts[1], totalLength: Int(parts[2]))
     }
 
+    // MARK: - Move / delete / rename folder
+
+    public struct ChangedNote {
+        public let id: String
+        public let title: String
+        public let folder: String
+        public let shared: Bool
+    }
+
+    /// App-wide `whose` lookups also match notes and folders in Recently
+    /// Deleted, so every resolver here filters through isDeletedFolder.
+    static let mutationHandlers = """
+    \(folderScriptHandlers)
+    on liveNotes(theKey)
+        tell application "Notes"
+            if theKey starts with "x-coredata:" then
+                set ms to every note whose id is theKey
+            else
+                set ms to every note whose name is theKey
+            end if
+            set live to {}
+            repeat with n in ms
+                try
+                    if not (my isDeletedFolder(container of n)) then set end of live to contents of n
+                end try
+            end repeat
+        end tell
+        return live
+    end liveNotes
+
+    on liveFolders(theKey)
+        tell application "Notes"
+            if theKey starts with "x-coredata:" then
+                set ms to every folder whose id is theKey
+            else
+                set ms to every folder whose name is theKey
+            end if
+            set live to {}
+            repeat with f in ms
+                if not (my isDeletedFolder(f)) then set end of live to contents of f
+            end repeat
+        end tell
+        return live
+    end liveFolders
+
+    on describeNote(n)
+        tell application "Notes"
+            set sh to "0"
+            if shared of n then set sh to "1"
+            -- Notes can't resolve `name of container of n` in one step (-1700).
+            set c to container of n
+            return (id of n) & (character id 31) & (name of n) & (character id 31) & (name of c) & (character id 31) & sh
+        end tell
+    end describeNote
+
+    on describeFolder(f)
+        tell application "Notes"
+            set c to container of f
+            return (id of f) & (character id 31) & (name of f) & (character id 31) & (name of c)
+        end tell
+    end describeFolder
+
+    on listing(tag, things, isNote)
+        set out to tag
+        repeat with t in things
+            if isNote then
+                set out to out & (character id 30) & my describeNote(t)
+            else
+                set out to out & (character id 30) & my describeFolder(t)
+            end if
+        end repeat
+        return out
+    end listing
+    """
+
+    /// Prefix shared by move/delete: resolves exactly one live, unlocked note
+    /// into `theNote`, or returns a NOTE_* status.
+    static let resolveOneNote = """
+    set theKey to do shell script "printenv APPLE_TOOLS_NOTES_KEY"
+    set ms to my liveNotes(theKey)
+    if (count of ms) is 0 then return "NOTE_NONE"
+    if (count of ms) > 1 then return my listing("NOTE_MANY", ms, true)
+    set theNote to item 1 of ms
+    tell application "Notes"
+        if password protected of theNote then return "NOTE_LOCKED"
+    end tell
+    """
+
+    static let resolveOneFolder = """
+    set folderKey to do shell script "printenv APPLE_TOOLS_NOTES_FOLDER"
+    set fms to my liveFolders(folderKey)
+    if (count of fms) is 0 then return "FOLDER_NONE"
+    if (count of fms) > 1 then return my listing("FOLDER_MANY", fms, false)
+    set theFolder to item 1 of fms
+    """
+
+    // applescript-runner: no-verifier — move/delete/rename are safe to retry: a
+    // repeat lands the same state or reports "not found", never a duplicate.
+    public static func moveNote(key: String, folder: String) throws -> ChangedNote {
+        let script = """
+        \(mutationHandlers)
+        \(resolveOneNote)
+        \(resolveOneFolder)
+        log "PHASE: pre-commit"
+        tell application "Notes" to move theNote to theFolder
+        log "PHASE: committed"
+        return "OK" & (character id 30) & my describeNote(theNote)
+        """
+        return try changedNote(runMutation(script, ["APPLE_TOOLS_NOTES_KEY": key, "APPLE_TOOLS_NOTES_FOLDER": folder], key: key, folder: folder))
+    }
+
+    public static func deleteNote(key: String) throws -> ChangedNote {
+        let script = """
+        \(mutationHandlers)
+        \(resolveOneNote)
+        set info to my describeNote(theNote)
+        log "PHASE: pre-commit"
+        tell application "Notes" to delete theNote
+        log "PHASE: committed"
+        return "OK" & (character id 30) & info
+        """
+        return try changedNote(runMutation(script, ["APPLE_TOOLS_NOTES_KEY": key], key: key, folder: nil))
+    }
+
+    // applescript-runner: no-verifier — see moveNote.
+    public static func renameFolder(folder: String, newName: String) throws -> Folder {
+        let script = """
+        \(mutationHandlers)
+        \(resolveOneFolder)
+        set newName to do shell script "printenv APPLE_TOOLS_NOTES_NEW_NAME"
+        tell application "Notes"
+            repeat with s in (every folder of (container of theFolder))
+                if (name of s) is newName and (id of s) is not (id of theFolder) and not (my isDeletedFolder(s)) then return "NAME_TAKEN"
+            end repeat
+            log "PHASE: pre-commit"
+            set name of theFolder to newName
+            log "PHASE: committed"
+        end tell
+        return "OK" & (character id 30) & my describeFolder(theFolder)
+        """
+        let f = try runMutation(script, ["APPLE_TOOLS_NOTES_FOLDER": folder, "APPLE_TOOLS_NOTES_NEW_NAME": newName], key: nil, folder: folder)
+        return Folder(id: f[0], name: f[1], noteCount: nil, parentID: nil, path: nil)
+    }
+
+    /// Runs a mutation script and maps its status line to an error, or returns
+    /// the fields of the single OK record.
+    static func runMutation(_ script: String, _ env: [String: String], key: String?, folder: String?) throws -> [String] {
+        let (out, err) = runAppleScript(script, env, nil)
+        if let err = err { throw NotesError.scriptFailed(err) }
+        let records = out.components(separatedBy: recordSep)
+        let rows = records.dropFirst().map { $0.components(separatedBy: fieldSep) }
+        func candidates() -> String {
+            rows.filter { $0.count >= 3 }.map { "'\($0[1])' in '\($0[2])' (id \($0[0]))" }.joined(separator: "; ")
+        }
+        switch records[0] {
+        case "OK":
+            guard let row = rows.first, row.count >= 3 else { throw NotesError.parseFailure("changed, but failed to parse response") }
+            return row
+        case "NOTE_NONE": throw NotesError.notFound
+        case "NOTE_MANY": throw NotesError.scriptFailed("more than one note is titled '\(key ?? "")'; pass the id of the one you mean: \(candidates())")
+        case "NOTE_LOCKED": throw NotesError.scriptFailed("that note is locked with a password; unlock it in Notes first")
+        case "FOLDER_NONE": throw NotesError.scriptFailed("no folder named '\(folder ?? "")'")
+        case "FOLDER_MANY": throw NotesError.scriptFailed("more than one folder is named '\(folder ?? "")'; pass the id of the one you mean: \(candidates())")
+        case "NAME_TAKEN": throw NotesError.scriptFailed("a folder with that name already exists alongside it")
+        default: throw NotesError.parseFailure("unexpected response: \(out.prefix(200))")
+        }
+    }
+
+    static func changedNote(_ row: [String]) throws -> ChangedNote {
+        guard row.count >= 4 else { throw NotesError.parseFailure("changed, but failed to parse response") }
+        return ChangedNote(id: row[0], title: row[1], folder: row[2], shared: row[3] == "1")
+    }
+
     // MARK: - AppleScript runner & escape helpers
 
     /// Test seam: swappable runner that accepts an env dict for payload values.

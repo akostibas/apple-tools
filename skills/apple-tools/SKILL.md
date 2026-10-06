@@ -50,7 +50,7 @@ temp dir).
 
 These actions change state or are visible to others. Confirm with the user in
 chat before running them: `imessage send`, `email draft` (creates a draft),
-`calendar create`/`update`/`delete`, `reminders create`/`update`/`delete`/`complete`, `notes create`/`append`,
+`calendar create`/`update`/`delete`, `reminders create`/`update`/`delete`/`complete`, `notes create`/`append`/`move`/`delete`/`rename-folder`,
 `clipboard write`, `open_uri`. (`--confirm` additionally pops a native
 Allow/Deny dialog; off by default.)
 
@@ -64,7 +64,7 @@ Allow/Deny dialog; off by default.)
   this|future|all`, default `this`). Refuses invites you don't organize.
 - **reminders** — `lists`, `search`, `get`, `create`, `update`, `delete` (`--recurrence` RRULE, `--priority`, `--flagged`), `create-list` (new list,
   optional `--account`; rejects duplicate names), `complete`.
-- **notes** — `folders`, `search`, `read`, `create`, `append`. Content is
+- **notes** — `folders`, `search`, `read`, `create`, `append`, `move`, `delete` (to Recently Deleted), `rename-folder`. Content is
   Markdown (headings, bold/italic/strike/mono, lists round-trip). `--folder`
   takes a name or a `/`-separated path as reported by `folders`; on create,
   missing path segments are created nested.
