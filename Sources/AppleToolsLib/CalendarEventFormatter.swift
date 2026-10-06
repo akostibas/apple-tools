@@ -43,6 +43,8 @@ public struct CalendarEventRecord {
     public let organizer: CalendarAttendee?
     public let isOrganizer: Bool
     public let myStatus: String?
+    /// RRULE of the series this occurrence belongs to, if it repeats.
+    public let recurrence: String?
 
     public init(
         id: String,
@@ -58,7 +60,8 @@ public struct CalendarEventRecord {
         attendees: [CalendarAttendee] = [],
         organizer: CalendarAttendee? = nil,
         isOrganizer: Bool = false,
-        myStatus: String? = nil
+        myStatus: String? = nil,
+        recurrence: String? = nil
     ) {
         self.id = id
         self.externalID = externalID
@@ -74,6 +77,7 @@ public struct CalendarEventRecord {
         self.organizer = organizer
         self.isOrganizer = isOrganizer
         self.myStatus = myStatus
+        self.recurrence = recurrence
     }
 }
 
@@ -106,6 +110,7 @@ public enum CalendarEventFormatter {
         if !r.attendees.isEmpty { entry["attendees"] = r.attendees.map { attendeeDict($0) } }
         if let organizer = r.organizer { entry["organizer"] = attendeeDict(organizer) }
         if let status = r.myStatus { entry["my_status"] = status }
+        if let rule = r.recurrence { entry["recurrence"] = rule }
         return entry
     }
 

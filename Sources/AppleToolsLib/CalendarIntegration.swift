@@ -21,6 +21,9 @@ public enum CalendarIntegration {
         case invalidDate(String)
         case calendarNotFound(String)
         case saveFailed(String)
+        case eventNotFound(String)
+        case notOrganizer(String)
+        case readOnlyCalendar(String)
 
         public var description: String {
             switch self {
@@ -32,6 +35,12 @@ public enum CalendarIntegration {
                 return "no calendar found with name: \(name)"
             case .saveFailed(let reason):
                 return "failed to save event: \(reason)"
+            case .eventNotFound(let detail):
+                return "no event found: \(detail)"
+            case .notOrganizer(let title):
+                return "can't change \"\(title)\": you're not the organizer. Changing or deleting an invite here can be silently undone by the next sync or send the organizer a decline. Change it in Calendar.app instead."
+            case .readOnlyCalendar(let name):
+                return "calendar \"\(name)\" is read-only (e.g. a subscription or Birthdays) and can't be changed"
             }
         }
     }
@@ -126,30 +135,92 @@ public enum CalendarIntegration {
         calendar: EKCalendar?,
         location: String?,
         notes: String?,
-        allDay: Bool = false
+        allDay: Bool = false,
+        recurrence: EKRecurrenceRule? = nil,
+        timeZone: TimeZone? = nil
     ) throws -> EKEvent {
         let event = EKEvent(eventStore: store)
         event.title = title
         event.isAllDay = allDay
+        if let timeZone = timeZone { event.timeZone = timeZone }
         event.startDate = start
         event.endDate = end
         event.calendar = calendar ?? store.defaultCalendarForNewEvents
+        if let cal = event.calendar, !cal.allowsContentModifications {
+            throw CalendarError.readOnlyCalendar(cal.title)
+        }
         if let location = location { event.location = location }
         if let notes = notes { event.notes = notes }
+        if let recurrence = recurrence { event.recurrenceRules = [recurrence] }
 
-        do {
-            try store.save(event, span: .thisEvent)
-        } catch {
-            throw CalendarError.saveFailed(error.localizedDescription)
+        try save(event, span: .thisEvent)
+        return event
+    }
+
+    /// Look up an event by `eventIdentifier`. Every occurrence of a repeating
+    /// event shares the id, so `occurrence` picks one: a bare day matches any
+    /// start on that local day, an instant matches the start within a minute.
+    /// Without `occurrence`, EventKit returns the series' first occurrence.
+    public static func findEvent(id: String, occurrence: String?) throws -> EKEvent {
+        guard let occurrence = occurrence else {
+            guard let event = store.event(withIdentifier: id) else {
+                throw CalendarError.eventNotFound("id \(id)")
+            }
+            return event
+        }
+
+        let dayOnly = isDateOnly(occurrence)
+        guard let target = dayOnly ? parseDay(occurrence) : parseDate(occurrence) else {
+            throw CalendarError.invalidDate("occurrence")
+        }
+        let day: TimeInterval = 86400
+        let candidates = events(from: target.addingTimeInterval(-day), to: target.addingTimeInterval(2 * day))
+            // A moved occurrence gets its own id: the series id plus "/RID=<original start>".
+            .filter { $0.eventIdentifier == id || $0.eventIdentifier?.hasPrefix(id + "/RID=") == true }
+        let match = candidates.first { ev in
+            dayOnly ? Calendar.current.isDate(ev.startDate, inSameDayAs: target)
+                    : abs(ev.startDate.timeIntervalSince(target)) < 60
+        }
+        guard let event = match else {
+            throw CalendarError.eventNotFound("id \(id) has no occurrence starting \(occurrence)")
         }
         return event
+    }
+
+    /// Refuse writes the user can't safely make: invites they don't organize
+    /// (edits get reverted or send a decline) and read-only calendars.
+    public static func checkWritable(_ event: EKEvent) throws {
+        if !event.calendar.allowsContentModifications {
+            throw CalendarError.readOnlyCalendar(event.calendar.title)
+        }
+        if let organizer = event.organizer, !organizer.isCurrentUser {
+            throw CalendarError.notOrganizer(event.title ?? "")
+        }
+    }
+
+    public static func save(_ event: EKEvent, span: EKSpan) throws {
+        do {
+            try store.save(event, span: span, commit: true)
+        } catch {
+            store.reset()
+            throw CalendarError.saveFailed(error.localizedDescription)
+        }
+    }
+
+    public static func remove(_ event: EKEvent, span: EKSpan) throws {
+        do {
+            try store.remove(event, span: span, commit: true)
+        } catch {
+            store.reset()
+            throw CalendarError.saveFailed(error.localizedDescription)
+        }
     }
 
     // MARK: - Date parsing
 
     /// Parse ISO 8601 dates with/without fractional seconds, or zone-less
     /// `yyyy-MM-dd[THH:mm:ss]` (treated as local time — LLMs often omit the Z).
-    public static func parseDate(_ str: String) -> Date? {
+    public static func parseDate(_ str: String, timeZone: TimeZone = .current) -> Date? {
         let fmt = ISO8601DateFormatter()
         fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let d = fmt.date(from: str) { return d }
@@ -159,6 +230,7 @@ public enum CalendarIntegration {
 
         let df = DateFormatter()
         df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = timeZone
         for format in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd"] {
             df.dateFormat = format
             if let d = df.date(from: str) { return d }
@@ -170,11 +242,11 @@ public enum CalendarIntegration {
     /// calendar day. All-day events anchor to days, not instants: a UTC-suffixed
     /// midnight (`2026-09-02T00:00:00Z`) would otherwise land on Sep 1 west of
     /// Greenwich.
-    public static func parseDay(_ str: String) -> Date? {
+    public static func parseDay(_ str: String, timeZone: TimeZone = .current) -> Date? {
         let df = DateFormatter()
         df.calendar = Calendar(identifier: .gregorian)
         df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = .current
+        df.timeZone = timeZone
         df.dateFormat = "yyyy-MM-dd"
         return df.date(from: String(str.prefix(10)))
     }
