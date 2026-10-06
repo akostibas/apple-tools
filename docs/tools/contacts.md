@@ -2,9 +2,9 @@
 
 Look up people in Apple Contacts. Search finds contacts by name, email, phone,
 or group name and returns brief summaries; `get` returns the full record for a
-single contact by id.
+single contact by id; `update` edits a contact.
 
-**Access:** read
+**Access:** read/write
 **Permissions:** Contacts (TCC). First access triggers the system dialog; grant
 in System Settings → Privacy & Security → Contacts.
 
@@ -18,6 +18,12 @@ in System Settings → Privacy & Security → Contacts.
   emails/phones with labels, postal addresses, URLs, birthday and other dates,
   relations, social profiles, IM handles, job/department, nickname, prefix/suffix,
   and type (person/organization).
+- **update** — edit a contact by `id`. Set or clear (empty string) name parts,
+  nickname, organization, job title, and department; set `birthday` (YYYY-MM-DD,
+  MM-DD, or `none`). Phones, emails, URLs, and addresses change one entry at a
+  time with `add_*` / `remove_*`; every other entry is left alone. `label` names
+  what's added (home, work, mobile, …). Removing a value the contact doesn't have
+  is an error. Returns the updated contact.
 
 Run `apple-tools contacts --help` for the exact parameters of each action.
 
@@ -28,13 +34,18 @@ apple-tools contacts search --query "Sam"
 apple-tools contacts search --query "acme.com" --limit 5
 apple-tools contacts search --query "Family"
 apple-tools contacts get --id "<CONTACT-ID>"
+apple-tools contacts update --id "<CONTACT-ID>" --remove_phone "415 555 0101" --add_phone "415 555 0199" --label mobile
 ```
 
 ## Shortcomings
 
-- **Read-only — no create, edit, or delete.** The access policy is `.read` for
-  both actions (`ContactsTool.accessPolicy`); there is no add/update/remove path.
-  You cannot create a contact, change a field, add to a group, or delete anyone.
+- **No create, delete, merge, photo, or group edits.** Only existing contacts can
+  be edited.
+- **Notes and relations/dates/social profiles can't be edited.** Apple gates the
+  contact note behind a special entitlement; the others just aren't wired up.
+- **One add and one remove per kind per call.** To add two phones, call twice.
+- **Read-only accounts fail at save.** Contacts from an account you can't edit
+  (e.g. a company directory) return the save error with a hint to edit them there.
 - **`search` returns summaries only — one email and one phone.** `contactSummary`
   emits only `emailAddresses.first` and `phoneNumbers.first`, and omits postal
   addresses, birthdays, additional emails/phones, and all other fields entirely.
