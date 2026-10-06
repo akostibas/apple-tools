@@ -3,19 +3,21 @@ import Foundation
 public struct NotesTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "notes",
-        description: "Access Apple Notes. Actions: 'folders' (list folders), 'list' (every note in a folder, newest first, with modification times — use this to enumerate or to detect what changed; 'search' cannot, it needs a keyword), 'search' (find notes by keyword with pagination; matches titles by default, pass full_text=true to also search note bodies; a multi-word query is AND-of-terms — every word must appear, in any order, not only as an adjacent phrase; returns snippets only — use 'read' for full content), 'read' (get note content by ID or title), 'create' (new note in a folder), 'append' (add content to an existing note). Content is Markdown: headings (#, ##), **bold**, *italic*, ~~strike~~, `mono`, and -/1. lists round-trip. Apple Notes can't store links or checkboxes via this API, so [text](url) becomes 'text (url)' and '- [ ]' becomes a plain bullet on write; checkbox state on read may lag (read from the on-disk store).",
+        description: "Access Apple Notes. Actions: 'folders' (list folders), 'list' (every note in a folder, newest first, with modification times — use this to enumerate or to detect what changed; 'search' cannot, it needs a keyword), 'search' (find notes by keyword with pagination; matches titles by default, pass full_text=true to also search note bodies; a multi-word query is AND-of-terms — every word must appear, in any order, not only as an adjacent phrase; returns snippets only — use 'read' for full content), 'read' (get note content by ID or title), 'create' (new note in a folder), 'append' (add content to an existing note), 'move' (move a note to another folder), 'delete' (move a note to Recently Deleted, recoverable for 30 days), 'rename-folder'. Move/delete refuse a title that matches several notes; pass the id instead. Content is Markdown: headings (#, ##), **bold**, *italic*, ~~strike~~, `mono`, and -/1. lists round-trip. Apple Notes can't store links or checkboxes via this API, so [text](url) becomes 'text (url)' and '- [ ]' becomes a plain bullet on write; checkbox state on read may lag (read from the on-disk store).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "folders, list, search, read, create, or append"),
+                "action": PropertySchema(type_: "string", description: "folders, list, search, read, create, append, move, delete, or rename-folder"),
                 "query": PropertySchema(type_: "string", description: "Search keyword(s) (required for search). Multiple words are AND-of-terms: every word must appear, in any order",
                     summary: "Search keyword", actions: ["search"]),
-                "folder": PropertySchema(type_: "string", description: "For list and search, the folder's own name as reported by 'folders' — the leaf, not its path; a '/'-separated path matches nothing. For create, a '/'-separated path: an existing folder is used as-is, and missing segments are created nested",
-                    summary: "Folder name (list, search) or '/'-separated path (create)", actions: ["list", "search", "create"]),
-                "id": PropertySchema(type_: "string", description: "Note ID, x-coredata:// URI (for read, append)",
-                    summary: "Note ID (x-coredata:// URI)", actions: ["read", "append"]),
-                "title": PropertySchema(type_: "string", description: "Note title (for read, append, create)",
-                    summary: "Note title", actions: ["read", "append", "create"]),
+                "folder": PropertySchema(type_: "string", description: "For list and search, the folder's own name as reported by 'folders' — the leaf, not its path; a '/'-separated path matches nothing. For create, a '/'-separated path: an existing folder is used as-is, and missing segments are created nested. For move (destination) and rename-folder (the folder to rename), a folder name or its id from 'folders'",
+                    summary: "Folder name (list, search, move, rename-folder) or '/'-separated path (create)", actions: ["list", "search", "create", "move", "rename-folder"]),
+                "name": PropertySchema(type_: "string", description: "New folder name (required for rename-folder)",
+                    summary: "New folder name", actions: ["rename-folder"]),
+                "id": PropertySchema(type_: "string", description: "Note ID, x-coredata:// URI (for read, append, move, delete)",
+                    summary: "Note ID (x-coredata:// URI)", actions: ["read", "append", "move", "delete"]),
+                "title": PropertySchema(type_: "string", description: "Note title (for read, append, create, move, delete)",
+                    summary: "Note title", actions: ["read", "append", "create", "move", "delete"]),
                 "body": PropertySchema(type_: "string", description: "Note body as Markdown (for create)",
                     summary: "Note body as Markdown", actions: ["create"]),
                 "text": PropertySchema(type_: "string", description: "Markdown to append (required for append)",
@@ -29,7 +31,7 @@ public struct NotesTool: ProbeTool {
             ],
             required: ["action"]
         ),
-        cliSummary: "Read, search, create, and append Apple Notes.",
+        cliSummary: "Read, search, create, append, move, and delete Apple Notes.",
         actions: [
             ActionHelp(name: "folders", summary: "List folders",
                 example: "apple-tools notes folders"),
@@ -43,6 +45,12 @@ public struct NotesTool: ProbeTool {
                 example: "apple-tools notes create --title <t> [--body <md>] [--folder <f>]", required: ["title"]),
             ActionHelp(name: "append", summary: "Add content to an existing note",
                 example: "apple-tools notes append (--id <id> | --title <t>) --text <md>", required: ["text"]),
+            ActionHelp(name: "move", summary: "Move a note to another folder",
+                example: "apple-tools notes move (--id <id> | --title <t>) --folder <name|id>", required: ["folder"]),
+            ActionHelp(name: "delete", summary: "Delete a note (recoverable from Recently Deleted for 30 days)",
+                example: "apple-tools notes delete (--id <id> | --title <t>)"),
+            ActionHelp(name: "rename-folder", summary: "Rename a folder",
+                example: "apple-tools notes rename-folder --folder <name|id> --name <new>", required: ["folder", "name"]),
         ]
     )
 
@@ -53,6 +61,9 @@ public struct NotesTool: ProbeTool {
         "read":    .read,
         "create":  .readWrite,
         "append":  .readWrite,
+        "move":    .readWrite,
+        "delete":  .readWrite,
+        "rename-folder": .readWrite,
     ])
 
     public init() {}
@@ -103,8 +114,30 @@ public struct NotesTool: ProbeTool {
                 return ("missing required parameter: text", true)
             }
             return append(id: id, title: title, text: text)
+        case "move", "delete":
+            guard let key = (params?["id"]?.value as? String) ?? (params?["title"]?.value as? String), !key.isEmpty else {
+                return ("\(action) requires 'id' or 'title' parameter", true)
+            }
+            if action == "delete" { return changeNote { try NotesIntegration.deleteNote(key: key) } }
+            guard let folder = params?["folder"]?.value as? String, !folder.isEmpty else {
+                return ("missing required parameter: folder", true)
+            }
+            return changeNote { try NotesIntegration.moveNote(key: key, folder: folder) }
+        case "rename-folder":
+            guard let folder = params?["folder"]?.value as? String, !folder.isEmpty else {
+                return ("missing required parameter: folder", true)
+            }
+            guard let name = params?["name"]?.value as? String, !name.isEmpty else {
+                return ("missing required parameter: name", true)
+            }
+            do {
+                let f = try NotesIntegration.renameFolder(folder: folder, newName: name)
+                return (jsonEncode(["id": f.id, "name": f.name]), false)
+            } catch {
+                return ("\(error)", true)
+            }
         default:
-            return ("unknown action: \(action) (use folders, list, search, read, create, or append)", true)
+            return ("unknown action: \(action) (use folders, list, search, read, create, append, move, delete, or rename-folder)", true)
         }
     }
 
@@ -276,6 +309,17 @@ public struct NotesTool: ProbeTool {
             response["total_length"] = len
         }
         return (jsonEncode(response), false)
+    }
+
+    private func changeNote(_ op: () throws -> NotesIntegration.ChangedNote) -> (String, Bool) {
+        do {
+            let n = try op()
+            var response: [String: Any] = ["id": n.id, "title": n.title, "folder": n.folder]
+            if n.shared { response["notice"] = "this note is shared, so the change affects everyone it's shared with" }
+            return (jsonEncode(response), false)
+        } catch {
+            return ("\(error)", true)
+        }
     }
 
     // MARK: - Helpers
