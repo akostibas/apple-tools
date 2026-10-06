@@ -50,7 +50,7 @@ temp dir).
 
 These actions change state or are visible to others. Confirm with the user in
 chat before running them: `imessage send`, `email draft` (creates a draft),
-`calendar create`/`update`/`delete`, `reminders create`/`update`/`delete`/`complete`, `notes create`/`append`/`move`/`delete`/`rename-folder`, `contacts update`,
+`calendar create`/`update`/`delete`, `reminders create`/`update`/`delete`/`complete`, `notes create`/`append`/`move`/`delete`/`rename-folder`, `contacts create`/`update`,
 `clipboard write`, `open_uri`. (`--confirm` additionally pops a native
 Allow/Deny dialog; off by default.)
 
@@ -68,7 +68,7 @@ Allow/Deny dialog; off by default.)
   Markdown (headings, bold/italic/strike/mono, lists round-trip). `--folder`
   takes a name or a `/`-separated path as reported by `folders`; on create,
   missing path segments are created nested.
-- **contacts** — `search` (name/email/phone/group), `get` (by ID), `update` (set fields; add/remove one phone, email, URL, or address per call).
+- **contacts** — `search` (name/email/phone/group), `get` (by ID, incl. `accounts`), `create` (refuses duplicates; optional `--account`), `update` (set fields; add/remove one phone, email, URL, or address per call).
 - **email** — `inbox`, `search`, `read`, `fetch_attachment`, `draft` (does NOT
   send; supports attachments by absolute path).
 - **imessage** — `recent`, `read`, `search`, `send` (iMessage/SMS; supports

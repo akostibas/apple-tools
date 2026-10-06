@@ -2,7 +2,7 @@
 
 Look up people in Apple Contacts. Search finds contacts by name, email, phone,
 or group name and returns brief summaries; `get` returns the full record for a
-single contact by id; `update` edits a contact.
+single contact by id; `create` and `update` add and edit contacts.
 
 **Access:** read/write
 **Permissions:** Contacts (TCC). First access triggers the system dialog; grant
@@ -17,7 +17,15 @@ in System Settings → Privacy & Security → Contacts.
 - **get** — full details for one contact by `id` (from a search result): all
   emails/phones with labels, postal addresses, URLs, birthday and other dates,
   relations, social profiles, IM handles, job/department, nickname, prefix/suffix,
-  and type (person/organization).
+  and type (person/organization), plus `accounts`: every account (iCloud,
+  Google, Exchange, …) holding a card for this person, since Contacts merges
+  linked cards into one.
+- **create** — add a contact using the same fields as `update` (`add_phone`,
+  `add_email`, … for its first entries). Goes to the default account, or the
+  one named by `account`. Refused when an existing contact has the same full
+  name, any of the same phones (compared ignoring formatting), or any of the same
+  emails; the error names that contact's id so the caller can update it instead.
+  Needs at least a name, company, phone, or email.
 - **update** — edit a contact by `id`. Set or clear (empty string) name parts,
   nickname, organization, job title, and department; set `birthday` (YYYY-MM-DD,
   MM-DD, or `none`). Phones, emails, URLs, and addresses change one entry at a
@@ -34,13 +42,15 @@ apple-tools contacts search --query "Sam"
 apple-tools contacts search --query "acme.com" --limit 5
 apple-tools contacts search --query "Family"
 apple-tools contacts get --id "<CONTACT-ID>"
+apple-tools contacts create --given_name Priya --family_name Shah --add_phone "415 555 0199" --label mobile
 apple-tools contacts update --id "<CONTACT-ID>" --remove_phone "415 555 0101" --add_phone "415 555 0199" --label mobile
 ```
 
 ## Shortcomings
 
-- **No create, delete, merge, photo, or group edits.** Only existing contacts can
-  be edited.
+- **No delete, merge, photo, or group edits.**
+- **`accounts` costs a scan.** Apple has no direct lookup, so `get` checks each
+  account's member list; fast for hundreds of contacts per account.
 - **Notes and relations/dates/social profiles can't be edited.** Apple gates the
   contact note behind a special entitlement; the others just aren't wired up.
 - **One add and one remove per kind per call.** To add two phones, call twice.
