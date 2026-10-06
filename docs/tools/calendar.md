@@ -73,6 +73,9 @@ apple-tools calendar delete --id <id> --span all
 - **Only one repeat rule per event**, and only what EventKit can represent:
   no `BYHOUR`/`BYMINUTE`/`BYWEEKNO`/`BYYEARDAY`, no `EXDATE` (skip a date by
   deleting that occurrence instead).
+- **Changing a series' time brings back deleted occurrences** (an EventKit
+  limitation). They aren't re-deleted, since the user may want them at the new
+  time; the result's `notice` lists the dates (looking up to two years ahead).
 - **Moving one occurrence to another calendar is refused**; move the series.
 - **No alarms, URL, or availability on create/update.** `createEvent` sets no alarms,
   `url`, or availability, so a created event carries none of these — even though

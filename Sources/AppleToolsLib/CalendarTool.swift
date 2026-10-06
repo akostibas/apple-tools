@@ -284,6 +284,7 @@ public struct CalendarTool: ProbeTool {
             // Times are given for the anchor occurrence; shift the target by the
             // same delta so span=all moves the whole series, not just its first date.
             let zone = tz ?? event.timeZone ?? .current
+            let oldStart = event.startDate!
             if let start = start {
                 let delta = try parseTime(start, field: "start", allDay: isAllDay, timeZone: zone).timeIntervalSince(anchor.startDate)
                 let duration = event.endDate.timeIntervalSince(event.startDate)
@@ -317,9 +318,21 @@ public struct CalendarTool: ProbeTool {
             guard changed else {
                 throw ToolError("nothing to update: pass at least one of title, start, end, all_day, location, notes, calendar_name, recurrence, event_timezone")
             }
+            // EventKit doesn't move deleted dates with a series' time, so they come
+            // back. Don't re-delete (the user may want them now); say so instead.
+            let shift = event.startDate.timeIntervalSince(oldStart)
+            let checkRevived = recurring && span != .this && shift != 0
+            let before = checkRevived ? occurrenceDays(id: event.eventIdentifier, from: oldStart, shift: shift, tz: zone) : []
             try CalendarIntegration.save(event, span: recurring ? span.ek : .thisEvent)
             var result = writeResult(event)
             if recurring { result["span"] = span.rawValue }
+            if checkRevived {
+                let revived = occurrenceDays(id: event.eventIdentifier, from: event.startDate, shift: 0, tz: zone)
+                    .subtracting(before).sorted()
+                if !revived.isEmpty {
+                    result["notice"] = "occurrences you had deleted came back with the time change: \(revived.joined(separator: ", ")). Delete them again if they're still unwanted."
+                }
+            }
             return (jsonString(result) ?? "{}", false)
         } catch {
             return (String(describing: error), true)
@@ -341,6 +354,18 @@ public struct CalendarTool: ProbeTool {
     }
 
     // MARK: - Write helpers
+
+    /// Days (in `tz`) holding a regular occurrence of series `id`, each moved by `shift`.
+    // ponytail: two-year window; revived dates further out go unreported.
+    private func occurrenceDays(id: String?, from start: Date, shift: TimeInterval, tz: TimeZone) -> Set<String> {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = tz
+        df.dateFormat = "yyyy-MM-dd"
+        return Set(CalendarIntegration.events(from: start, to: start.addingTimeInterval(2 * 365 * 86400))
+            .filter { $0.eventIdentifier == id }
+            .map { df.string(from: $0.startDate.addingTimeInterval(shift)) })
+    }
 
     struct ToolError: Error, CustomStringConvertible {
         let description: String
