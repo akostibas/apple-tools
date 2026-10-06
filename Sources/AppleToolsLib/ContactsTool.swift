@@ -4,32 +4,54 @@ import Foundation
 public struct ContactsTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "contacts",
-        description: "Access Apple Contacts. Actions: 'search' (find contacts by name, email, phone, or group name; returns summaries only — street addresses, birthdays, and any additional emails/phones are NOT included), 'get' (full details for a contact by ID; the only way to see addresses and other non-summary fields).",
+        description: "Access Apple Contacts. Actions: 'search' (find contacts by name, email, phone, or group name; returns summaries only — street addresses, birthdays, and any additional emails/phones are NOT included), 'get' (full details for a contact by ID; the only way to see addresses and other non-summary fields), 'update' (edit a contact by ID: set single fields, or add/remove one phone, email, URL, or address at a time; other entries are left alone).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "search or get"),
+                "action": PropertySchema(type_: "string", description: "search, get, or update"),
+                "given_name": PropertySchema(type_: "string", description: "First name (update; empty string clears)", summary: "First name", actions: ["update"]),
+                "middle_name": PropertySchema(type_: "string", description: "Middle name (update; empty string clears)", summary: "Middle name", actions: ["update"]),
+                "family_name": PropertySchema(type_: "string", description: "Last name (update; empty string clears)", summary: "Last name", actions: ["update"]),
+                "nickname": PropertySchema(type_: "string", description: "Nickname (update; empty string clears)", summary: "Nickname", actions: ["update"]),
+                "prefix": PropertySchema(type_: "string", description: "Name prefix, e.g. Dr. (update; empty string clears)", summary: "Name prefix", actions: ["update"]),
+                "suffix": PropertySchema(type_: "string", description: "Name suffix, e.g. Jr. (update; empty string clears)", summary: "Name suffix", actions: ["update"]),
+                "organization": PropertySchema(type_: "string", description: "Company (update; empty string clears)", summary: "Company", actions: ["update"]),
+                "job_title": PropertySchema(type_: "string", description: "Job title (update; empty string clears)", summary: "Job title", actions: ["update"]),
+                "department": PropertySchema(type_: "string", description: "Department (update; empty string clears)", summary: "Department", actions: ["update"]),
+                "birthday": PropertySchema(type_: "string", description: "Birthday as YYYY-MM-DD, or MM-DD when the year is unknown; 'none' clears (update)", summary: "YYYY-MM-DD or MM-DD ('none' clears)", actions: ["update"]),
+                "add_phone": PropertySchema(type_: "string", description: "Phone number to add (update)", summary: "Phone to add", actions: ["update"]),
+                "add_email": PropertySchema(type_: "string", description: "Email to add (update)", summary: "Email to add", actions: ["update"]),
+                "add_url": PropertySchema(type_: "string", description: "URL to add (update)", summary: "URL to add", actions: ["update"]),
+                "add_address": PropertySchema(type_: "string", description: "Address to add as 'street; city; state; postal code; country' (trailing parts optional; update)", summary: "'street; city; state; postal code; country'", actions: ["update"]),
+                "label": PropertySchema(type_: "string", description: "Label for whatever is added: home, work, mobile, iphone, main, school, other, or a custom label (update; default other)", summary: "Label for added entries (home, work, mobile, …)", actions: ["update"]),
+                "remove_phone": PropertySchema(type_: "string", description: "Phone number to remove; matched by digits, so formatting doesn't matter (update)", summary: "Phone to remove", actions: ["update"]),
+                "remove_email": PropertySchema(type_: "string", description: "Email to remove, case-insensitive (update)", summary: "Email to remove", actions: ["update"]),
+                "remove_url": PropertySchema(type_: "string", description: "URL to remove (update)", summary: "URL to remove", actions: ["update"]),
+                "remove_address": PropertySchema(type_: "string", description: "Address to remove: its street line, or the full address as 'get' shows it (update)", summary: "Address (street line) to remove", actions: ["update"]),
                 "query": PropertySchema(type_: "string", description: "Search term — matches name, email, phone, or group name (required for search). A multi-word query requires each word to match some field (name/email/phone) of the same contact, so 'Mike Walter' finds 'Michael Walter' when a field carries each word",
                     summary: "Search term matched across name, email, phone, group", actions: ["search"]),
                 "limit": PropertySchema(type_: "integer", description: "Max results to return (for search, default 20)",
                     summary: "Max results (default 20)", actions: ["search"]),
-                "id": PropertySchema(type_: "string", description: "Contact identifier from search results (required for get)",
-                    summary: "Contact ID from search results", actions: ["get"]),
+                "id": PropertySchema(type_: "string", description: "Contact identifier from search results (required for get, update)",
+                    summary: "Contact ID from search results", actions: ["get", "update"]),
             ],
             required: ["action"]
         ),
-        cliSummary: "Search Apple Contacts and read full contact details.",
+        cliSummary: "Search, read, and edit Apple Contacts.",
         actions: [
             ActionHelp(name: "search", summary: "Find contacts by name, email, phone, or group",
                 example: "apple-tools contacts search --query <text> [--limit <n>]", required: ["query"]),
             ActionHelp(name: "get", summary: "Get full details for a contact by ID",
                 example: "apple-tools contacts get --id <id>", required: ["id"]),
+            ActionHelp(name: "update", summary: "Edit a contact: set fields, add or remove one phone/email/URL/address",
+                example: "apple-tools contacts update --id <id> [--job_title <t>] [--add_phone <n> --label mobile] [--remove_email <e>] [--birthday 1990-04-15]", required: ["id"]),
         ]
     )
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
         "search": .read,
         "get":    .read,
+        "update": .readWrite,
     ])
 
     public init() {}
@@ -55,8 +77,13 @@ public struct ContactsTool: ProbeTool {
                 return ("missing required parameter: id", true)
             }
             return get(id: id)
+        case "update":
+            guard let id = params?["id"]?.value as? String, !id.isEmpty else {
+                return ("missing required parameter: id", true)
+            }
+            return update(id: id, params: params ?? [:])
         default:
-            return ("unknown action: \(action) (use search or get)", true)
+            return ("unknown action: \(action) (use search, get, or update)", true)
         }
     }
 
@@ -118,7 +145,151 @@ public struct ContactsTool: ProbeTool {
     // MARK: - Get
 
     private func get(id: String) -> (String, Bool) {
-        let allKeys: [CNKeyDescriptor] = [
+        let contact: CNContact
+        do {
+            contact = try ContactsIntegration.contact(byIdentifier: id, keys: Self.allKeys)
+        } catch let error as ContactsIntegration.ContactsError {
+            return (error.description, true)
+        } catch {
+            return ("failed to fetch contact: \(error.localizedDescription)", true)
+        }
+
+        return (jsonEncode(contactFull(contact)), false)
+    }
+
+    // MARK: - Update
+
+    private static let singleFields: [(param: String, key: ReferenceWritableKeyPath<CNMutableContact, String>)] = [
+        ("given_name", \.givenName), ("middle_name", \.middleName), ("family_name", \.familyName),
+        ("nickname", \.nickname), ("prefix", \.namePrefix), ("suffix", \.nameSuffix),
+        ("organization", \.organizationName), ("job_title", \.jobTitle), ("department", \.departmentName),
+    ]
+    private static let multiKinds = ["phone", "email", "url", "address"]
+
+    private func update(id: String, params p: [String: AnyCodable]) -> (String, Bool) {
+        func str(_ key: String) -> String? { p[key]?.value as? String }
+
+        let editable = Self.singleFields.map(\.param) + ["birthday"]
+            + Self.multiKinds.flatMap { ["add_\($0)", "remove_\($0)"] }
+        guard editable.contains(where: { p[$0] != nil }) else {
+            return ("nothing to update: pass at least one of " + editable.joined(separator: ", "), true)
+        }
+
+        let found: CNContact
+        do {
+            found = try ContactsIntegration.contact(byIdentifier: id, keys: Self.allKeys)
+        } catch {
+            return ("\(error)", true)
+        }
+        guard let contact = found.mutableCopy() as? CNMutableContact else {
+            return ("couldn't edit contact \(id)", true)
+        }
+
+        for field in Self.singleFields {
+            if let v = str(field.param) { contact[keyPath: field.key] = v }
+        }
+        if let b = str("birthday") {
+            if b.lowercased() == "none" {
+                contact.birthday = nil
+            } else if let dc = Self.parseBirthday(b) {
+                contact.birthday = dc
+            } else {
+                return ("birthday must be YYYY-MM-DD, MM-DD, or none", true)
+            }
+        }
+
+        let label = Self.label(str("label"))
+        // Removes run before adds so "replace a number" is one call.
+        if let v = str("remove_phone") {
+            let target = PhoneFormatting.normalized(v)
+            guard let i = contact.phoneNumbers.firstIndex(where: { PhoneFormatting.normalized($0.value.stringValue) == target }) else {
+                return ("this contact has no phone \(v)", true)
+            }
+            contact.phoneNumbers.remove(at: i)
+        }
+        if let v = str("remove_email") {
+            guard let i = contact.emailAddresses.firstIndex(where: { ($0.value as String).caseInsensitiveCompare(v) == .orderedSame }) else {
+                return ("this contact has no email \(v)", true)
+            }
+            contact.emailAddresses.remove(at: i)
+        }
+        if let v = str("remove_url") {
+            guard let i = contact.urlAddresses.firstIndex(where: { ($0.value as String) == v }) else {
+                return ("this contact has no URL \(v)", true)
+            }
+            contact.urlAddresses.remove(at: i)
+        }
+        if let v = str("remove_address") {
+            let formatter = CNPostalAddressFormatter()
+            let want = Self.squash(v)
+            guard let i = contact.postalAddresses.firstIndex(where: {
+                Self.squash($0.value.street) == want || Self.squash(formatter.string(from: $0.value)) == want
+            }) else {
+                return ("this contact has no address \(v)", true)
+            }
+            contact.postalAddresses.remove(at: i)
+        }
+        if let v = str("add_phone"), !v.isEmpty {
+            contact.phoneNumbers.append(CNLabeledValue(label: label, value: CNPhoneNumber(stringValue: v)))
+        }
+        if let v = str("add_email"), !v.isEmpty {
+            contact.emailAddresses.append(CNLabeledValue(label: label, value: v as NSString))
+        }
+        if let v = str("add_url"), !v.isEmpty {
+            contact.urlAddresses.append(CNLabeledValue(label: label, value: v as NSString))
+        }
+        if let v = str("add_address"), !v.isEmpty {
+            let parts = v.split(separator: ";", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+            let address = CNMutablePostalAddress()
+            address.street = parts[0]
+            if parts.count > 1 { address.city = parts[1] }
+            if parts.count > 2 { address.state = parts[2] }
+            if parts.count > 3 { address.postalCode = parts[3] }
+            if parts.count > 4 { address.country = parts[4] }
+            contact.postalAddresses.append(CNLabeledValue(label: label, value: address))
+        }
+
+        do {
+            try ContactsIntegration.update(contact)
+            let saved = try ContactsIntegration.contact(byIdentifier: id, keys: Self.allKeys)
+            return (jsonEncode(contactFull(saved)), false)
+        } catch {
+            return ("\(error)", true)
+        }
+    }
+
+    static func parseBirthday(_ s: String) -> DateComponents? {
+        let parts = s.split(separator: "-").map { Int($0) }
+        guard !parts.contains(nil) else { return nil }
+        let n = parts.compactMap { $0 }
+        var dc = DateComponents()
+        switch n.count {
+        case 3: (dc.year, dc.month, dc.day) = (n[0], n[1], n[2])
+        case 2: (dc.month, dc.day) = (n[0], n[1])
+        default: return nil
+        }
+        guard (1...12).contains(dc.month!), (1...31).contains(dc.day!) else { return nil }
+        return dc
+    }
+
+    static func label(_ s: String?) -> String {
+        switch s?.lowercased() {
+        case nil, "", "other": return CNLabelOther
+        case "home": return CNLabelHome
+        case "work": return CNLabelWork
+        case "school": return CNLabelSchool
+        case "mobile": return CNLabelPhoneNumberMobile
+        case "iphone": return CNLabelPhoneNumberiPhone
+        case "main": return CNLabelPhoneNumberMain
+        default: return s!
+        }
+    }
+
+    private static func squash(_ s: String) -> String {
+        s.lowercased().components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    private static let allKeys: [CNKeyDescriptor] = [
             CNContactIdentifierKey as CNKeyDescriptor,
             CNContactGivenNameKey as CNKeyDescriptor,
             CNContactMiddleNameKey as CNKeyDescriptor,
@@ -139,19 +310,7 @@ public struct ContactsTool: ProbeTool {
             CNContactSocialProfilesKey as CNKeyDescriptor,
             CNContactInstantMessageAddressesKey as CNKeyDescriptor,
             CNContactTypeKey as CNKeyDescriptor,
-        ]
-
-        let contact: CNContact
-        do {
-            contact = try ContactsIntegration.contact(byIdentifier: id, keys: allKeys)
-        } catch let error as ContactsIntegration.ContactsError {
-            return (error.description, true)
-        } catch {
-            return ("failed to fetch contact: \(error.localizedDescription)", true)
-        }
-
-        return (jsonEncode(contactFull(contact)), false)
-    }
+    ]
 
     // MARK: - LLM payload formatting
 

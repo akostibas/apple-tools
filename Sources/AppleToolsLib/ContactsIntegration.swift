@@ -17,9 +17,12 @@ public enum ContactsIntegration {
         case accessDenied
         case fetchFailed(String)
         case notFound(String)
+        case saveFailed(String)
 
         public var description: String {
             switch self {
+            case .saveFailed(let reason):
+                return "couldn't save contact: \(reason)"
             case .accessDenied:
                 return "Contacts access denied. Grant permission in System Settings → Privacy & Security → Contacts."
             case .fetchFailed(let reason):
@@ -339,5 +342,30 @@ public enum ContactsIntegration {
             throw ContactsError.notFound(id)
         }
         return contact
+    }
+
+    // MARK: - Save
+
+    public static func update(_ contact: CNMutableContact) throws {
+        let request = CNSaveRequest()
+        request.update(contact)
+        do {
+            try store.execute(request)
+        } catch {
+            throw ContactsError.saveFailed("\(error.localizedDescription). If this contact comes from a read-only account (like a company directory), edit it there instead")
+        }
+    }
+
+    /// Live-test fixtures only; the tool deliberately can't create or delete contacts.
+    static func add(_ contact: CNMutableContact) throws {
+        let request = CNSaveRequest()
+        request.add(contact, toContainerWithIdentifier: nil)
+        try store.execute(request)
+    }
+
+    static func remove(_ contact: CNMutableContact) throws {
+        let request = CNSaveRequest()
+        request.delete(contact)
+        try store.execute(request)
     }
 }
