@@ -4,26 +4,27 @@ import Foundation
 public struct ContactsTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "contacts",
-        description: "Access Apple Contacts. Actions: 'search' (find contacts by name, email, phone, or group name; returns summaries only — street addresses, birthdays, and any additional emails/phones are NOT included), 'get' (full details for a contact by ID; the only way to see addresses and other non-summary fields), 'update' (edit a contact by ID: set single fields, or add/remove one phone, email, URL, or address at a time; other entries are left alone).",
+        description: "Access Apple Contacts. Actions: 'search' (find contacts by name, email, phone, or group name; returns summaries only — street addresses, birthdays, and any additional emails/phones are NOT included), 'get' (full details for a contact by ID; the only way to see addresses and other non-summary fields, including which account(s) it lives in), 'create' (new contact with the same fields as update, in the default account unless 'account' is given; refused if a contact with the same name, phone, or email exists), 'update' (edit a contact by ID: set single fields, or add/remove one phone, email, URL, or address at a time; other entries are left alone).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "search, get, or update"),
-                "given_name": PropertySchema(type_: "string", description: "First name (update; empty string clears)", summary: "First name", actions: ["update"]),
-                "middle_name": PropertySchema(type_: "string", description: "Middle name (update; empty string clears)", summary: "Middle name", actions: ["update"]),
-                "family_name": PropertySchema(type_: "string", description: "Last name (update; empty string clears)", summary: "Last name", actions: ["update"]),
-                "nickname": PropertySchema(type_: "string", description: "Nickname (update; empty string clears)", summary: "Nickname", actions: ["update"]),
-                "prefix": PropertySchema(type_: "string", description: "Name prefix, e.g. Dr. (update; empty string clears)", summary: "Name prefix", actions: ["update"]),
-                "suffix": PropertySchema(type_: "string", description: "Name suffix, e.g. Jr. (update; empty string clears)", summary: "Name suffix", actions: ["update"]),
-                "organization": PropertySchema(type_: "string", description: "Company (update; empty string clears)", summary: "Company", actions: ["update"]),
-                "job_title": PropertySchema(type_: "string", description: "Job title (update; empty string clears)", summary: "Job title", actions: ["update"]),
-                "department": PropertySchema(type_: "string", description: "Department (update; empty string clears)", summary: "Department", actions: ["update"]),
-                "birthday": PropertySchema(type_: "string", description: "Birthday as YYYY-MM-DD, or MM-DD when the year is unknown; 'none' clears (update)", summary: "YYYY-MM-DD or MM-DD ('none' clears)", actions: ["update"]),
-                "add_phone": PropertySchema(type_: "string", description: "Phone number to add (update)", summary: "Phone to add", actions: ["update"]),
-                "add_email": PropertySchema(type_: "string", description: "Email to add (update)", summary: "Email to add", actions: ["update"]),
-                "add_url": PropertySchema(type_: "string", description: "URL to add (update)", summary: "URL to add", actions: ["update"]),
-                "add_address": PropertySchema(type_: "string", description: "Address to add as 'street; city; state; postal code; country' (trailing parts optional; update)", summary: "'street; city; state; postal code; country'", actions: ["update"]),
-                "label": PropertySchema(type_: "string", description: "Label for whatever is added: home, work, mobile, iphone, main, school, other, or a custom label (update; default other)", summary: "Label for added entries (home, work, mobile, …)", actions: ["update"]),
+                "action": PropertySchema(type_: "string", description: "search, get, create, or update"),
+                "account": PropertySchema(type_: "string", description: "Account to create the contact in, e.g. iCloud (create; default is the default account)", summary: "Account for the new contact", actions: ["create"]),
+                "given_name": PropertySchema(type_: "string", description: "First name (create/update; empty string clears)", summary: "First name", actions: ["create", "update"]),
+                "middle_name": PropertySchema(type_: "string", description: "Middle name (create/update; empty string clears)", summary: "Middle name", actions: ["create", "update"]),
+                "family_name": PropertySchema(type_: "string", description: "Last name (create/update; empty string clears)", summary: "Last name", actions: ["create", "update"]),
+                "nickname": PropertySchema(type_: "string", description: "Nickname (create/update; empty string clears)", summary: "Nickname", actions: ["create", "update"]),
+                "prefix": PropertySchema(type_: "string", description: "Name prefix, e.g. Dr. (create/update; empty string clears)", summary: "Name prefix", actions: ["create", "update"]),
+                "suffix": PropertySchema(type_: "string", description: "Name suffix, e.g. Jr. (create/update; empty string clears)", summary: "Name suffix", actions: ["create", "update"]),
+                "organization": PropertySchema(type_: "string", description: "Company (create/update; empty string clears)", summary: "Company", actions: ["create", "update"]),
+                "job_title": PropertySchema(type_: "string", description: "Job title (create/update; empty string clears)", summary: "Job title", actions: ["create", "update"]),
+                "department": PropertySchema(type_: "string", description: "Department (create/update; empty string clears)", summary: "Department", actions: ["create", "update"]),
+                "birthday": PropertySchema(type_: "string", description: "Birthday as YYYY-MM-DD, or MM-DD when the year is unknown; 'none' clears (create/update)", summary: "YYYY-MM-DD or MM-DD ('none' clears)", actions: ["create", "update"]),
+                "add_phone": PropertySchema(type_: "string", description: "Phone number to add (create/update)", summary: "Phone to add", actions: ["create", "update"]),
+                "add_email": PropertySchema(type_: "string", description: "Email to add (create/update)", summary: "Email to add", actions: ["create", "update"]),
+                "add_url": PropertySchema(type_: "string", description: "URL to add (create/update)", summary: "URL to add", actions: ["create", "update"]),
+                "add_address": PropertySchema(type_: "string", description: "Address to add as 'street; city; state; postal code; country' (trailing parts optional; create/update)", summary: "'street; city; state; postal code; country'", actions: ["create", "update"]),
+                "label": PropertySchema(type_: "string", description: "Label for whatever is added: home, work, mobile, iphone, main, school, other, or a custom label (create/update; default other)", summary: "Label for added entries (home, work, mobile, …)", actions: ["create", "update"]),
                 "remove_phone": PropertySchema(type_: "string", description: "Phone number to remove; matched by digits, so formatting doesn't matter (update)", summary: "Phone to remove", actions: ["update"]),
                 "remove_email": PropertySchema(type_: "string", description: "Email to remove, case-insensitive (update)", summary: "Email to remove", actions: ["update"]),
                 "remove_url": PropertySchema(type_: "string", description: "URL to remove (update)", summary: "URL to remove", actions: ["update"]),
@@ -37,12 +38,14 @@ public struct ContactsTool: ProbeTool {
             ],
             required: ["action"]
         ),
-        cliSummary: "Search, read, and edit Apple Contacts.",
+        cliSummary: "Search, read, create, and edit Apple Contacts.",
         actions: [
             ActionHelp(name: "search", summary: "Find contacts by name, email, phone, or group",
                 example: "apple-tools contacts search --query <text> [--limit <n>]", required: ["query"]),
             ActionHelp(name: "get", summary: "Get full details for a contact by ID",
                 example: "apple-tools contacts get --id <id>", required: ["id"]),
+            ActionHelp(name: "create", summary: "Add a contact (refused if one with the same name, phone, or email exists)",
+                example: "apple-tools contacts create --given_name <n> [--family_name <n>] [--add_phone <n> --label mobile] [--add_email <e>] [--account <a>]"),
             ActionHelp(name: "update", summary: "Edit a contact: set fields, add or remove one phone/email/URL/address",
                 example: "apple-tools contacts update --id <id> [--job_title <t>] [--add_phone <n> --label mobile] [--remove_email <e>] [--birthday 1990-04-15]", required: ["id"]),
         ]
@@ -51,6 +54,7 @@ public struct ContactsTool: ProbeTool {
     public let accessPolicy: ToolAccessPolicy = .perAction([
         "search": .read,
         "get":    .read,
+        "create": .readWrite,
         "update": .readWrite,
     ])
 
@@ -82,8 +86,10 @@ public struct ContactsTool: ProbeTool {
                 return ("missing required parameter: id", true)
             }
             return update(id: id, params: params ?? [:])
+        case "create":
+            return create(params: params ?? [:])
         default:
-            return ("unknown action: \(action) (use search, get, or update)", true)
+            return ("unknown action: \(action) (use search, get, create, or update)", true)
         }
     }
 
@@ -184,6 +190,56 @@ public struct ContactsTool: ProbeTool {
         guard let contact = found.mutableCopy() as? CNMutableContact else {
             return ("couldn't edit contact \(id)", true)
         }
+        if let error = applyEdits(p, to: contact) { return (error, true) }
+
+        do {
+            try ContactsIntegration.update(contact)
+            let saved = try ContactsIntegration.contact(byIdentifier: id, keys: Self.allKeys)
+            return (jsonEncode(contactFull(saved)), false)
+        } catch {
+            return ("\(error)", true)
+        }
+    }
+
+    // MARK: - Create
+
+    private func create(params p: [String: AnyCodable]) -> (String, Bool) {
+        func str(_ key: String) -> String? { (p[key]?.value as? String).flatMap { $0.isEmpty ? nil : $0 } }
+        let identifying = ["given_name", "family_name", "organization", "add_phone", "add_email"]
+        guard identifying.contains(where: { str($0) != nil }) else {
+            return ("create needs at least one of: " + identifying.joined(separator: ", "), true)
+        }
+        if let removal = Self.multiKinds.map({ "remove_\($0)" }).first(where: { p[$0] != nil }) {
+            return ("\(removal) doesn't apply to create", true)
+        }
+
+        var containerID: String?
+        if let account = str("account") {
+            let containers = ContactsIntegration.containers()
+            guard let match = containers.first(where: { $0.name.caseInsensitiveCompare(account) == .orderedSame }) else {
+                return ("no account named '\(account)'. Available: " + containers.map(\.name).joined(separator: ", "), true)
+            }
+            containerID = match.identifier
+        }
+
+        let contact = CNMutableContact()
+        if let error = applyEdits(p, to: contact) { return (error, true) }
+        if let dup = ContactsIntegration.existingMatch(for: contact) {
+            return ("a matching contact already exists: \(dup.name) (id \(dup.id)), same \(dup.reason). Use update on it instead", true)
+        }
+
+        do {
+            try ContactsIntegration.add(contact, toContainer: containerID)
+            let saved = try ContactsIntegration.contact(byIdentifier: contact.identifier, keys: Self.allKeys)
+            return (jsonEncode(contactFull(saved)), false)
+        } catch {
+            return ("\(error)", true)
+        }
+    }
+
+    /// Applies the shared create/update fields; returns an error message or nil.
+    private func applyEdits(_ p: [String: AnyCodable], to contact: CNMutableContact) -> String? {
+        func str(_ key: String) -> String? { p[key]?.value as? String }
 
         for field in Self.singleFields {
             if let v = str(field.param) { contact[keyPath: field.key] = v }
@@ -194,7 +250,7 @@ public struct ContactsTool: ProbeTool {
             } else if let dc = Self.parseBirthday(b) {
                 contact.birthday = dc
             } else {
-                return ("birthday must be YYYY-MM-DD, MM-DD, or none", true)
+                return "birthday must be YYYY-MM-DD, MM-DD, or none"
             }
         }
 
@@ -203,19 +259,19 @@ public struct ContactsTool: ProbeTool {
         if let v = str("remove_phone") {
             let target = PhoneFormatting.normalized(v)
             guard let i = contact.phoneNumbers.firstIndex(where: { PhoneFormatting.normalized($0.value.stringValue) == target }) else {
-                return ("this contact has no phone \(v)", true)
+                return "this contact has no phone \(v)"
             }
             contact.phoneNumbers.remove(at: i)
         }
         if let v = str("remove_email") {
             guard let i = contact.emailAddresses.firstIndex(where: { ($0.value as String).caseInsensitiveCompare(v) == .orderedSame }) else {
-                return ("this contact has no email \(v)", true)
+                return "this contact has no email \(v)"
             }
             contact.emailAddresses.remove(at: i)
         }
         if let v = str("remove_url") {
             guard let i = contact.urlAddresses.firstIndex(where: { ($0.value as String) == v }) else {
-                return ("this contact has no URL \(v)", true)
+                return "this contact has no URL \(v)"
             }
             contact.urlAddresses.remove(at: i)
         }
@@ -225,7 +281,7 @@ public struct ContactsTool: ProbeTool {
             guard let i = contact.postalAddresses.firstIndex(where: {
                 Self.squash($0.value.street) == want || Self.squash(formatter.string(from: $0.value)) == want
             }) else {
-                return ("this contact has no address \(v)", true)
+                return "this contact has no address \(v)"
             }
             contact.postalAddresses.remove(at: i)
         }
@@ -248,14 +304,7 @@ public struct ContactsTool: ProbeTool {
             if parts.count > 4 { address.country = parts[4] }
             contact.postalAddresses.append(CNLabeledValue(label: label, value: address))
         }
-
-        do {
-            try ContactsIntegration.update(contact)
-            let saved = try ContactsIntegration.contact(byIdentifier: id, keys: Self.allKeys)
-            return (jsonEncode(contactFull(saved)), false)
-        } catch {
-            return ("\(error)", true)
-        }
+        return nil
     }
 
     static func parseBirthday(_ s: String) -> DateComponents? {
@@ -439,6 +488,8 @@ public struct ContactsTool: ProbeTool {
         }
 
         entry["type"] = contact.contactType == .person ? "person" : "organization"
+        let accounts = ContactsIntegration.accountNames(forContactID: contact.identifier)
+        if !accounts.isEmpty { entry["accounts"] = accounts }
 
         return entry
     }

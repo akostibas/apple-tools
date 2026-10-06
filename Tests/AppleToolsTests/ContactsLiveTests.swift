@@ -9,7 +9,8 @@ import XCTest
 final class ContactsLiveTests: XCTestCase {
 
     private let tool = ContactsTool()
-    private let marker = "Appletoolslive" + UUID().uuidString.prefix(6).lowercased()
+    // Letters only: digits in the marker would phone-match unrelated contacts in search.
+    private let marker = "Appletoolslive" + String((0..<6).map { _ in "abcdefghijklmnopqrstuvwxyz".randomElement()! })
     private var fixture: CNMutableContact!
 
     override func setUpWithError() throws {
@@ -24,9 +25,48 @@ final class ContactsLiveTests: XCTestCase {
         fixture = c
     }
 
+    private var created: [String] = []
+
     override func tearDown() {
         if let f = fixture { try? ContactsIntegration.remove(f) }
+        for id in created {
+            if let c = try? ContactsIntegration.contact(byIdentifier: id, keys: []).mutableCopy() as? CNMutableContact {
+                try? ContactsIntegration.remove(c)
+            }
+        }
         super.tearDown()
+    }
+
+    func testCreateShowsAccountAndRefusesDuplicates() throws {
+        let c = try call(["action": "create", "given_name": "New", "family_name": marker,
+                          "add_phone": "+1 415 555 0177", "label": "mobile", "job_title": "Pilot"])
+        let id = try XCTUnwrap(c["id"] as? String)
+        created.append(id)
+        XCTAssertEqual(c["job_title"] as? String, "Pilot")
+        XCTAssertEqual(values(c, "phones"), ["+14155550177"])
+        let accounts = try XCTUnwrap(c["accounts"] as? [String])
+        XCTAssertFalse(accounts.isEmpty)
+        XCTAssertEqual(try call(["action": "get", "id": id])["accounts"] as? [String], accounts)
+
+        for dup: [String: Any] in [
+            ["given_name": "new", "family_name": marker],                // same name, any case
+            ["given_name": "Other", "add_phone": "(415) 555-0177"],     // same phone, other formatting
+            ["organization": "X", "add_email": "\(marker)@example.com"], // fixture's email
+        ] {
+            let (out, isError) = tool.handle(params: dup.merging(["action": "create"]) { $1 }.mapValues { AnyCodable($0) })
+            XCTAssertTrue(isError && out.contains("already exists"), "expected duplicate refusal for \(dup), got \(out)")
+            // A wrongly-accepted create must still be cleaned up.
+            if !isError, let o = try? JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any], let leaked = o["id"] as? String {
+                created.append(leaked)
+            }
+        }
+    }
+
+    func testCreateRefusesUnknownAccountAndEmpty() throws {
+        XCTAssertThrowsError(try call(["action": "create", "given_name": "X\(marker)", "account": "Nope-\(marker)"])) {
+            XCTAssertTrue("\($0)".contains("Available:"))
+        }
+        XCTAssertThrowsError(try call(["action": "create", "job_title": "only a title"]))
     }
 
     private func call(_ params: [String: Any]) throws -> [String: Any] {

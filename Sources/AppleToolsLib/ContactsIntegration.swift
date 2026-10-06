@@ -356,13 +356,68 @@ public enum ContactsIntegration {
         }
     }
 
-    /// Live-test fixtures only; the tool deliberately can't create or delete contacts.
-    static func add(_ contact: CNMutableContact) throws {
+    /// `container` nil means the default account.
+    public static func add(_ contact: CNMutableContact, toContainer container: String? = nil) throws {
         let request = CNSaveRequest()
-        request.add(contact, toContainerWithIdentifier: nil)
-        try store.execute(request)
+        request.add(contact, toContainerWithIdentifier: container)
+        do {
+            try store.execute(request)
+        } catch {
+            throw ContactsError.saveFailed(error.localizedDescription)
+        }
     }
 
+    public static func containers() -> [CNContainer] {
+        (try? store.containers(matching: nil)) ?? []
+    }
+
+    /// Every account holding a card for this (unified) contact. Apple has no
+    /// "containers of linked cards" query, so check each account's members.
+    // ponytail: scans each account's contact ids per call; fine for hundreds, cache if it gets slow.
+    public static func accountNames(forContactID id: String) -> [String] {
+        containers().filter { c in
+            let members = (try? store.unifiedContacts(
+                matching: CNContact.predicateForContactsInContainer(withIdentifier: c.identifier),
+                keysToFetch: [])) ?? []
+            return members.contains { $0.identifier == id }
+        }.map(\.name)
+    }
+
+    /// An existing contact with the same full name, any shared phone, or any
+    /// shared email as `contact`, so create doesn't make duplicates.
+    public static func existingMatch(for contact: CNContact) -> (id: String, name: String, reason: String)? {
+        let keys = [CNContactFormatter.descriptorForRequiredKeys(for: .fullName),
+                    CNContactGivenNameKey as CNKeyDescriptor, CNContactFamilyNameKey as CNKeyDescriptor]
+        func hit(_ predicate: NSPredicate, _ reason: String, where ok: (CNContact) -> Bool = { _ in true }) -> (String, String, String)? {
+            let found = (try? store.unifiedContacts(matching: predicate, keysToFetch: keys)) ?? []
+            return found.first(where: ok).map { ($0.identifier, CNContactFormatter.string(from: $0, style: .fullName) ?? "?", reason) }
+        }
+        let full = [contact.givenName, contact.familyName].filter { !$0.isEmpty }.joined(separator: " ")
+        if !full.isEmpty, let m = hit(CNContact.predicateForContacts(matchingName: full), "name", where: {
+            $0.givenName.caseInsensitiveCompare(contact.givenName) == .orderedSame
+                && $0.familyName.caseInsensitiveCompare(contact.familyName) == .orderedSame
+        }) { return m }
+        // Apple's phone predicate misses formatting/country-code variants, so
+        // compare normalized numbers over the whole book instead.
+        let wanted = Set(contact.phoneNumbers.map { PhoneFormatting.normalized($0.value.stringValue) })
+        if !wanted.isEmpty {
+            let request = CNContactFetchRequest(keysToFetch: keys + [CNContactPhoneNumbersKey as CNKeyDescriptor])
+            var match: (String, String, String)?
+            try? store.enumerateContacts(with: request) { c, stop in
+                if c.phoneNumbers.contains(where: { wanted.contains(PhoneFormatting.normalized($0.value.stringValue)) }) {
+                    match = (c.identifier, CNContactFormatter.string(from: c, style: .fullName) ?? "?", "phone")
+                    stop.pointee = true
+                }
+            }
+            if let m = match { return m }
+        }
+        for email in contact.emailAddresses {
+            if let m = hit(CNContact.predicateForContacts(matchingEmailAddress: email.value as String), "email") { return m }
+        }
+        return nil
+    }
+
+    /// Live-test cleanup only; the tool deliberately can't delete contacts.
     static func remove(_ contact: CNMutableContact) throws {
         let request = CNSaveRequest()
         request.delete(contact)
