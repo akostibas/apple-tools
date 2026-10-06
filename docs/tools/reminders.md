@@ -1,7 +1,7 @@
 # reminders — Reminders
 
 Manage Apple Reminders through EventKit: browse lists, search and read
-reminders, create new reminders and lists, and mark reminders done. Writes go
+reminders, create, change, and delete reminders, create lists, and mark reminders done. Writes go
 straight to the Reminders store (no review step).
 
 **Access:** read/write
@@ -20,8 +20,12 @@ grant in System Settings → Privacy & Security → Reminders.
 - **get** — full detail for a single reminder by `id`, including untruncated
   notes, `is_flagged`, and its parent / subtasks.
 - **create** — add a top-level reminder (`title` required; optional `list_name`,
-  `due_date`, `notes`). Falls back to the default list when `list_name` is
-  omitted.
+  `due_date`, `notes`, `priority`, `flagged`, `recurrence`). Falls back to the
+  default list when `list_name` is omitted.
+- **update** — change any of those fields on a reminder by `id`; `due_date none`
+  and `recurrence none` clear them. A repeating reminder must keep a due date.
+- **delete** — remove a reminder by `id`. A repeating reminder is removed
+  entirely; reminders have no per-occurrence copies to delete one of.
 - **create-list** — make a new reminder list (`name` required; optional `account`
   to pick the holding source, e.g. iCloud). Rejects a duplicate name.
 - **complete** — mark a reminder done by `id`.
@@ -35,6 +39,9 @@ apple-tools reminders lists
 apple-tools reminders search --list_name "Groceries"
 apple-tools reminders search --query "call" --due_date 2026-07-10T00:00:00Z
 apple-tools reminders create --title "Renew passport" --list_name "Errands" --due_date 2026-08-01T09:00:00Z
+apple-tools reminders create --title "Take out trash" --due_date 2026-10-13T19:00:00Z --recurrence "FREQ=WEEKLY;BYDAY=TU"
+apple-tools reminders update --id <id> --due_date 2026-10-16T09:00:00Z --flagged true
+apple-tools reminders delete --id <id>
 ```
 
 ## Shortcomings
@@ -44,17 +51,15 @@ apple-tools reminders create --title "Renew passport" --list_name "Errands" --du
   and nothing else, with no parent parameter. Subtask relationships are *read*
   (enriched from the Reminders SQLite DB in `search`/`get`), but there is no way
   to *write* one.
-- **No edit / reschedule.** Once created, a reminder can't be changed — there is
-  no update action, so title, due date, notes, list, and priority are fixed at
-  creation. The only post-create mutation is `complete`.
-- **No delete.** Neither reminders nor lists can be removed; the tool exposes no
-  delete action.
+- **Lists can't be deleted or renamed.** Only reminders can be changed.
+- **Read-only lists are refused.** `update`/`delete` on a reminder in a list you
+  can't edit (e.g. a shared list without edit rights) errors rather than trying.
+- **Flag writes go through Reminders.app scripting.** EventKit has no flag API,
+  so `flagged` on create/update needs Automation permission for Reminders; if it
+  fails the rest of the change is already saved and the error says so.
 - **`complete` is one-way.** It sets `isCompleted = true` and stamps a completion
   date; there is no un-complete / reopen action.
-- **No recurring reminders, alarms, priority, or URL on create.** `createReminder`
-  sets no recurrence rule, alarm, priority, or URL. Priority is *reported* when
-  present (high/medium/low) and `is_flagged` is *reported* on every reminder, but
-  you can't *set* either here. Flag state has no public EventKit API, so it's read
+- **No alarms or URL.** Neither can be set. Flag state has no public EventKit API, so it's read
   from the Reminders SQLite DB (like subtasks). If that DB is unreadable, the
   reminders still come back but `is_flagged`, `parent`, and `subtasks` are
   *omitted* and a `warnings` entry says why — they're never reported as absent.
