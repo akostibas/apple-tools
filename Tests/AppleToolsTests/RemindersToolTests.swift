@@ -20,11 +20,11 @@ final class RemindersToolTests: XCTestCase {
 
     func testUnknownAction() {
         let (result, isError) = tool.handle(params: [
-            "action": AnyCodable("delete"),
+            "action": AnyCodable("bogus"),
         ])
         XCTAssertTrue(isError)
         XCTAssertTrue(result.contains("unknown action"))
-        XCTAssertTrue(result.contains("lists, search, get, create, create-list, or complete"))
+        XCTAssertTrue(result.contains("lists, search, get, create, update, delete, create-list, or complete"))
     }
 
     func testCreateListMissingName() {

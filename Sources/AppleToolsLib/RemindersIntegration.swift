@@ -220,6 +220,42 @@ public enum RemindersIntegration {
         }
     }
 
+    public static func newReminder() -> EKReminder {
+        let reminder = EKReminder(eventStore: store)
+        reminder.calendar = store.defaultCalendarForNewReminders()
+        return reminder
+    }
+
+    public static func save(_ reminder: EKReminder) throws {
+        do {
+            try store.save(reminder, commit: true)
+        } catch {
+            throw RemindersError.saveFailed(error.localizedDescription)
+        }
+    }
+
+    public static func delete(_ reminder: EKReminder) throws {
+        do {
+            try store.remove(reminder, commit: true)
+        } catch {
+            throw RemindersError.saveFailed(error.localizedDescription)
+        }
+    }
+
+    /// EventKit has no flag property; Reminders.app's scripting does, keyed by
+    /// "x-apple-reminder://" + the external identifier.
+    public static func setFlagged(_ reminder: EKReminder, _ flagged: Bool) throws {
+        guard let id = reminder.calendarItemExternalIdentifier, !id.isEmpty else {
+            throw RemindersError.saveFailed("reminder has no id yet, so the flag can't be set")
+        }
+        let source = """
+        set rid to do shell script "printenv REMINDER_ID"
+        tell application "Reminders" to set flagged of reminder id ("x-apple-reminder://" & rid) to \(flagged)
+        """
+        let (_, err) = AppleScriptRunner.runLegacy(source: source, tool: "reminders", environment: ["REMINDER_ID": id])
+        if let err = err { throw RemindersError.saveFailed("couldn't set flag: \(err)") }
+    }
+
     // MARK: - Date parsing
 
     /// Parse ISO 8601 with optional fractional seconds. Matches the behavior
