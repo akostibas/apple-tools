@@ -69,7 +69,7 @@ Allow/Deny dialog; off by default.)
   takes a name or a `/`-separated path as reported by `folders`; on create,
   missing path segments are created nested.
 - **contacts** — `search` (name/email/phone/group), `get` (by ID, incl. `accounts`), `create` (refuses duplicates; optional `--account`), `update` (set fields; add/remove one phone, email, URL, or address per call).
-- **email** — `inbox`, `search`, `read`, `fetch_attachment`, `draft` (does NOT
+- **email** — `inbox`, `search`, `read`, `headers` (all or `--names`, no body), `fetch_attachment`, `draft` (does NOT
   send; supports attachments by absolute path).
 - **imessage** — `recent`, `read`, `search`, `send` (iMessage/SMS; supports
   attachments), `fetch_attachment`.

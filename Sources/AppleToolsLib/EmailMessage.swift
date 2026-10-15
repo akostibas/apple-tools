@@ -191,6 +191,19 @@ enum EmailMessage {
         throw LoadError.ambiguous(candidates: attachments.map(\.filename))
     }
 
+    /// Every header of an .emlx, unfolded and RFC 2047-decoded, keyed by
+    /// lowercased name; repeats keep all values in order. Never touches the body.
+    static func loadHeaders(atPath path: String) throws -> [String: [String]] {
+        let (headers, _) = splitHeadersAndBody(try readEmlxRFC822(atPath: path))
+        return groupHeaders(headers)
+    }
+
+    static func groupHeaders(_ raw: String) -> [String: [String]] {
+        var out: [String: [String]] = [:]
+        for (name, value) in HeaderMap(raw).pairs { out[name, default: []].append(decodeRFC2047(value)) }
+        return out
+    }
+
     /// Read an .emlx file, strip the leading ASCII byte count and the trailing
     /// Apple-Mail metadata plist, and return just the embedded RFC 822 bytes.
     private static func readEmlxRFC822(atPath path: String) throws -> Data {
@@ -301,7 +314,7 @@ enum EmailMessage {
     /// Parse headers preserving order. Continuation lines (starting with whitespace)
     /// fold into the previous header value. Names are lowercased for lookup.
     struct HeaderMap {
-        private let pairs: [(name: String, value: String)]
+        let pairs: [(name: String, value: String)]
         init(_ raw: String) {
             var out: [(String, String)] = []
             for line in raw.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {

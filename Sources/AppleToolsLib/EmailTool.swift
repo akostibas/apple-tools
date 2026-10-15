@@ -5,15 +5,21 @@ import UniformTypeIdentifiers
 public struct EmailTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "email",
-        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message — does NOT send; supports file attachments by absolute path), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send).",
+        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'headers' (a message's headers by ID — all, or only those in 'names'; never downloads the body), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message — does NOT send; supports file attachments by absolute path), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "inbox, search, read, fetch_attachment, draft, or reply"),
+                "action": PropertySchema(type_: "string", description: "inbox, search, read, headers, fetch_attachment, draft, or reply"),
                 "limit": PropertySchema(type_: "integer", description: "Max messages to return (for inbox and search, default 20, max 50)",
                     summary: "Max messages (default 20, max 50)", actions: ["inbox", "search"]),
-                "id": PropertySchema(type_: "string", description: "Message ID (for read, fetch_attachment, reply)",
-                    summary: "Message ID", actions: ["read", "fetch_attachment", "reply"]),
+                "id": PropertySchema(type_: "string", description: "Message ID (for read, headers, fetch_attachment, reply)",
+                    summary: "Message ID", actions: ["read", "headers", "fetch_attachment", "reply"]),
+                "names": PropertySchema(
+                    type_: "array",
+                    description: "Header names to return, matched case-insensitively, e.g. ['Sender', 'X-Google-Calendar-Notification']. Omit for all headers. Absent headers are left out (for headers)",
+                    items: ItemsSchema(type_: "string"),
+                    summary: "Header names to return (default: all)", actions: ["headers"]
+                ),
                 "filename": PropertySchema(type_: "string", description: "Attachment filename to select when a message has multiple attachments (for fetch_attachment, optional)",
                     summary: "Which attachment, when a message has several", actions: ["fetch_attachment"]),
                 "query": PropertySchema(type_: "string", description: "Whitespace-separated tokens, all must match across subject, body preview, or sender — full message body is not searched (for search)",
@@ -59,6 +65,8 @@ public struct EmailTool: ProbeTool {
                 example: "apple-tools email search [--query <text>] [--from <name>] [--after <date>] ..."),
             ActionHelp(name: "read", summary: "Get a full message by ID",
                 example: "apple-tools email read --id <id>", required: ["id"]),
+            ActionHelp(name: "headers", summary: "Get a message's headers by ID, without the body",
+                example: "apple-tools email headers --id <id> [--names Sender,X-Google-Calendar-Notification]", required: ["id"]),
             ActionHelp(name: "draft", summary: "Create a new draft — does not send",
                 example: "apple-tools email draft --to <addr> [--subject <t>] [--body <t>] [--cc <a>] [--attachments <p>]", required: ["to"]),
             ActionHelp(name: "reply", summary: "Draft a threaded reply to a message — does not send",
@@ -74,6 +82,7 @@ public struct EmailTool: ProbeTool {
         "inbox":            .read,
         "search":           .read,
         "read":             .read,
+        "headers":          .read,
         "fetch_attachment": .read,
         "draft":            .readWrite,
         "reply":            .readWrite,
@@ -99,6 +108,12 @@ public struct EmailTool: ProbeTool {
                 return ("missing required parameter: id", true)
             }
             return read(id: id)
+        case "headers":
+            guard let id = params?["id"]?.value as? String, !id.isEmpty else {
+                return ("missing required parameter: id", true)
+            }
+            let names = (params?["names"]?.value as? [Any])?.compactMap { $0 as? String } ?? []
+            return headers(id: id, names: names)
         case "draft":
             guard let to = params?["to"]?.value as? String, !to.isEmpty else {
                 return ("missing required parameter: to", true)
@@ -126,7 +141,7 @@ public struct EmailTool: ProbeTool {
             let filename = params?["filename"]?.value as? String
             return fetchAttachment(id: id, filename: filename)
         default:
-            return ("unknown action: \(action) (use inbox, search, read, fetch_attachment, draft, or reply)", true)
+            return ("unknown action: \(action) (use inbox, search, read, headers, fetch_attachment, draft, or reply)", true)
         }
     }
 
@@ -301,6 +316,41 @@ public struct EmailTool: ProbeTool {
             return path.isEmpty ? "(local)" : "(local) \(path)"
         }
         return path.isEmpty ? "(root)" : path
+    }
+
+    // MARK: - Headers
+
+    /// Keys are lowercased header names; each maps to every value in order.
+    private func headers(id: String, names: [String]) -> (String, Bool) {
+        let loc: EmailSearch.MessageLocation
+        do {
+            guard let l = try EmailSearch.resolveMessageID(id) else { return ("message not found", true) }
+            loc = l
+        } catch {
+            return ("\(error)", true)
+        }
+        var all: [String: [String]]
+        if let path = EmailMessage.emlxPath(rowID: loc.rowID, mailboxURL: loc.mailboxURL),
+           let onDisk = try? EmailMessage.loadHeaders(atPath: path) {
+            all = onDisk
+        } else {
+            // Not on disk yet: Mail writes the .emlx only once something reads the message.
+            do {
+                all = EmailMessage.groupHeaders(
+                    try EmailIntegration.headersViaAppleScript(rowID: loc.rowID, mailboxURL: loc.mailboxURL))
+            } catch EmailIntegration.EmailError.notFound {
+                return ("message not found", true)
+            } catch let e as EmailIntegration.EmailError {
+                return (e.description, true)
+            } catch {
+                return (error.localizedDescription, true)
+            }
+        }
+        if !names.isEmpty {
+            let wanted = Set(names.map { $0.lowercased() })
+            all = all.filter { wanted.contains($0.key) }
+        }
+        return (jsonEncode(["id": id, "headers": all] as [String: Any]), false)
     }
 
     // MARK: - Read

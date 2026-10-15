@@ -249,6 +249,22 @@ public enum EmailIntegration {
     /// screen, and a Mail that isn't running has no server connection to fetch
     /// over anyway.
     public static func downloadMessageBody(rowID: Int64, mailboxURL: String) throws {
+        let out = try runOnRow(rowID: rowID, mailboxURL: mailboxURL, verb: """
+            get content of theMsg
+            return "OK"
+            """)
+        guard out == "OK" else { throw EmailError.scriptFailed(out) }
+    }
+
+    /// Raw header block of a message Mail hasn't written to disk. Same addressing
+    /// and never-launch rule as `downloadMessageBody`.
+    public static func headersViaAppleScript(rowID: Int64, mailboxURL: String) throws -> String {
+        let out = try runOnRow(rowID: rowID, mailboxURL: mailboxURL, verb: "return \"OK\" & (all headers of theMsg)")
+        return String(out.dropFirst(2)).replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+    }
+
+    /// Runs `verb` against `theMsg`; the verb must return a string starting "OK".
+    private static func runOnRow(rowID: Int64, mailboxURL: String, verb: String) throws -> String {
         guard isMailRunning() else { throw EmailError.mailNotRunning }
         guard let loc = accountAndMailbox(fromMailboxURL: mailboxURL) else {
             throw EmailError.parseFailure("unsupported mailbox url: \(mailboxURL)")
@@ -270,15 +286,15 @@ public enum EmailIntegration {
             end try
             set msgs to (every message of theBox whose id is \(rowID))
             if msgs is {} then return "NOT_FOUND"
-            get content of (item 1 of msgs)
-            return "OK"
+            set theMsg to item 1 of msgs
+            \(verb)
         end tell
         """
         let (out, err) = runAppleScript(script, env, nil)
         if let err = err { throw EmailError.scriptFailed(err) }
         switch out {
-        case "OK": return
         case "NOT_FOUND", "NO_ACCOUNT", "NO_MAILBOX": throw EmailError.notFound
+        case _ where out.hasPrefix("OK"): return out
         default: throw EmailError.scriptFailed(out)
         }
     }
