@@ -15,6 +15,10 @@ Envelope Index; also used by the AppleScript fallback).
   mail (previews only). Matches subject, sender, and body *preview* — not the
   full body.
 - **read** — full message by `id`: body, recipients, attachment metadata.
+- **headers** — a message's headers by `id`, all or only the `names` asked for
+  (case-insensitive). Keys come back lowercased, each with every value (repeats
+  like `Received` keep all of them). Never downloads the body, so it's cheap
+  enough to call per message after a search.
 - **fetch_attachment** — retrieve one attachment's bytes from a message (returns
   a local `path`; images are resized for LLM vision).
 - **draft** — create a new draft (`to`, `subject`, `body`, `cc`, `attachments`).
@@ -31,6 +35,7 @@ Run `apple-tools email --help` for the exact parameters of each action.
 ```bash
 apple-tools email search --from "sam" --after 2026-07-01
 apple-tools email read --id "<MESSAGE-ID>"
+apple-tools email headers --id "<MESSAGE-ID>" --names Sender,X-Google-Calendar-Notification
 apple-tools email reply --id "<MESSAGE-ID>" --body "Sounds great, thanks!"
 apple-tools email draft --to a@b.com --subject "Hi" --body "…" --attachments ~/f.pdf
 ```
