@@ -164,8 +164,9 @@ enum EmailSearch {
             m.date_received             AS date_received,
             a.address                   AS sender_addr,
             a.comment                   AS sender_name,
-            s.subject                   AS subject,
-            mb.url                      AS mailbox_url,
+            -- Mail stores "Re: "/"Fwd: " apart from the subject; without it a reply reads as the original.
+            COALESCE(m.subject_prefix, '') || s.subject AS subject,
+            mb.url                     AS mailbox_url,
             g.message_id_header         AS msgid,
             sm.summary                  AS snippet,
             g.generated_summary         AS gen_summary_rowid
