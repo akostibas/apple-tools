@@ -8,6 +8,7 @@ final class IMessageSenderTests: XCTestCase {
     private var savedLookup: ((String, Int64) -> IMessageIntegration.OutgoingStatus)!
     private var savedMaxROWID: (() -> Int64)!
     private var savedChatExists: ((String) -> Bool?)!
+    private var savedStage: (([String]) throws -> [String])!
     private var savedDeadline: TimeInterval = 0
     private var savedSMSDeadline: TimeInterval = 0
     private var savedPollInterval: TimeInterval = 0
@@ -18,6 +19,7 @@ final class IMessageSenderTests: XCTestCase {
         savedLookup = IMessageSender.lookupOutgoingStatus
         savedMaxROWID = IMessageSender.currentMaxROWID
         savedChatExists = IMessageSender.chatExistsForHandle
+        savedStage = IMessageSender.stageAttachments
         savedDeadline = IMessageSender.deliveryDeadline
         savedSMSDeadline = IMessageSender.smsDeliveryDeadline
         savedPollInterval = IMessageSender.deliveryPollInterval
@@ -34,6 +36,7 @@ final class IMessageSenderTests: XCTestCase {
         // behavior for all pre-existing tests. First-contact-path tests
         // override to return false.
         IMessageSender.chatExistsForHandle = { _ in true }
+        IMessageSender.stageAttachments = { $0 }
         IMessageSender.deliveryDeadline = 0.5
         IMessageSender.smsDeliveryDeadline = 0.5
         IMessageSender.deliveryPollInterval = 0.02
@@ -44,6 +47,7 @@ final class IMessageSenderTests: XCTestCase {
         IMessageSender.lookupOutgoingStatus = savedLookup
         IMessageSender.currentMaxROWID = savedMaxROWID
         IMessageSender.chatExistsForHandle = savedChatExists
+        IMessageSender.stageAttachments = savedStage
         IMessageSender.deliveryDeadline = savedDeadline
         IMessageSender.smsDeliveryDeadline = savedSMSDeadline
         IMessageSender.deliveryPollInterval = savedPollInterval
@@ -585,6 +589,46 @@ final class IMessageSenderTests: XCTestCase {
         XCTAssertFalse(smsAttempted, "must not run SMS AppleScript when attachments are present")
         XCTAssertTrue(result.message.contains("SMS"),
             "error should mention SMS to explain why fallback didn't happen: \(result.message)")
+    }
+
+    /// Messages.app is handed the staged copies, never the originals (#85).
+    func testScriptSendsStagedCopiesNotOriginals() {
+        IMessageSender.stageAttachments = { $0.map { "/staged" + $0 } }
+        var capturedScript: String?
+        IMessageSender.runAppleScript = { script, _, _ in
+            capturedScript = script
+            return ("", nil)
+        }
+        _ = IMessageSender.send(to: "+15551234567", text: "hi", attachments: ["/docs/a.pdf"])
+        XCTAssertTrue(capturedScript?.contains(#"send POSIX file "/staged/docs/a.pdf""#) == true,
+            "script should send the staged copy: \(capturedScript ?? "")")
+    }
+
+    func testStagingFailureSendsNothing() {
+        IMessageSender.stageAttachments = { _ in throw CocoaError(.fileReadNoPermission) }
+        var ran = false
+        IMessageSender.runAppleScript = { _, _, _ in ran = true; return ("", nil) }
+        let result = IMessageSender.send(to: "+15551234567", text: "hi", attachments: ["/docs/a.pdf"])
+        XCTAssertTrue(result.isError)
+        XCTAssertFalse(ran, "text must not go out alone when its attachment can't be staged")
+    }
+
+    func testStageAttachmentsCopiesSameNamedFilesWithoutCollision() throws {
+        let tmp = NSTemporaryDirectory() + "imsg-stage-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: tmp) }
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: tmp + "/a", withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: tmp + "/b", withIntermediateDirectories: true)
+        fm.createFile(atPath: tmp + "/a/x.pdf", contents: Data("one".utf8))
+        fm.createFile(atPath: tmp + "/b/x.pdf", contents: Data("two".utf8))
+
+        let staged = try IMessageSender.stageAttachments(
+            [tmp + "/a/x.pdf", tmp + "/b/x.pdf"], under: tmp + "/root")
+        XCTAssertEqual(staged.map { ($0 as NSString).lastPathComponent }, ["x.pdf", "x.pdf"])
+        XCTAssertNotEqual(staged[0], staged[1])
+        XCTAssertEqual(fm.contents(atPath: staged[0]), Data("one".utf8))
+        XCTAssertEqual(fm.contents(atPath: staged[1]), Data("two".utf8))
+        XCTAssertTrue(fm.fileExists(atPath: tmp + "/a/x.pdf"), "original must be left in place")
     }
 
 }

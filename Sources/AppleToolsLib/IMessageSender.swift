@@ -79,6 +79,32 @@ public enum IMessageSender {
     static var chatExistsForHandle: (_ handle: String) -> Bool?
         = IMessageIntegration.hasOneToOneChatForHandle
 
+    /// Injectable for tests (default would write into ~/Library/Messages).
+    static var stageAttachments: (_ paths: [String]) throws -> [String] = {
+        try stageAttachments($0, under: messagesAttachmentsDir)
+    }
+
+    static let messagesAttachmentsDir = (NSHomeDirectory() as NSString)
+        .appendingPathComponent("Library/Messages/Attachments/apple-tools")
+
+    /// Messages.app can't read AppleScript-sent files from TCC-protected folders
+    /// (~/Documents etc.): the send fails with chat.db error 34 (apple-tools#85).
+    /// The copy is never deleted — the conversation references it afterward,
+    /// same as the copies Messages makes for manually attached files.
+    static func stageAttachments(_ paths: [String], under root: String) throws -> [String] {
+        guard !paths.isEmpty else { return [] }
+        let dir = (root as NSString).appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return try paths.enumerated().map { i, path in
+            // Per-index subdir keeps same-named files from colliding.
+            let sub = (dir as NSString).appendingPathComponent(String(i))
+            try FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: true)
+            let dest = (sub as NSString).appendingPathComponent((path as NSString).lastPathComponent)
+            try FileManager.default.copyItem(atPath: path, toPath: dest)
+            return dest
+        }
+    }
+
     /// Block for up to `deadline` polling chat.db for a terminal state.
     /// Returns as soon as `.sent` or `.rejected` is observed; on timeout
     /// returns the last observation (typically `.pending` or `.noRow`).
@@ -136,7 +162,14 @@ public enum IMessageSender {
 
     /// Body of `send` that runs inside the serial queue. All AppleScript
     /// execution, including the SMS fallback path, happens here.
-    private static func sendLocked(to recipient: String, text: String, attachments: [String]) -> SendResult {
+    private static func sendLocked(to recipient: String, text: String, attachments originals: [String]) -> SendResult {
+        let attachments: [String]
+        do {
+            attachments = try stageAttachments(originals)
+        } catch {
+            return SendResult(transport: "iMessage", isError: true,
+                message: "couldn't prepare attachments for Messages.app: \(error.localizedDescription). Nothing was sent.")
+        }
         if isGroupChatID(recipient) {
             return sendToChat(recipient: recipient, text: text, attachments: attachments)
         }
@@ -330,10 +363,7 @@ public enum IMessageSender {
 
         let escapedGUID = escapeForAppleScript(guid)
         let env = ["APPLE_TOOLS_IMSG_TEXT": text]
-        let attachmentClauses = attachments.map { path -> String in
-            let escaped = escapeForAppleScript(path)
-            return "send POSIX file \"\(escaped)\" to targetChat\n        delay 0.2"
-        }.joined(separator: "\n        ")
+        let attachmentClauses = attachmentScriptClauses(attachments, target: "targetChat")
 
         // applescript-runner: no-verifier — chat.db's group-message join goes
         // through chat_message_join, not the handle table that makeVerifyHook
