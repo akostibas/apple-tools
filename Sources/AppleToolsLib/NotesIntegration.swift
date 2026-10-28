@@ -32,6 +32,7 @@ public enum NotesIntegration {
         /// The on-disk store could not be read. Distinct from "nothing matched"
         /// on purpose: a search that answers empty to every query looks healthy.
         case storeUnreadable(String)
+        case appendRefused(String)
 
         public var description: String {
             switch self {
@@ -39,6 +40,7 @@ public enum NotesIntegration {
             case .notFound: return "note not found"
             case .parseFailure(let msg): return msg
             case .storeUnreadable(let msg): return "notes search is unavailable: \(msg)"
+            case .appendRefused(let msg): return "append refused: \(msg)"
             }
         }
     }
@@ -508,6 +510,13 @@ public enum NotesIntegration {
             throw NotesError.parseFailure("append requires id or title")
         }
 
+        // Append rewrites the whole body via HTML, which can't carry attachments
+        // or inline attachments: Notes deletes them on write (issue #86).
+        // ponytail: store lags Notes by up to minutes, so a just-pasted image can slip past.
+        if let reason = appendBlocker(utis: try NotesChecklistStore.attachmentUTIs(id: id, title: title)) {
+            throw NotesError.appendRefused(reason)
+        }
+
         env["APPLE_TOOLS_NOTES_CONTENT"] = "<div><br></div>" + NotesMarkdown.markdownToNotesHTML(text)
 
         let script = """
@@ -547,6 +556,28 @@ public enum NotesIntegration {
             throw NotesError.parseFailure("content appended but failed to parse response")
         }
         return AppendResult(id: parts[0], title: parts[1], totalLength: Int(parts[2]))
+    }
+
+    /// Why append would destroy content in a note with these attachment UTIs,
+    /// or nil when it's safe.
+    static func appendBlocker(utis: [String]) -> String? {
+        guard !utis.isEmpty else { return nil }
+        var counts: [String: Int] = [:]
+        for uti in utis {
+            let kind: String
+            switch uti {
+            case "com.apple.notes.table": kind = "table"
+            case "com.apple.notes.inlinetextattachment.mention": kind = "mention"
+            case "com.apple.notes.inlinetextattachment.hashtag": kind = "hashtag"
+            case "com.apple.notes.inlinetextattachment.calculateresult": kind = "calculation"
+            default: kind = "attachment"
+            }
+            counts[kind, default: 0] += 1
+        }
+        let list = counts.sorted { $0.key < $1.key }
+            .map { "\($0.value) \($0.key)\($0.value == 1 ? "" : "s")" }
+            .joined(separator: ", ")
+        return "the note has \(list). Append rewrites the whole note and Apple Notes would delete these, so nothing was changed. Add the text in the Notes app instead."
     }
 
     // MARK: - Move / delete / rename folder

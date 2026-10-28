@@ -92,6 +92,53 @@ public enum NotesChecklistStore {
         return Data(bytes: bytes, count: count)
     }
 
+    // MARK: - Attachments
+
+    /// Type UTIs of the live attachments (images, files, tables) and inline
+    /// attachments (mentions, hashtags, calculations) in the note(s) matching
+    /// `id` or `title`. A title matching several notes returns them all.
+    /// Only iCloud/On-My-Mac notes (`/ICNote/p<pk>`) live here; any other id
+    /// returns []. Throws when the store can't be read.
+    static func attachmentUTIs(id: String?, title: String?) throws -> [String] {
+        var pk: Int64 = -1
+        if let id = id {
+            guard let r = id.range(of: "/ICNote/p"), let n = Int64(id[r.upperBound...]) else { return [] }
+            pk = n
+        }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(storePath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db = db else {
+            sqlite3_close(db)
+            throw NotesIntegration.NotesError.appendRefused(
+                "can't check the note for attachments: the Notes store is not readable at \(storePath) — grant Full Disk Access in System Settings → Privacy & Security")
+        }
+        defer { sqlite3_close(db) }
+
+        // Attachments point at their note via ZNOTE, inline attachments via ZNOTE1.
+        let sql = """
+        SELECT COALESCE(a.ZTYPEUTI, a.ZTYPEUTI1) FROM ZICCLOUDSYNCINGOBJECT a
+        JOIN ZICCLOUDSYNCINGOBJECT n ON a.ZNOTE = n.Z_PK OR a.ZNOTE1 = n.Z_PK
+        WHERE (n.Z_PK = ?1 OR n.ZTITLE1 = ?2)
+          AND (n.ZMARKEDFORDELETION = 0 OR n.ZMARKEDFORDELETION IS NULL)
+          AND (a.ZMARKEDFORDELETION = 0 OR a.ZMARKEDFORDELETION IS NULL)
+          AND COALESCE(a.ZTYPEUTI, a.ZTYPEUTI1) IS NOT NULL
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NotesIntegration.NotesError.appendRefused(
+                "can't check the note for attachments: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        defer { sqlite3_finalize(stmt) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_int64(stmt, 1, pk)
+        if let title = title { sqlite3_bind_text(stmt, 2, title, -1, transient) }
+
+        var utis: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let t = sqlite3_column_text(stmt, 0) { utis.append(String(cString: t)) }
+        }
+        return utis
+    }
+
     // MARK: - gunzip
 
     /// Inflate a gzip blob. Notes uses a fixed 10-byte header with no extra

@@ -5,8 +5,9 @@ create, append, move, or delete notes, and rename folders. Note bodies are autho
 
 **Access:** read/write
 **Permissions:** Automation (AppleScript control of Notes) for `folders`,
-`read`, `create`, and `append`; Full Disk Access for `search` and for the
-link/checklist recovery on `read`, which read `NoteStore.sqlite` directly.
+`read`, `create`, and `append`; Full Disk Access for `search`, for the
+link/checklist recovery on `read`, and for `append`'s safety check, which read
+`NoteStore.sqlite` directly.
 
 ## Actions
 
@@ -22,7 +23,10 @@ link/checklist recovery on `read`, which read `NoteStore.sqlite` directly.
   takes a name or `/`-separated path; an existing folder is used as-is, a path
   with missing segments creates them nested.
 - **append** — add Markdown `text` to the end of an existing note found by `id`
-  or `title`.
+  or `title`. **Rewrites the whole note**: refused if the note has images,
+  files, tables, mentions, hashtags or calculations (Notes would delete them),
+  and titles, headings and checklists elsewhere in the note can lose their
+  style.
 - **move** — move a note (by `id` or `title`) to `folder` (a name or folder `id`).
 - **delete** — delete a note by `id` or `title`. It goes to Recently Deleted and
   can be recovered there for 30 days. A shared note's result carries a `notice`,
@@ -58,6 +62,11 @@ apple-tools notes rename-folder --folder "Misc" --name "Archive"
 - **Append-only editing.** `append` sets `body of theNote` to
   `existingBody & theContent` — content can only be added to the end. There is
   no replace, insert, or edit of existing text, and no way to remove content.
+- **Append rewrites the note.** The body round-trips through HTML, which drops
+  attachments and inline attachments (Notes then deletes them, issue #86), so
+  `append` refuses notes that have any — checked in `NoteStore.sqlite`, which
+  can lag Notes by minutes, so a just-pasted image may slip through. Text
+  styles survive only approximately: the Title style and Menlo text change.
 - **Links and checkboxes can't be stored.** On write, `[text](url)` is flattened
   to `text (url)` and `- [ ]` becomes a plain bullet (per the tool description);
   Apple Notes can't persist link hrefs or checkbox state via this API. On `read`,
