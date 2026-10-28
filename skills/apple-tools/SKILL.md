@@ -67,7 +67,9 @@ Allow/Deny dialog; off by default.)
 - **notes** — `folders`, `search`, `read`, `create`, `append`, `move`, `delete` (to Recently Deleted), `rename-folder`. Content is
   Markdown (headings, bold/italic/strike/mono, lists round-trip). `--folder`
   takes a name or a `/`-separated path as reported by `folders`; on create,
-  missing path segments are created nested.
+  missing path segments are created nested. `append` rewrites the whole note:
+  it refuses notes with images/files/tables/mentions/hashtags, and may restyle
+  titles and checklists elsewhere in the note.
 - **contacts** — `search` (name/email/phone/group), `get` (by ID, incl. `accounts`), `create` (refuses duplicates; optional `--account`), `update` (set fields; add/remove one phone, email, URL, or address per call).
 - **email** — `inbox`, `search`, `read`, `headers` (all or `--names`, no body), `fetch_attachment`, `draft` (does NOT
   send; supports attachments by absolute path).
