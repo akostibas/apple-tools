@@ -1,5 +1,23 @@
 # apple-tools — Claude instructions
 
+## Off-limits techniques
+
+apple-tools runs unattended, while the user is using their Mac. Never build
+a feature on any of these, however much it would unlock:
+
+- **Writing an app's private store** (`NoteStore.sqlite`, `chat.db`, the
+  Photos library, …). Read with `SQLITE_OPEN_READONLY` only. A write fights
+  iCloud sync and can corrupt the user's data.
+- **Taking over the screen or input**: UI scripting, synthetic keystrokes or
+  clicks, or bringing an app to the front to drive it. It steals focus, and
+  keystrokes can land in whatever the user is typing in.
+- **Requiring the user to install something per feature**, such as a
+  Shortcut. A tool must work from the binary plus the standard macOS
+  permission prompts.
+
+When the only path to a feature needs one of these, the feature doesn't
+ship. Say so in the tool's doc under Shortcomings.
+
 ## Story Output
 
 New stories are filed as GitHub Issues in `akostibas/apple-tools`. Use the

@@ -67,6 +67,8 @@ apple-tools notes rename-folder --folder "Misc" --name "Archive"
   `append` refuses notes that have any — checked in `NoteStore.sqlite`, which
   can lag Notes by minutes, so a just-pasted image may slip through. Text
   styles survive only approximately: the Title style and Menlo text change.
+  A true in-place append isn't possible: Notes' scripting has no insert, and
+  the other routes (store writes, UI scripting, a Shortcut) are off-limits.
 - **Links and checkboxes can't be stored.** On write, `[text](url)` is flattened
   to `text (url)` and `- [ ]` becomes a plain bullet (per the tool description);
   Apple Notes can't persist link hrefs or checkbox state via this API. On `read`,
