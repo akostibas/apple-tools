@@ -374,66 +374,17 @@ public enum AppleScriptRunner {
         let elapsed = Date().timeIntervalSince(start)
         let stdoutStr = String(data: stdoutData, encoding: .utf8) ?? ""
 
-        // A process that exited cleanly (status 0, normal exit — not a signal)
-        // completed its work in full, even if the deadline fired or an external
-        // cancel arrived in the same instant. `killed`/`externallyCancelled`
-        // only mean we *sent* a signal; a clean termination status proves the
-        // signal lost the race and osascript finished first. Honor that before
-        // the kill-based classifications, otherwise a marker-less script that
-        // races the deadline is misreported as a timeout `.failed`.
-        let cleanExit = (proc.terminationStatus == 0 && proc.terminationReason == .exit)
-
-        let outcome: Outcome
-        if cleanExit {
-            outcome = .success
-        } else if externallyCancelled {
-            // External cancel — caller pulled the plug. We don't know
-            // what the script did; let the post-verify hook decide.
-            // Committed-phase scripts are the one case we can confidently
-            // classify as success — the side effect already landed.
-            if let p = phase, p.hasPrefix("committed") {
-                outcome = .success
-            } else {
-                outcome = .outcomeUnknown
-            }
-        } else if didKill {
-            switch phase {
-            case .none, "prepare":
-                outcome = .failed
-            case "pre-commit":
-                outcome = .outcomeUnknown
-            case let p? where p.hasPrefix("committed"):
-                // Side effect already happened; kill was racing the natural exit.
-                outcome = .success
-            default:
-                // Custom intermediate phase past pre-commit but before
-                // committed — treat conservatively as ambiguous.
-                outcome = .outcomeUnknown
-            }
-        } else if proc.terminationStatus == 0 {
-            outcome = .success
-        } else {
-            outcome = .failed
-        }
-
-        // Post-verify: if the bare classification is outcome_unknown and a
-        // hook was supplied, query the target app's storage to disambiguate.
-        // See ADR-032.
-        var finalOutcome = outcome
-        var finalID = id
-        if outcome == .outcomeUnknown, let hook = onOutcomeUnknown {
-            switch runVerifyHook(hook, deadline: verifyDeadline, tool: tool) {
-            case .confirmed(let verifiedID):
-                Log.info("applescript: tool=\(tool) post-verify confirmed — outcome upgraded to success")
-                finalOutcome = .success
-                if let v = verifiedID { finalID = v }
-            case .absent:
-                Log.info("applescript: tool=\(tool) post-verify absent — outcome upgraded to failed")
-                finalOutcome = .failed
-            case .inconclusive:
-                Log.error("applescript: tool=\(tool) post-verify inconclusive — outcome stays outcome_unknown")
-            }
-        }
+        let outcome = classify(
+            cleanExit: proc.terminationStatus == 0 && proc.terminationReason == .exit,
+            externallyCancelled: externallyCancelled,
+            killed: didKill,
+            phase: phase,
+            exitStatus: proc.terminationStatus
+        )
+        let (finalOutcome, finalID) = resolveUnknown(
+            outcome, committedID: id, hook: onOutcomeUnknown,
+            verifyDeadline: verifyDeadline, tool: tool
+        )
 
         let elapsedMs = Int(elapsed * 1000)
         switch finalOutcome {
@@ -455,6 +406,63 @@ public enum AppleScriptRunner {
             elapsed: elapsed,
             killed: didKill || externallyCancelled
         )
+    }
+
+    /// Classify a finished osascript run from what was observed. Pure, so the
+    /// kill × phase matrix is tested without racing a real subprocess (#54).
+    static func classify(
+        cleanExit: Bool,
+        externallyCancelled: Bool,
+        killed: Bool,
+        phase: String?,
+        exitStatus: Int32
+    ) -> Outcome {
+        // A clean exit-0 (not a signal) means the script finished, even if the
+        // deadline or a cancel fired in the same instant: our signal lost the race.
+        if cleanExit { return .success }
+        if externallyCancelled {
+            // Caller pulled the plug; only a committed marker proves the side
+            // effect landed. Otherwise let the post-verify hook decide.
+            if let p = phase, p.hasPrefix("committed") { return .success }
+            return .outcomeUnknown
+        }
+        if killed {
+            switch phase {
+            case .none, "prepare":
+                return .failed
+            case "pre-commit":
+                return .outcomeUnknown
+            case let p? where p.hasPrefix("committed"):
+                return .success
+            default:
+                // Custom phase past pre-commit but before committed: ambiguous.
+                return .outcomeUnknown
+            }
+        }
+        return exitStatus == 0 ? .success : .failed
+    }
+
+    /// Post-verify (ADR-032): if the outcome is unknown and a hook was supplied,
+    /// query the target app's storage to disambiguate.
+    static func resolveUnknown(
+        _ outcome: Outcome,
+        committedID: String?,
+        hook: (() -> VerifyResult)?,
+        verifyDeadline: TimeInterval,
+        tool: String
+    ) -> (Outcome, String?) {
+        guard outcome == .outcomeUnknown, let hook else { return (outcome, committedID) }
+        switch runVerifyHook(hook, deadline: verifyDeadline, tool: tool) {
+        case .confirmed(let verifiedID):
+            Log.info("applescript: tool=\(tool) post-verify confirmed — outcome upgraded to success")
+            return (.success, verifiedID ?? committedID)
+        case .absent:
+            Log.info("applescript: tool=\(tool) post-verify absent — outcome upgraded to failed")
+            return (.failed, committedID)
+        case .inconclusive:
+            Log.error("applescript: tool=\(tool) post-verify inconclusive — outcome stays outcome_unknown")
+            return (.outcomeUnknown, committedID)
+        }
     }
 
     /// Max combined env-value bytes accepted before we refuse to spawn

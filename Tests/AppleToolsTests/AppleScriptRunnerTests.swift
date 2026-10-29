@@ -62,45 +62,43 @@ final class AppleScriptRunnerTests: XCTestCase {
         XCTAssertNil(r.lastPhase)
     }
 
-    func testTimeoutInPreCommitIsOutcomeUnknown() {
-        let script = """
-        log "PHASE: prepare"
-        log "PHASE: pre-commit"
-        delay 10
-        log "PHASE: committed id=never"
-        """
-        let r = AppleScriptRunner.run(source: script, tool: "test", deadline: 0.8)
-        XCTAssertEqual(r.outcome, .outcomeUnknown)
-        XCTAssertTrue(r.killed)
-        XCTAssertEqual(r.lastPhase, "pre-commit")
+    // MARK: - Classification (pure: a real deadline kill can't pin which phase was reached, #54)
+
+    private func classify(
+        cleanExit: Bool = false, cancelled: Bool = false, killed: Bool = false,
+        phase: String? = nil, exit: Int32 = 9
+    ) -> AppleScriptRunner.Outcome {
+        AppleScriptRunner.classify(
+            cleanExit: cleanExit, externallyCancelled: cancelled,
+            killed: killed, phase: phase, exitStatus: exit)
     }
 
-    func testCommittedWithoutIdStillSuccessIfKilledLate() {
-        // A script that emits committed and then would have exited cleanly,
-        // but is killed during the brief window after commit. Side effect
-        // already happened — should classify as success, not outcome_unknown.
-        let script = """
-        log "PHASE: prepare"
-        log "PHASE: pre-commit"
-        log "PHASE: committed"
-        delay 10
-        """
-        let r = AppleScriptRunner.run(source: script, tool: "test", deadline: 0.5)
-        XCTAssertEqual(r.outcome, .success)
-        XCTAssertTrue(r.killed)
-        XCTAssertEqual(r.lastPhase, "committed")
+    func testDeadlineKillClassifiedByPhase() {
+        XCTAssertEqual(classify(killed: true), .failed)
+        XCTAssertEqual(classify(killed: true, phase: "prepare"), .failed)
+        XCTAssertEqual(classify(killed: true, phase: "pre-commit"), .outcomeUnknown)
+        XCTAssertEqual(classify(killed: true, phase: "committed"), .success)
+        XCTAssertEqual(classify(killed: true, phase: "committed id=x"), .success)
+        XCTAssertEqual(classify(killed: true, phase: "uploading"), .outcomeUnknown,
+            "custom phase past pre-commit is ambiguous")
     }
 
-    func testTimeoutInPrepareIsFailed() {
-        let script = """
-        log "PHASE: prepare"
-        delay 10
-        log "PHASE: pre-commit"
-        """
-        let r = AppleScriptRunner.run(source: script, tool: "test", deadline: 0.5)
-        XCTAssertEqual(r.outcome, .failed)
-        XCTAssertTrue(r.killed)
-        XCTAssertEqual(r.lastPhase, "prepare")
+    func testExternalCancelClassifiedByPhase() {
+        XCTAssertEqual(classify(cancelled: true), .outcomeUnknown)
+        XCTAssertEqual(classify(cancelled: true, phase: "prepare"), .outcomeUnknown)
+        XCTAssertEqual(classify(cancelled: true, phase: "committed id=x"), .success)
+        XCTAssertEqual(classify(cancelled: true, killed: true, phase: "prepare"), .outcomeUnknown,
+            "cancel takes precedence over the deadline classification")
+    }
+
+    func testCleanExitWinsOverKillOrCancel() {
+        XCTAssertEqual(classify(cleanExit: true, killed: true), .success)
+        XCTAssertEqual(classify(cleanExit: true, cancelled: true), .success)
+    }
+
+    func testUnkilledExitStatus() {
+        XCTAssertEqual(classify(exit: 0), .success)
+        XCTAssertEqual(classify(phase: "committed", exit: 1), .failed)
     }
 
     func testLegacyAdapterSuccess() {
@@ -145,36 +143,6 @@ final class AppleScriptRunnerTests: XCTestCase {
         XCTAssertEqual(r.stdout.trimmingCharacters(in: .whitespacesAndNewlines), "quick")
     }
 
-    /// #17: a `PHASE: committed` marker emitted immediately before the deadline
-    /// SIGKILL must still be parsed. The marker can land in the trailing stderr
-    /// drained after `waitUntilExit()` (after the readability handler is torn
-    /// down); before the fix that trailing data was appended raw and never
-    /// scanned, so a landed mutation was misclassified as outcome_unknown.
-    /// Run it a few times to exercise the timing window.
-    func testCommittedMarkerJustBeforeKillIsParsed() {
-        let script = """
-        log "PHASE: prepare"
-        log "PHASE: pre-commit"
-        log "PHASE: committed id=late-777"
-        delay 30
-        """
-        // If the marker is parsed, outcome is success (committed side effect).
-        // If it were dropped, outcome would be outcome_unknown.
-        var sawSuccess = false
-        for _ in 0..<3 {
-            let r = AppleScriptRunner.run(source: script, tool: "marker-race", deadline: 0.5)
-            XCTAssertTrue(r.killed, "script should be killed at the deadline")
-            if r.outcome == .success {
-                sawSuccess = true
-                XCTAssertEqual(r.lastPhase, "committed id=late-777")
-                XCTAssertEqual(r.committedID, "late-777")
-                break
-            }
-        }
-        XCTAssertTrue(sawSuccess,
-            "committed marker emitted just before SIGKILL must be parsed → success")
-    }
-
     /// #18(2): a script that exits cleanly (status 0, full output) just as the
     /// deadline fires must be classified success, not a timeout failure. We set
     /// a deadline right around the script's natural completion and require that
@@ -199,91 +167,56 @@ final class AppleScriptRunnerTests: XCTestCase {
         }
     }
 
-    // MARK: - Post-verify hook ( / ADR-032)
+    // MARK: - Post-verify hook (ADR-032; pure, so no subprocess has to land in a phase, #54)
 
-    /// Verifier is NOT invoked when outcome is .success — no ambiguity to resolve.
-    func testVerifyHookNotInvokedOnSuccess() {
-        var invoked = false
-        let r = AppleScriptRunner.run(
-            source: "return \"ok\"",
-            tool: "test",
-            onOutcomeUnknown: {
-                invoked = true
-                return .confirmed(id: "should-not-appear")
-            }
-        )
-        XCTAssertEqual(r.outcome, .success)
-        XCTAssertFalse(invoked, "verifier must only run when outcome is outcome_unknown")
-        XCTAssertNil(r.committedID, "committedID must not be set from verifier when not invoked")
+    private func resolve(
+        _ outcome: AppleScriptRunner.Outcome, id: String? = nil,
+        verifyDeadline: TimeInterval = 5,
+        hook: (() -> AppleScriptRunner.VerifyResult)?
+    ) -> (AppleScriptRunner.Outcome, String?) {
+        AppleScriptRunner.resolveUnknown(
+            outcome, committedID: id, hook: hook, verifyDeadline: verifyDeadline, tool: "test")
     }
 
-    /// Verifier is NOT invoked when outcome is .failed (timeout before pre-commit).
-    func testVerifyHookNotInvokedOnFailed() {
+    /// Verifier runs only when the outcome is outcome_unknown.
+    func testVerifyHookNotInvokedOnSuccessOrFailed() {
         var invoked = false
-        let r = AppleScriptRunner.run(
-            source: "delay 10",
-            tool: "test",
-            deadline: 0.3,
-            onOutcomeUnknown: {
-                invoked = true
-                return .confirmed(id: nil)
-            }
-        )
-        XCTAssertEqual(r.outcome, .failed)
+        let hook: () -> AppleScriptRunner.VerifyResult = { invoked = true; return .confirmed(id: "x") }
+        XCTAssertEqual(resolve(.success, hook: hook).0, .success)
+        XCTAssertEqual(resolve(.failed, hook: hook).0, .failed)
+        XCTAssertNil(resolve(.success, hook: hook).1, "committedID must not come from an uninvoked verifier")
         XCTAssertFalse(invoked)
     }
 
-    /// SIGKILL during pre-commit + verifier returns .confirmed(id) → outcome
-    /// upgrades to .success and committedID picks up the verifier-supplied id.
     func testVerifyConfirmedUpgradesToSuccess() {
-        let script = """
-        log "PHASE: prepare"
-        log "PHASE: pre-commit"
-        delay 10
-        """
-        let r = AppleScriptRunner.run(
-            source: script,
-            tool: "test",
-            deadline: 0.5,
-            onOutcomeUnknown: { .confirmed(id: "draft-abc") }
-        )
-        XCTAssertEqual(r.outcome, .success)
-        XCTAssertEqual(r.committedID, "draft-abc")
-        XCTAssertTrue(r.killed)
+        let (outcome, id) = resolve(.outcomeUnknown, hook: { .confirmed(id: "draft-abc") })
+        XCTAssertEqual(outcome, .success)
+        XCTAssertEqual(id, "draft-abc")
+        XCTAssertEqual(resolve(.outcomeUnknown, id: "kept", hook: { .confirmed(id: nil) }).1, "kept")
     }
 
-    /// SIGKILL during pre-commit + verifier returns .absent → outcome upgrades
-    /// to .failed (safe to retry — the side effect definitively did not happen).
+    /// .absent → .failed: safe to retry, the side effect definitively did not happen.
     func testVerifyAbsentUpgradesToFailed() {
-        let script = """
-        log "PHASE: prepare"
-        log "PHASE: pre-commit"
-        delay 10
-        """
-        let r = AppleScriptRunner.run(
-            source: script,
-            tool: "test",
-            deadline: 0.5,
-            onOutcomeUnknown: { .absent }
-        )
-        XCTAssertEqual(r.outcome, .failed)
-        XCTAssertTrue(r.killed)
+        XCTAssertEqual(resolve(.outcomeUnknown, hook: { .absent }).0, .failed)
     }
 
-    /// Verifier returns .inconclusive → outcome stays .outcomeUnknown.
     func testVerifyInconclusiveLeavesOutcomeUnknown() {
-        let script = """
-        log "PHASE: prepare"
-        log "PHASE: pre-commit"
-        delay 10
-        """
-        let r = AppleScriptRunner.run(
-            source: script,
-            tool: "test",
-            deadline: 0.5,
-            onOutcomeUnknown: { .inconclusive }
-        )
-        XCTAssertEqual(r.outcome, .outcomeUnknown)
+        XCTAssertEqual(resolve(.outcomeUnknown, hook: { .inconclusive }).0, .outcomeUnknown)
+        XCTAssertEqual(resolve(.outcomeUnknown, hook: nil).0, .outcomeUnknown)
+    }
+
+    /// A verifier that never returns is cut off at verifyDeadline → inconclusive.
+    func testVerifyHookExceedingDeadlineIsInconclusive() {
+        let never = DispatchSemaphore(value: 0)
+        defer { never.signal() }
+        let start = Date()
+        let (outcome, _) = resolve(.outcomeUnknown, verifyDeadline: 0.3, hook: {
+            never.wait()
+            return .confirmed(id: "too-late")
+        })
+        XCTAssertEqual(outcome, .outcomeUnknown)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2.0,
+            "verifier deadline must bound total wall-clock cost")
     }
 
     // MARK: - External cancel registry
@@ -341,12 +274,16 @@ final class AppleScriptRunnerTests: XCTestCase {
     }
 
     /// Cancelling after `PHASE: committed` was emitted still classifies as
-    /// success — the side effect already landed.
+    /// success. Also covers #17: the marker may only arrive in the stderr
+    /// drained after the kill, and must still be parsed.
     func testExternalCancelAfterCommittedIsSuccess() {
         let id = "test-cancel-committed-\(UUID().uuidString)"
         let done = DispatchSemaphore(value: 0)
         var result: AppleScriptRunner.RunResult? = nil
         let lock = NSLock()
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("committed-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: marker) }
 
         DispatchQueue.global().async {
             let r = AppleScriptRunner.run(
@@ -354,6 +291,7 @@ final class AppleScriptRunnerTests: XCTestCase {
                 log "PHASE: prepare"
                 log "PHASE: pre-commit"
                 log "PHASE: committed id=ok-123"
+                do shell script "touch \(marker)"
                 delay 30
                 """,
                 tool: "cancel-test",
@@ -363,8 +301,14 @@ final class AppleScriptRunnerTests: XCTestCase {
             done.signal()
         }
 
-        // Give the script time to emit the committed marker.
-        Thread.sleep(forTimeInterval: 0.3)
+        // A fixed sleep raced osascript's cold start under load (#54); the file
+        // proves the committed line was written before we cancel.
+        let deadline = Date().addingTimeInterval(10.0)
+        while !FileManager.default.fileExists(atPath: marker) && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker),
+            "script should reach the committed phase before we cancel")
         XCTAssertTrue(AppleScriptRunner.cancel(invocationID: id))
         XCTAssertEqual(done.wait(timeout: .now() + 2.0), .success)
 
@@ -460,31 +404,5 @@ final class AppleScriptRunnerTests: XCTestCase {
         lock.lock(); let r = result; lock.unlock()
         XCTAssertEqual(r?.outcome, .success, "verify .confirmed must upgrade outcome_unknown")
         XCTAssertEqual(r?.committedID, "verified-xyz")
-    }
-
-    /// Verifier itself exceeds its deadline → treated as .inconclusive, outcome
-    /// stays .outcomeUnknown, total wall-clock cost bounded by verifyDeadline.
-    func testVerifyHookExceedingDeadlineIsInconclusive() {
-        let script = """
-        log "PHASE: prepare"
-        log "PHASE: pre-commit"
-        delay 10
-        """
-        let start = Date()
-        let r = AppleScriptRunner.run(
-            source: script,
-            tool: "test",
-            deadline: 0.3,
-            verifyDeadline: 0.3,
-            onOutcomeUnknown: {
-                Thread.sleep(forTimeInterval: 5.0)
-                return .confirmed(id: "too-late")
-            }
-        )
-        let elapsed = Date().timeIntervalSince(start)
-        XCTAssertEqual(r.outcome, .outcomeUnknown,
-            "verifier slept past its deadline — outcome must stay outcome_unknown")
-        XCTAssertLessThan(elapsed, 2.0,
-            "verifier deadline must bound total wall-clock cost (was \(elapsed)s)")
     }
 }
