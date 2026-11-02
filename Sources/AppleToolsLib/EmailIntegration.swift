@@ -534,7 +534,8 @@ public enum EmailIntegration {
     // MARK: - Draft
 
     public static func createDraft(to: String, subject: String, body: String, cc: String?, attachments: [String] = []) throws {
-        let ccList = (cc?.isEmpty == false) ? [cc!] : []
+        // One recipient per address: a joined string shows as unparsed text in Mail.
+        let ccList = splitAddresses(cc ?? "").map(extractEmailAddress)
         try createOutgoingMessage(to: to, subject: subject, body: body, cc: ccList, attachments: attachments)
     }
 
