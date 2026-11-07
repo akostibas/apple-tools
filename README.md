@@ -9,7 +9,7 @@ machine it runs on, with no server.
 ## Quick start
 
 ```bash
-make install               # build the release binary, link it onto PATH, install the skill
+make install               # build the release binary, install it onto PATH, install the skill
 apple-tools permissions    # grant macOS access (Calendar, Contacts, Photos, Full Disk Access, …)
 apple-tools list           # see the tools
 apple-tools calendar list --start 2026-06-15T00:00:00Z --end 2026-06-16T00:00:00Z

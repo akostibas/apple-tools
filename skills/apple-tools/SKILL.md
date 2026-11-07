@@ -108,4 +108,4 @@ apple-tools screenshot --output-dir /tmp/shots
 ## Setup
 
 If `apple-tools` is not found, build and install it from the project repo:
-`bin/install-skill` (builds the release binary and links it onto PATH).
+`bin/install-skill` (builds the release binary and installs it onto PATH).
