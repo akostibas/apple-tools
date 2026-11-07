@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build apple-tools, link the binary onto PATH, and install the Claude skill.
-# Self-aware: reports what it will do, refuses with actionable errors, and is
-# idempotent (re-running just refreshes the symlinks).
+# Build apple-tools, install the binary onto PATH, and install the Claude skill.
+# Installs real copies, so nothing depends on this checkout afterwards. Safe to
+# rerun; override destinations with BIN_DIR and SKILL_DIR.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,38 +12,44 @@ if [[ ! -f Package.swift ]]; then
     exit 1
 fi
 
-# 1. Build the release binary.
+# 1. Build first, so a failed build leaves the previous install working.
 "$repo_root/bin/build"
-bin_src="$repo_root/.build/release/apple-tools"
+release="$repo_root/.build/release"
 
-# 2. Pick a PATH dir to link the binary into.
-if [[ -d "$HOME/bin" ]] && case ":$PATH:" in *":$HOME/bin:"*) true;; *) false;; esac; then
-    bin_dir="$HOME/bin"
-elif [[ -d /usr/local/bin && -w /usr/local/bin ]]; then
-    bin_dir="/usr/local/bin"
-else
-    echo "error: no writable PATH dir found (~/bin or /usr/local/bin)." >&2
-    echo "       Create ~/bin and add it to PATH, then re-run." >&2
-    exit 1
-fi
+# 2. Install the binary.
+bin_dir="${BIN_DIR:-$HOME/bin}"
+mkdir -p "$bin_dir"
+case ":$PATH:" in
+*":$bin_dir:"*) ;;
+*) echo "warning: $bin_dir is not on PATH; add it so 'apple-tools' is found." >&2 ;;
+esac
 
-bin_link="$bin_dir/apple-tools"
-ln -sfn "$bin_src" "$bin_link"
-echo "Linked binary: $bin_link -> $bin_src"
+# SwiftPM resource bundles must sit beside the binary: a CLI looks for them in
+# its own folder, and PhoneNumberKit crashes without its bundle.
+for bundle in "$release"/*.bundle; do
+    [[ -d "$bundle" ]] || continue
+    dest="$bin_dir/$(basename "$bundle")"
+    rm -rf "$dest.new"
+    cp -R "$bundle" "$dest.new"
+    rm -rf "$dest"
+    mv "$dest.new" "$dest"
+    echo "Installed bundle: $dest"
+done
 
-# 3. Install the skill into the Claude skills dir.
-skills_dir="$HOME/.claude/skills"
-mkdir -p "$skills_dir"
-skill_link="$skills_dir/apple-tools"
-if [[ -e "$skill_link" && ! -L "$skill_link" ]]; then
-    echo "error: $skill_link exists and is not a symlink — refusing to overwrite." >&2
-    echo "       Remove it manually if you want this script to manage it." >&2
-    exit 1
-fi
-ln -sfn "$repo_root/skills/apple-tools" "$skill_link"
-echo "Linked skill:  $skill_link -> $repo_root/skills/apple-tools"
+# Renamed into place: replaces an old symlink, and a running copy can't block it.
+cp "$release/apple-tools" "$bin_dir/.apple-tools.new"
+mv -f "$bin_dir/.apple-tools.new" "$bin_dir/apple-tools"
+echo "Installed binary: $bin_dir/apple-tools"
+
+# 3. Install the skill. rm -rf on an old symlink removes only the link.
+skill_dir="${SKILL_DIR:-$HOME/.claude/skills/apple-tools}"
+rm -rf "$skill_dir"
+mkdir -p "$skill_dir"
+cp -R "$repo_root/skills/apple-tools/." "$skill_dir/"
+echo "Installed skill:  $skill_dir"
 
 echo
 echo "Done. Next steps:"
 echo "  1. Run 'apple-tools permissions' to grant macOS access up front."
 echo "  2. The /apple-tools skill is available in new Claude Code sessions."
+echo "  3. Edits to skills/apple-tools/ take effect after re-running this."
