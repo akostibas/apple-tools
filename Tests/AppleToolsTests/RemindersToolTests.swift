@@ -187,8 +187,18 @@ final class RemindersToolTests: XCTestCase {
         }
     }
 
+    /// These write to the user's real Reminders, so they're opt-in like RemindersLiveTests.
+    private func requireLive() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["APPLE_TOOLS_REMINDERS_LIVE"] == "1",
+                          "set APPLE_TOOLS_REMINDERS_LIVE=1 to run tests that create reminders")
+    }
+
+    private func deleteReminder(_ id: String) {
+        _ = tool.handle(params: ["action": AnyCodable("delete"), "id": AnyCodable(id)])
+    }
+
     func testCreateAndCompleteReminder() throws {
-        // Create
+        try requireLive()
         let testTitle = "apple-tools probe test \(UUID().uuidString.prefix(8))"
         let (createResult, createError) = tool.handle(params: [
             "action": AnyCodable("create"),
@@ -204,6 +214,7 @@ final class RemindersToolTests: XCTestCase {
 
         let createJSON = parseJSON(createResult)
         let id = createJSON["id"] as! String
+        defer { deleteReminder(id) }
         XCTAssertEqual(createJSON["title"] as? String, testTitle)
         XCTAssertFalse(id.isEmpty)
 
@@ -259,6 +270,7 @@ final class RemindersToolTests: XCTestCase {
     func testSearchEmitsIsFlaggedAndFlaggedFilterExcludesUnflagged() throws {
         // A freshly created reminder is unflagged (EventKit has no API to set a
         // flag, so we can only assert the unflagged path here).
+        try requireLive()
         let testTitle = "apple-tools flag test \(UUID().uuidString.prefix(8))"
         let (createResult, createError) = tool.handle(params: [
             "action": AnyCodable("create"),
@@ -270,6 +282,7 @@ final class RemindersToolTests: XCTestCase {
         }
         XCTAssertFalse(createError, createResult)
         let id = parseJSON(createResult)["id"] as! String
+        defer { deleteReminder(id) }
 
         // Plain search: is_flagged is always present and false for this item.
         let (searchResult, _) = tool.handle(params: [
@@ -295,15 +308,10 @@ final class RemindersToolTests: XCTestCase {
         ])
         XCTAssertFalse(flaggedError, flaggedResult)
         XCTAssertEqual(parseJSON(flaggedResult)["count"] as? Int, 0)
-
-        // Clean up
-        _ = tool.handle(params: [
-            "action": AnyCodable("complete"),
-            "id": AnyCodable(id),
-        ])
     }
 
     func testCreateWithDueDate() throws {
+        try requireLive()
         let testTitle = "apple-tools due date test \(UUID().uuidString.prefix(8))"
         let (createResult, createError) = tool.handle(params: [
             "action": AnyCodable("create"),
@@ -317,6 +325,7 @@ final class RemindersToolTests: XCTestCase {
         }
 
         XCTAssertFalse(createError, createResult)
+        defer { deleteReminder(parseJSON(createResult)["id"] as? String ?? "") }
 
         // Search by keyword and verify due date is present
         let (searchResult, _) = tool.handle(params: [
@@ -327,13 +336,6 @@ final class RemindersToolTests: XCTestCase {
         let reminders = searchJSON["reminders"] as! [[String: Any]]
         XCTAssertEqual(reminders.count, 1)
         XCTAssertNotNil(reminders[0]["due_date"])
-
-        // Clean up: complete it
-        let id = reminders[0]["id"] as! String
-        _ = tool.handle(params: [
-            "action": AnyCodable("complete"),
-            "id": AnyCodable(id),
-        ])
     }
 
     func testCreateWithInvalidDueDate() throws {
@@ -457,6 +459,7 @@ final class RemindersToolTests: XCTestCase {
     }
 
     func testSearchTruncatesLongNotes() throws {
+        try requireLive()
         let longNotes = String(repeating: "a", count: 200)
         let testTitle = "apple-tools truncate test \(UUID().uuidString.prefix(8))"
         let (createResult, createError) = tool.handle(params: [
@@ -469,6 +472,7 @@ final class RemindersToolTests: XCTestCase {
             throw XCTSkip("Reminders access not granted")
         }
         XCTAssertFalse(createError, createResult)
+        defer { deleteReminder(parseJSON(createResult)["id"] as? String ?? "") }
 
         // Search should truncate notes
         let (searchResult, searchError) = tool.handle(params: [
@@ -492,12 +496,6 @@ final class RemindersToolTests: XCTestCase {
         XCTAssertFalse(getError, getResult)
         let getJSON = parseJSON(getResult)
         XCTAssertEqual(getJSON["notes"] as? String, longNotes)
-
-        // Clean up
-        _ = tool.handle(params: [
-            "action": AnyCodable("complete"),
-            "id": AnyCodable(id),
-        ])
     }
 
     func testSearchByListName() throws {
