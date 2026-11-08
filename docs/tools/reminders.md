@@ -24,6 +24,8 @@ grant in System Settings → Privacy & Security → Reminders.
   default list when `list_name` is omitted.
 - **update** — change any of those fields on a reminder by `id`; `due_date none`
   and `recurrence none` clear them. A repeating reminder must keep a due date.
+  A new `list_name` moves it; the result's `moved` says `in_place` or `copied`
+  (see Shortcomings), and a copy carries the old id as `previous_id`.
 - **delete** — remove a reminder by `id`. A repeating reminder is removed
   entirely; reminders have no per-occurrence copies to delete one of.
 - **create-list** — make a new reminder list (`name` required; optional `account`
@@ -51,6 +53,11 @@ apple-tools reminders delete --id <id>
   and nothing else, with no parent parameter. Subtask relationships are *read*
   (enriched from the Reminders SQLite DB in `search`/`get`), but there is no way
   to *write* one.
+- **Moving into or out of a shared list re-creates the reminder.** Reminders
+  refuses an in-place move across a shared list, so the tool copies it (title,
+  notes, dates, priority, repeat, alerts, flag) and deletes the original; the id
+  changes. A reminder with subtasks, or that is a subtask, is refused instead,
+  since the subtask links can't be re-created.
 - **Lists can't be deleted or renamed.** Only reminders can be changed.
 - **Read-only lists are refused.** `update`/`delete` on a reminder in a list you
   can't edit (e.g. a shared list without edit rights) errors rather than trying.

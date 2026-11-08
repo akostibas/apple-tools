@@ -234,9 +234,47 @@ public enum RemindersIntegration {
     public static func save(_ reminder: EKReminder) throws {
         do {
             try store.save(reminder, commit: true)
+        } catch where isSharedListMoveRefusal(error) {
+            throw error
         } catch {
             throw RemindersError.saveFailed(error.localizedDescription)
         }
+    }
+
+    /// ReminderKit refuses to re-parent a reminder into or out of a shared list (-3002).
+    public static func isSharedListMoveRefusal(_ error: Error) -> Bool {
+        let ns = error as NSError
+        return ns.domain == "com.apple.reminderkit" && ns.code == -3002
+    }
+
+    /// Saves `edited` as a new reminder on `list`, then removes the original. A refused
+    /// save resets `edited.calendar`, hence the explicit list. Rule out subtasks first.
+    public static func moveByCopy(_ edited: EKReminder, to list: EKCalendar) throws -> EKReminder {
+        let copy = EKReminder(eventStore: store)
+        copy.calendar = list
+        copy.title = edited.title
+        copy.notes = edited.notes
+        copy.url = edited.url
+        copy.priority = edited.priority
+        copy.timeZone = edited.timeZone
+        copy.startDateComponents = edited.startDateComponents
+        copy.dueDateComponents = edited.dueDateComponents
+        copy.recurrenceRules = edited.recurrenceRules?.map { $0.copy() as! EKRecurrenceRule }
+        copy.alarms = edited.alarms?.map { $0.copy() as! EKAlarm }
+        copy.isCompleted = edited.isCompleted
+        copy.completionDate = edited.completionDate
+        edited.rollback()
+        do {
+            try store.save(copy, commit: true)
+        } catch {
+            throw RemindersError.saveFailed("couldn't copy it to the new list (\(error.localizedDescription)); the original is unchanged")
+        }
+        do {
+            try store.remove(edited, commit: true)
+        } catch {
+            throw RemindersError.saveFailed("copied it to '\(copy.calendar.title)' as \(copy.calendarItemExternalIdentifier ?? "?"), but couldn't remove the original from '\(edited.calendar.title)' (\(error.localizedDescription)); delete it by hand")
+        }
+        return copy
     }
 
     public static func delete(_ reminder: EKReminder) throws {

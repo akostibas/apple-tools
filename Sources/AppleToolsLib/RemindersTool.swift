@@ -11,7 +11,7 @@ public struct RemindersTool: ProbeTool {
             type_: "object",
             properties: [
                 "action": PropertySchema(type_: "string", description: "lists, search, get, create, update, delete, create-list, or complete"),
-                "list_name": PropertySchema(type_: "string", description: "Reminder list name: filter for search, target for create, destination for update",
+                "list_name": PropertySchema(type_: "string", description: "Reminder list name: filter for search, target for create, destination for update (moving to/from a shared list re-creates it with a new id; see moved/previous_id in the result)",
                     summary: "Reminder list name", actions: ["search", "create", "update"]),
                 "title": PropertySchema(type_: "string", description: "Reminder title (required for create; new title for update)",
                     summary: "Reminder title", actions: ["create", "update"]),
@@ -358,6 +358,10 @@ public struct RemindersTool: ProbeTool {
             return ("a repeating reminder needs a due date", true)
         }
 
+        let oldID = reminder.calendarItemExternalIdentifier ?? ""
+        let moving = !isNew && list != nil && list?.calendarIdentifier != reminder.calendar.calendarIdentifier
+        let oldList = reminder.calendar.title
+
         if let title = str("title") { reminder.title = title }
         if let notes = str("notes") { reminder.notes = notes.isEmpty ? nil : notes }
         if let list = list { reminder.calendar = list }
@@ -374,13 +378,39 @@ public struct RemindersTool: ProbeTool {
             reminder.recurrenceRules = nil
         }
 
+        var reminder = reminder
+        var copiedFrom: String?
+        var restoredFlag = false
         do {
             try RemindersIntegration.save(reminder)
+        } catch where moving && RemindersIntegration.isSharedListMoveRefusal(error) {
+            // Shared lists can't be moved into/out of in place; copy + delete, but never drop data.
+            if let lost = uncopyableData(oldID) {
+                reminder.rollback()
+                return ("can't move this reminder from '\(oldList)' to '\(list!.title)': moving to or from a shared list means re-creating it, and \(lost) would be lost. Move it in the Reminders app instead.", true)
+            }
+            let wasFlagged = RemindersDB.isFlagged(forID: oldID)
+            do {
+                reminder = try RemindersIntegration.moveByCopy(reminder, to: list!)
+            } catch {
+                return ("can't move this reminder from '\(oldList)' to '\(list!.title)': \(error)", true)
+            }
+            copiedFrom = oldID
+            if wasFlagged, p["flagged"] == nil {
+                do { try RemindersIntegration.setFlagged(reminder, true); restoredFlag = true } catch {
+                    return ("reminder moved, but its flag couldn't be restored: \(error)", true)
+                }
+            }
         } catch {
             return ("\(error)", true)
         }
 
         var result = reminderToDict(reminder, truncateNotes: false)
+        if moving {
+            result["moved"] = copiedFrom == nil ? "in_place" : "copied"
+            if let old = copiedFrom { result["previous_id"] = old }
+        }
+        if restoredFlag { result["is_flagged"] = true }
         if let flagged = p["flagged"]?.value as? Bool {
             do {
                 try RemindersIntegration.setFlagged(reminder, flagged)
@@ -404,6 +434,15 @@ public struct RemindersTool: ProbeTool {
             return ("\(error)", true)
         }
         return (jsonString(result) ?? "{}", false)
+    }
+
+    /// EventKit can't create subtask links, so a copy would orphan them.
+    private func uncopyableData(_ ekID: String) -> String? {
+        guard !ekID.isEmpty else { return nil }
+        let subs = RemindersDB.subtasks(forParentID: ekID)
+        if !subs.isEmpty { return "its \(subs.count) subtask(s)" }
+        if RemindersDB.parent(forChildID: ekID) != nil { return "its place as a subtask" }
+        return nil
     }
 
     private func readOnlyMessage(_ list: EKCalendar) -> String {
