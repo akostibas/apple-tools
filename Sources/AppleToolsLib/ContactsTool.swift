@@ -4,11 +4,11 @@ import Foundation
 public struct ContactsTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "contacts",
-        description: "Access Apple Contacts. Actions: 'search' (find contacts by name, email, phone, or group name; returns summaries only — street addresses, birthdays, and any additional emails/phones are NOT included), 'get' (full details for a contact by ID; the only way to see addresses and other non-summary fields, including which account(s) it lives in), 'create' (new contact with the same fields as update, in the default account unless 'account' is given; refused if a contact with the same name, phone, or email exists), 'update' (edit a contact by ID: set single fields, or add/remove one phone, email, URL, or address at a time; other entries are left alone).",
+        description: "Access Apple Contacts. Actions: 'search' (find contacts by name, email, phone, or group name; returns summaries only — street addresses, birthdays, and any additional emails/phones are NOT included), 'read' (full details for a contact by ID; the only way to see addresses and other non-summary fields, including which account(s) it lives in), 'create' (new contact with the same fields as update, in the default account unless 'account' is given; refused if a contact with the same name, phone, or email exists), 'update' (edit a contact by ID: set single fields, or add/remove one phone, email, URL, or address at a time; other entries are left alone).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "search, get, create, or update"),
+                "action": PropertySchema(type_: "string", description: "search, read, create, or update"),
                 "account": PropertySchema(type_: "string", description: "Account to create the contact in, e.g. iCloud (create; default is the default account)", summary: "Account for the new contact", actions: ["create"]),
                 "given_name": PropertySchema(type_: "string", description: "First name (create/update; empty string clears)", summary: "First name", actions: ["create", "update"]),
                 "middle_name": PropertySchema(type_: "string", description: "Middle name (create/update; empty string clears)", summary: "Middle name", actions: ["create", "update"]),
@@ -28,13 +28,13 @@ public struct ContactsTool: ProbeTool {
                 "remove_phone": PropertySchema(type_: "string", description: "Phone number to remove; matched by digits, so formatting doesn't matter (update)", summary: "Phone to remove", actions: ["update"]),
                 "remove_email": PropertySchema(type_: "string", description: "Email to remove, case-insensitive (update)", summary: "Email to remove", actions: ["update"]),
                 "remove_url": PropertySchema(type_: "string", description: "URL to remove (update)", summary: "URL to remove", actions: ["update"]),
-                "remove_address": PropertySchema(type_: "string", description: "Address to remove: its street line, or the full address as 'get' shows it (update)", summary: "Address (street line) to remove", actions: ["update"]),
+                "remove_address": PropertySchema(type_: "string", description: "Address to remove: its street line, or the full address as 'read' shows it (update)", summary: "Address (street line) to remove", actions: ["update"]),
                 "query": PropertySchema(type_: "string", description: "Search term — matches name, email, phone, or group name (required for search). A multi-word query requires each word to match some field (name/email/phone) of the same contact, so 'Mike Walter' finds 'Michael Walter' when a field carries each word",
                     summary: "Search term matched across name, email, phone, group", actions: ["search"]),
                 "limit": PropertySchema(type_: "integer", description: "Max results to return (for search, default 20)",
                     summary: "Max results (default 20)", actions: ["search"]),
-                "id": PropertySchema(type_: "string", description: "Contact identifier from search results (required for get, update)",
-                    summary: "Contact ID from search results", actions: ["get", "update"]),
+                "id": PropertySchema(type_: "string", description: "Contact identifier from search results (required for read, update)",
+                    summary: "Contact ID from search results", actions: ["read", "update"]),
             ],
             required: ["action"]
         ),
@@ -42,8 +42,8 @@ public struct ContactsTool: ProbeTool {
         actions: [
             ActionHelp(name: "search", summary: "Find contacts by name, email, phone, or group",
                 example: "apple-tools contacts search --query <text> [--limit <n>]", required: ["query"]),
-            ActionHelp(name: "get", summary: "Get full details for a contact by ID",
-                example: "apple-tools contacts get --id <id>", required: ["id"]),
+            ActionHelp(name: "read", summary: "Get full details for a contact by ID",
+                example: "apple-tools contacts read --id <id>", required: ["id"]),
             ActionHelp(name: "create", summary: "Add a contact (refused if one with the same name, phone, or email exists)",
                 example: "apple-tools contacts create --given_name <n> [--family_name <n>] [--add_phone <n> --label mobile] [--add_email <e>] [--account <a>]"),
             ActionHelp(name: "update", summary: "Edit a contact: set fields, add or remove one phone/email/URL/address",
@@ -53,7 +53,7 @@ public struct ContactsTool: ProbeTool {
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
         "search": .read,
-        "get":    .read,
+        "read":    .read,
         "create": .readWrite,
         "update": .readWrite,
     ])
@@ -76,7 +76,7 @@ public struct ContactsTool: ProbeTool {
             }
             let limit = params?["limit"]?.value as? Int ?? 20
             return search(query: query, limit: limit)
-        case "get":
+        case "read":
             guard let id = params?["id"]?.value as? String, !id.isEmpty else {
                 return ("missing required parameter: id", true)
             }
@@ -89,7 +89,7 @@ public struct ContactsTool: ProbeTool {
         case "create":
             return create(params: params ?? [:])
         default:
-            return ("unknown action: \(action) (use search, get, create, or update)", true)
+            return ("unknown action: \(action) (use search, read, create, or update)", true)
         }
     }
 

@@ -48,10 +48,12 @@ final class CLIArgumentMapperTests: XCTestCase {
         XCTAssertEqual(arr, ["a.txt", "b.txt", "c.txt"])
     }
 
-    func testUnknownFlagDefaultsToString() throws {
-        let p = try CLIArgumentMapper.buildParams(
-            tokens: ["--whatever", "123"], schema: schema(), action: nil)
-        XCTAssertEqual(p["whatever"]?.value as? String, "123")
+    func testUnknownFlagIsRejected() {
+        // A renamed or mistyped flag must fail loudly, not run the action unfiltered.
+        XCTAssertThrowsError(try CLIArgumentMapper.buildParams(
+            tokens: ["--whatever", "123"], schema: schema(), action: nil)) { error in
+            XCTAssertEqual(error as? CLIArgumentMapper.MappingError, .unknownFlag("whatever"))
+        }
     }
 
     func testMissingValueThrows() {

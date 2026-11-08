@@ -15,13 +15,13 @@ system dialog).
   (local/caldav/exchange/subscription/birthday), color, and which is the
   default for new events.
 - **list** — events in a date range. `start`/`end` are ISO 8601 (defaults to
-  today only); optional `calendar_name` to scope; `dedupe_by_id=true` collapses
+  today only); optional `calendar` to scope; `dedupe_by_id=true` collapses
   the same shared event across calendars into one row.
 - **search** — events matching a `query` keyword (matches title, notes,
   location, and attendee names) within `start`/`end` (defaults to −30…+30 days);
-  same `calendar_name` and `dedupe_by_id` options as `list`.
+  same `calendar` and `dedupe_by_id` options as `list`.
 - **create** — add an event: `title`, `start`, `end` required; optional
-  `calendar_name` (defaults to the default calendar), `location`, `notes`,
+  `calendar` (defaults to the default calendar), `location`, `notes`,
   `all_day`. Does **not** send invites. Bare dates (`2026-08-26`) on both ends
   make a true all-day event without the flag; `end` is then the **last day,
   inclusive** — `2026-08-26` to `2026-08-27` covers both days. `recurrence`
@@ -82,7 +82,7 @@ apple-tools calendar delete --id <id> --span all
   read events surface `url` and RSVP fields.
 - **Calendar names must match exactly (case-insensitively).** `resolveCalendars`
   filters on `title.lowercased() == name.lowercased()`, not a substring match, so
-  a partial or misspelled `calendar_name` yields "no calendar found" rather than
+  a partial or misspelled `calendar` yields "no calendar found" rather than
   a fuzzy hit. When several calendars share a name, `create` silently picks the
   first match.
 - **`list` defaults to a single day.** With no `end`, `listEvents` sets `end` to

@@ -29,8 +29,8 @@ final class EmailToolTests: XCTestCase {
         XCTAssertNotNil(props?["query"])
         XCTAssertNotNil(props?["from"])
         XCTAssertNotNil(props?["to"])
-        XCTAssertNotNil(props?["after"])
-        XCTAssertNotNil(props?["before"])
+        XCTAssertNotNil(props?["start"])
+        XCTAssertNotNil(props?["end"])
         XCTAssertNotNil(props?["limit"])
         XCTAssertNotNil(props?["exclude_self"])
     }
@@ -60,10 +60,10 @@ final class EmailToolTests: XCTestCase {
     func testSearchRejectsUnparseableAfter() {
         let (result, isError) = tool.handle(params: [
             "action": AnyCodable("search"),
-            "after": AnyCodable("not-a-date"),
+            "start": AnyCodable("not-a-date"),
         ])
         XCTAssertTrue(isError)
-        XCTAssertTrue(result.contains("after"))
+        XCTAssertTrue(result.contains("start"))
         XCTAssertTrue(result.contains("ISO 8601"))
     }
 
@@ -264,10 +264,10 @@ final class EmailToolTests: XCTestCase {
     func testSearchRejectsUnparseableBefore() {
         let (result, isError) = tool.handle(params: [
             "action": AnyCodable("search"),
-            "before": AnyCodable("yesterday"),
+            "end": AnyCodable("yesterday"),
         ])
         XCTAssertTrue(isError)
-        XCTAssertTrue(result.contains("before"))
+        XCTAssertTrue(result.contains("end"))
     }
 
     // MARK: - EmailSearch direct API

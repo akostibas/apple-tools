@@ -9,11 +9,11 @@ public typealias NotifyCallback = (_ message: String, _ agent: String?) -> Void
 public struct IMessageTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "imessage",
-        description: "iMessage and SMS. Actions: 'recent' (list conversations with recent activity), 'stats' (rank conversations by message volume with sent/received split over an optional --since window), 'send' (send a message; supports file attachments by absolute path), 'read' (messages from a conversation), 'search' (find messages by text content), 'fetch_attachment' (retrieve an attachment file from a message). Phone numbers and emails are auto-resolved to Contacts names on output (added as 'contact_name' alongside the raw handle when a match exists; 'last_message_from_name' resolves the last-message sender). When a handle is a phone number, a canonical E.164 form is added as 'phone_e164' alongside the raw handle (the raw chat_id is never rewritten); emails and short codes get no such field. Likely-spam detection: 'recent', 'read', and 'stats' entries carry 'is_likely_spam' and 'is_shortcode' booleans so callers don't have to know the magic suffix. A sender is flagged when its chat id carries the (undocumented) SMS-filtering suffix '(smsfp)' (filtered promotional) or '(smsft)' (filtered transactional), OR it is a 5-6 digit marketing short code — UNLESS it resolves to a Contacts name (a real person is never flagged). The raw chat_id (suffix included) is preserved. Use --exclude-spam (alias --humans-only) on 'recent'/'stats' to drop flagged senders; off by default (never silently dropped).",
+        description: "iMessage and SMS. Actions: 'list' (list conversations with recent activity), 'stats' (rank conversations by message volume with sent/received split over an optional --since window), 'send' (send a message; supports file attachments by absolute path), 'read' (messages from a conversation), 'search' (find messages by text content), 'fetch_attachment' (retrieve an attachment file from a message). Phone numbers and emails are auto-resolved to Contacts names on output (added as 'contact_name' alongside the raw handle when a match exists; 'last_message_from_name' resolves the last-message sender). When a handle is a phone number, a canonical E.164 form is added as 'phone_e164' alongside the raw handle (the raw chat_id is never rewritten); emails and short codes get no such field. Likely-spam detection: 'list', 'read', and 'stats' entries carry 'is_likely_spam' and 'is_shortcode' booleans so callers don't have to know the magic suffix. A sender is flagged when its chat id carries the (undocumented) SMS-filtering suffix '(smsfp)' (filtered promotional) or '(smsft)' (filtered transactional), OR it is a 5-6 digit marketing short code — UNLESS it resolves to a Contacts name (a real person is never flagged). The raw chat_id (suffix included) is preserved. Use --exclude-spam (alias --humans-only) on 'list'/'stats' to drop flagged senders; off by default (never silently dropped).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "recent, stats, send, read, search, or fetch_attachment"),
+                "action": PropertySchema(type_: "string", description: "list, stats, send, read, search, or fetch_attachment"),
                 "to": PropertySchema(type_: "string", description: "Recipient phone number, email, or chat_id for group chats (for send)",
                     summary: "Recipient phone, email, or group chat_id", actions: ["send"]),
                 "text": PropertySchema(type_: "string", description: "Message text to send (for send)",
@@ -28,27 +28,27 @@ public struct IMessageTool: ProbeTool {
                     summary: "Phone, email, group name, or chat_id (filters results on search)", actions: ["read", "search"]),
                 "query": PropertySchema(type_: "string", description: "Text to search for (for search). Multi-word queries are AND-of-terms: every word must appear in the message, in any order.",
                     summary: "Text to search for (AND-of-terms)", actions: ["search"]),
-                "limit": PropertySchema(type_: "integer", description: "Max results (default 5 for recent, 10 for read and stats, 20 for search)",
-                    summary: "Max results (defaults vary by action)", actions: ["recent", "stats", "read", "search"]),
+                "limit": PropertySchema(type_: "integer", description: "Max results (default 5 for list, 10 for read and stats, 20 for search)",
+                    summary: "Max results (defaults vary by action)", actions: ["list", "stats", "read", "search"]),
                 "before": PropertySchema(type_: "string", description: "Return messages/conversations before this time (for read, search). Accepts an ISO 8601 timestamp, a date (2026-07-03), or the opaque next_before cursor from a prior read page. An unparseable value is rejected, not ignored.",
                     summary: "Page older than this time or a next_before cursor", actions: ["read", "search"]),
-                "since": PropertySchema(type_: "string", description: "Only include activity/messages after this time (for recent, stats, search). Accepts an ISO 8601 timestamp or a date (2026-07-03). An unparseable value is rejected, not ignored.",
-                    summary: "Only activity after this time (ISO 8601 or date)", actions: ["recent", "stats", "search"]),
+                "since": PropertySchema(type_: "string", description: "Only include activity/messages after this time (for list, stats, search). Accepts an ISO 8601 timestamp or a date (2026-07-03). An unparseable value is rejected, not ignored.",
+                    summary: "Only activity after this time (ISO 8601 or date)", actions: ["list", "stats", "search"]),
                 "message_id": PropertySchema(type_: "integer", description: "Message ROWID from read/search results (for fetch_attachment)",
                     summary: "Message ROWID from read/search results", actions: ["fetch_attachment"]),
                 "filename": PropertySchema(type_: "string", description: "Attachment filename to select when a message has multiple attachments (for fetch_attachment, optional)",
                     summary: "Which attachment, when a message has several", actions: ["fetch_attachment"]),
-                "exclude_spam": PropertySchema(type_: "boolean", description: "Drop likely-spam senders — SMS-filtered (smsfp)/(smsft) chats and 5-6 digit marketing short codes — keeping real contacts. Default false; never drops by default (for recent, stats)",
-                    summary: "Drop likely-spam senders (alias --humans_only)", actions: ["recent", "stats"]),
-                "humans_only": PropertySchema(type_: "boolean", description: "Alias for exclude_spam — keep only conversations with real people (for recent, stats)",
-                    summary: "Alias for --exclude_spam", actions: ["recent", "stats"]),
+                "exclude_spam": PropertySchema(type_: "boolean", description: "Drop likely-spam senders — SMS-filtered (smsfp)/(smsft) chats and 5-6 digit marketing short codes — keeping real contacts. Default false; never drops by default (for list, stats)",
+                    summary: "Drop likely-spam senders (alias --humans_only)", actions: ["list", "stats"]),
+                "humans_only": PropertySchema(type_: "boolean", description: "Alias for exclude_spam — keep only conversations with real people (for list, stats)",
+                    summary: "Alias for --exclude_spam", actions: ["list", "stats"]),
             ],
             required: ["action"]
         ),
         cliSummary: "Send and search iMessage/SMS conversations.",
         actions: [
-            ActionHelp(name: "recent", summary: "List conversations with recent activity",
-                example: "apple-tools imessage recent [--limit <n>] [--since <date>] [--exclude_spam]"),
+            ActionHelp(name: "list", summary: "List conversations with recent activity",
+                example: "apple-tools imessage list [--limit <n>] [--since <date>] [--exclude_spam]"),
             ActionHelp(name: "stats", summary: "Rank conversations by message volume, with a sent/received split",
                 example: "apple-tools imessage stats [--limit <n>] [--since <date>] [--exclude_spam]"),
             ActionHelp(name: "read", summary: "Read messages from a conversation",
@@ -75,7 +75,7 @@ public struct IMessageTool: ProbeTool {
     public var nameResolver: ([String]) -> [String: String] = ContactsIntegration.resolveNames(forIdentifiers:)
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
-        "recent":           .read,
+        "list":           .read,
         "stats":            .read,
         "read":             .read,
         "search":           .read,
@@ -93,7 +93,7 @@ public struct IMessageTool: ProbeTool {
         }
 
         switch action {
-        case "recent":
+        case "list":
             let limit = params?["limit"]?.value as? Int ?? 5
             let since = params?["since"]?.value as? String
             return recent(limit: limit, since: since, excludeSpam: excludeSpamFlag(params))
@@ -133,7 +133,7 @@ public struct IMessageTool: ProbeTool {
             let filename = params?["filename"]?.value as? String
             return fetchAttachment(messageID: messageID, filename: filename)
         default:
-            return ("unknown action: \(action) (use recent, stats, send, read, search, or fetch_attachment)", true)
+            return ("unknown action: \(action) (use list, stats, send, read, search, or fetch_attachment)", true)
         }
     }
 

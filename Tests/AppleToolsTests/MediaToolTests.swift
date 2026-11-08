@@ -26,7 +26,7 @@ final class MediaToolTests: XCTestCase {
 
     func testRecentActionIsReadOnly() {
         guard case .perAction(let map) = tool.accessPolicy else { return XCTFail() }
-        XCTAssertEqual(map["recent"], .read)
+        XCTAssertEqual(map["list"], .read)
     }
 
     // MARK: - Validation
@@ -45,7 +45,7 @@ final class MediaToolTests: XCTestCase {
 
     func testRejectsNonPositiveHours() {
         let (result, isError) = tool.handle(params: [
-            "action": AnyCodable("recent"),
+            "action": AnyCodable("list"),
             "hours": AnyCodable(0),
         ])
         XCTAssertTrue(isError)
@@ -59,7 +59,7 @@ final class MediaToolTests: XCTestCase {
     /// way (count present, items an array, window echoed).
     func testRecentReturnsWellFormedEnvelope() {
         let (result, isError) = tool.handle(params: [
-            "action": AnyCodable("recent"),
+            "action": AnyCodable("list"),
             "hours": AnyCodable(1),
         ])
         XCTAssertFalse(isError)

@@ -38,9 +38,9 @@ public struct EmailTool: ProbeTool {
                     summary: "Alias for --exclude_spam", actions: ["search"]),
                 "to": PropertySchema(type_: "string", description: "Recipient email address (for draft, or recipient filter for search)",
                     summary: "Recipient address (filters results on search)", actions: ["search", "draft"]),
-                "after": PropertySchema(type_: "string", description: "ISO 8601 date lower bound, e.g. '2025-01-01' or '2025-01-01T00:00:00' (for search)",
+                "start": PropertySchema(type_: "string", description: "ISO 8601 date lower bound, e.g. '2025-01-01' or '2025-01-01T00:00:00' (for search)",
                     summary: "ISO 8601 lower bound (e.g. 2025-01-01)", actions: ["search"]),
-                "before": PropertySchema(type_: "string", description: "ISO 8601 date upper bound (for search)",
+                "end": PropertySchema(type_: "string", description: "ISO 8601 date upper bound (for search)",
                     summary: "ISO 8601 upper bound", actions: ["search"]),
                 "exclude_self": PropertySchema(type_: "boolean", description: "Drop results where the viewer is the sender; default true (for search)",
                     summary: "Drop messages you sent (default true)", actions: ["search"]),
@@ -66,7 +66,7 @@ public struct EmailTool: ProbeTool {
             ActionHelp(name: "inbox", summary: "List recent messages from all inboxes",
                 example: "apple-tools email inbox [--limit <n>]"),
             ActionHelp(name: "search", summary: "Search all mail by query, sender, recipient, or date",
-                example: "apple-tools email search [--query <text>] [--from <name>] [--after <date>] ..."),
+                example: "apple-tools email search [--query <text>] [--from <name>] [--start <date>] ..."),
             ActionHelp(name: "read", summary: "Get a full message by ID",
                 example: "apple-tools email read --id <id>", required: ["id"]),
             ActionHelp(name: "headers", summary: "Get a message's headers by ID, without the body",
@@ -327,15 +327,15 @@ public struct EmailTool: ProbeTool {
             criteria.excludeBulk = true
         }
 
-        if let s = params?["after"]?.value as? String, !s.isEmpty {
+        if let s = params?["start"]?.value as? String, !s.isEmpty {
             guard let d = parseISODate(s) else {
-                return ("unparseable 'after' date: \(s) (expected ISO 8601, e.g. 2025-01-01)", true)
+                return ("unparseable 'start' date: \(s) (expected ISO 8601, e.g. 2025-01-01)", true)
             }
             criteria.after = d
         }
-        if let s = params?["before"]?.value as? String, !s.isEmpty {
+        if let s = params?["end"]?.value as? String, !s.isEmpty {
             guard let d = parseISODate(s) else {
-                return ("unparseable 'before' date: \(s) (expected ISO 8601, e.g. 2025-01-01)", true)
+                return ("unparseable 'end' date: \(s) (expected ISO 8601, e.g. 2025-01-01)", true)
             }
             criteria.before = d
         }

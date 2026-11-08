@@ -9,27 +9,27 @@ public struct MediaTool: ProbeTool {
 
     public let definition = ToolDefinition(
         name: "media",
-        description: "See what media you've recently engaged with, newest first, merged across Apple Podcasts and Books. 'recent' returns everything played/opened in the last N hours (default 24) with resume position and progress. Reflects listening/reading from OTHER devices too, since Podcasts and Books sync over iCloud (e.g. podcasts played on your phone show up here). Read-only. Does not cover Music (use the 'music' tool) or TV/movies (no local data).",
+        description: "See what media you've recently engaged with, newest first, merged across Apple Podcasts and Books. 'list' returns everything played/opened in the last N hours (default 24) with resume position and progress. Reflects listening/reading from OTHER devices too, since Podcasts and Books sync over iCloud (e.g. podcasts played on your phone show up here). Read-only. Does not cover Music (use the 'music' tool) or TV/movies (no local data).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "recent"),
+                "action": PropertySchema(type_: "string", description: "list"),
                 "hours": PropertySchema(type_: "integer", description: "Look-back window in hours (default 24)",
-                    summary: "Look-back window in hours (default 24)", actions: ["recent"]),
+                    summary: "Look-back window in hours (default 24)", actions: ["list"]),
                 "limit": PropertySchema(type_: "integer", description: "Max items (default: all in the window)",
-                    summary: "Max items", actions: ["recent"]),
+                    summary: "Max items", actions: ["list"]),
             ],
             required: ["action"]
         ),
         cliSummary: "See recently played/read media (podcasts + books), newest first.",
         actions: [
-            ActionHelp(name: "recent", summary: "Media played or opened in the last N hours",
-                example: "apple-tools media recent [--hours 24] [--limit N]"),
+            ActionHelp(name: "list", summary: "Media played or opened in the last N hours",
+                example: "apple-tools media list [--hours 24] [--limit N]"),
         ]
     )
 
     public let accessPolicy: ToolAccessPolicy = .perAction([
-        "recent": .read,
+        "list": .read,
     ])
 
     public init() {}
@@ -47,7 +47,7 @@ public struct MediaTool: ProbeTool {
             return ("missing required parameter: action", true)
         }
         switch action {
-        case "recent":
+        case "list":
             let hours = intParam(params, "hours") ?? Self.defaultHours
             guard hours > 0 else { return ("hours must be positive", true) }
             let limit = intParam(params, "limit")

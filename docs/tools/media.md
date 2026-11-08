@@ -20,15 +20,15 @@ here, which is the main reason the tool is useful.
 
 ## Actions
 
-- **recent** — everything played or opened in the last `--hours` (default 24),
+- **list** — everything played or opened in the last `--hours` (default 24),
   newest first, capped by `--limit` (default: all). Each item carries its
   `source` (podcast/book), `title`, `creator` (show or author), `last_engaged`
   (ISO-8601 UTC), `percent` (how far through), and — for podcasts —
   `duration_seconds` (episode length).
 
 ```bash
-apple-tools media recent
-apple-tools media recent --hours 168 --limit 10
+apple-tools media list
+apple-tools media list --hours 168 --limit 10
 ```
 
 ## Shortcomings

@@ -1,7 +1,7 @@
 # contacts — Contacts
 
 Look up people in Apple Contacts. Search finds contacts by name, email, phone,
-or group name and returns brief summaries; `get` returns the full record for a
+or group name and returns brief summaries; `read` returns the full record for a
 single contact by id; `create` and `update` add and edit contacts.
 
 **Access:** read/write
@@ -14,7 +14,7 @@ in System Settings → Privacy & Security → Contacts.
   phone-digit substring, or group name. Returns **summaries only** — `id`,
   `name`, `organization`, and the *first* email and phone. `limit` caps results
   (default 20).
-- **get** — full details for one contact by `id` (from a search result): all
+- **read** — full details for one contact by `id` (from a search result): all
   emails/phones with labels, postal addresses, URLs, birthday and other dates,
   relations, social profiles, IM handles, job/department, nickname, prefix/suffix,
   and type (person/organization), plus `accounts`: every account (iCloud,
@@ -41,7 +41,7 @@ Run `apple-tools contacts --help` for the exact parameters of each action.
 apple-tools contacts search --query "Sam"
 apple-tools contacts search --query "acme.com" --limit 5
 apple-tools contacts search --query "Family"
-apple-tools contacts get --id "<CONTACT-ID>"
+apple-tools contacts read --id "<CONTACT-ID>"
 apple-tools contacts create --given_name Priya --family_name Shah --add_phone "415 555 0199" --label mobile
 apple-tools contacts update --id "<CONTACT-ID>" --remove_phone "415 555 0101" --add_phone "415 555 0199" --label mobile
 ```
@@ -49,7 +49,7 @@ apple-tools contacts update --id "<CONTACT-ID>" --remove_phone "415 555 0101" --
 ## Shortcomings
 
 - **No delete, merge, photo, or group edits.**
-- **`accounts` costs a scan.** Apple has no direct lookup, so `get` checks each
+- **`accounts` costs a scan.** Apple has no direct lookup, so `read` checks each
   account's member list; fast for hundreds of contacts per account.
 - **Notes and relations/dates/social profiles can't be edited.** Apple gates the
   contact note behind a special entitlement; the others just aren't wired up.
@@ -59,7 +59,7 @@ apple-tools contacts update --id "<CONTACT-ID>" --remove_phone "415 555 0101" --
 - **`search` returns summaries only — one email and one phone.** `contactSummary`
   emits only `emailAddresses.first` and `phoneNumbers.first`, and omits postal
   addresses, birthdays, additional emails/phones, and all other fields entirely.
-  Use `get` (the only path through `contactFull`) to see the complete record.
+  Use `read` (the only path through `contactFull`) to see the complete record.
 - **Email/phone search is capped at 100 matches and scanned live.** CNContact has
   no native email/phone predicate, so `searchByEmailOrPhone` enumerates the whole
   address book and stops at 100 matches. In a large address book, a match past

@@ -34,7 +34,7 @@
     {
       "id": "media-recent",
       "describe": "podcast/book activity in the last 30 days",
-      "args": ["media", "recent", "--hours", "720"],
+      "args": ["media", "list", "--hours", "720"],
       "count": ".count",
       "baseline": null
     },
@@ -76,7 +76,7 @@
     {
       "id": "imessage-recent",
       "describe": "recent conversations",
-      "args": ["imessage", "recent", "--limit", "20"],
+      "args": ["imessage", "list", "--limit", "20"],
       "count": ".count",
       "baseline": null
     },
@@ -89,9 +89,9 @@
     },
     {
       "id": "calendar-list",
-      "describe": "events in the next 30 days",
-      "args": ["calendar", "list", "--days", "30"],
-      "count": ".count",
+      "describe": "calendars",
+      "args": ["calendar", "calendars"],
+      "count": "length",
       "baseline": null
     },
     {

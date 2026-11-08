@@ -24,8 +24,8 @@ final class PhotosToolTests: XCTestCase {
         XCTAssertNotNil(props?["action"])
         XCTAssertNotNil(props?["query"])
         XCTAssertNotNil(props?["album"])
-        XCTAssertNotNil(props?["start_date"])
-        XCTAssertNotNil(props?["end_date"])
+        XCTAssertNotNil(props?["start"])
+        XCTAssertNotNil(props?["end"])
         XCTAssertNotNil(props?["limit"])
         XCTAssertNotNil(props?["id"])
         XCTAssertNotNil(props?["full_resolution"])
@@ -210,21 +210,21 @@ final class PhotosToolTests: XCTestCase {
     func testSearchWithInvalidStartDate() {
         let (result, isError) = tool.handle(params: [
             "action": AnyCodable("search"),
-            "start_date": AnyCodable("not-a-date"),
+            "start": AnyCodable("not-a-date"),
         ])
         if isError && result.contains("Photos access denied") { return }
         XCTAssertTrue(isError)
-        XCTAssertTrue(result.contains("invalid start_date format"))
+        XCTAssertTrue(result.contains("invalid start format"))
     }
 
     func testSearchWithInvalidEndDate() {
         let (result, isError) = tool.handle(params: [
             "action": AnyCodable("search"),
-            "end_date": AnyCodable("not-a-date"),
+            "end": AnyCodable("not-a-date"),
         ])
         if isError && result.contains("Photos access denied") { return }
         XCTAssertTrue(isError)
-        XCTAssertTrue(result.contains("invalid end_date format"))
+        XCTAssertTrue(result.contains("invalid end format"))
     }
 
     func testSearchNonexistentAlbum() {

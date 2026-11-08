@@ -24,7 +24,7 @@ final class RemindersToolTests: XCTestCase {
         ])
         XCTAssertTrue(isError)
         XCTAssertTrue(result.contains("unknown action"))
-        XCTAssertTrue(result.contains("lists, search, get, create, update, delete, create-list, or complete"))
+        XCTAssertTrue(result.contains("lists, search, read, create, update, delete, create-list, or complete"))
     }
 
     func testCreateListMissingName() {
@@ -100,7 +100,7 @@ final class RemindersToolTests: XCTestCase {
 
     func testGetMissingID() {
         let (result, isError) = tool.handle(params: [
-            "action": AnyCodable("get"),
+            "action": AnyCodable("read"),
         ])
         XCTAssertTrue(isError)
         XCTAssertTrue(result.contains("missing required parameter: id"))
@@ -108,7 +108,7 @@ final class RemindersToolTests: XCTestCase {
 
     func testGetEmptyID() {
         let (result, isError) = tool.handle(params: [
-            "action": AnyCodable("get"),
+            "action": AnyCodable("read"),
             "id": AnyCodable(""),
         ])
         XCTAssertTrue(isError)
@@ -134,7 +134,7 @@ final class RemindersToolTests: XCTestCase {
     func testToolDefinitionProperties() {
         let props = tool.definition.parameters?.properties
         XCTAssertNotNil(props?["action"])
-        XCTAssertNotNil(props?["list_name"])
+        XCTAssertNotNil(props?["list"])
         XCTAssertNotNil(props?["title"])
         XCTAssertNotNil(props?["due_date"])
         XCTAssertNotNil(props?["due_date_end"])
@@ -229,7 +229,7 @@ final class RemindersToolTests: XCTestCase {
 
         // Verify get returns full details
         let (getResult, getError) = tool.handle(params: [
-            "action": AnyCodable("get"),
+            "action": AnyCodable("read"),
             "id": AnyCodable(id),
         ])
         XCTAssertFalse(getError, getResult)
@@ -295,7 +295,7 @@ final class RemindersToolTests: XCTestCase {
 
         // get also emits is_flagged.
         let (getResult, _) = tool.handle(params: [
-            "action": AnyCodable("get"),
+            "action": AnyCodable("read"),
             "id": AnyCodable(id),
         ])
         XCTAssertEqual(parseJSON(getResult)["is_flagged"] as? Bool, false)
@@ -356,7 +356,7 @@ final class RemindersToolTests: XCTestCase {
     func testSearchWithInvalidListName() throws {
         let (result, isError) = tool.handle(params: [
             "action": AnyCodable("search"),
-            "list_name": AnyCodable("Nonexistent List \(UUID().uuidString)"),
+            "list": AnyCodable("Nonexistent List \(UUID().uuidString)"),
         ])
 
         if isError && result.contains("access denied") {
@@ -383,7 +383,7 @@ final class RemindersToolTests: XCTestCase {
 
     func testGetNonexistentReminder() throws {
         let (result, isError) = tool.handle(params: [
-            "action": AnyCodable("get"),
+            "action": AnyCodable("read"),
             "id": AnyCodable("nonexistent-id-\(UUID().uuidString)"),
         ])
 
@@ -490,7 +490,7 @@ final class RemindersToolTests: XCTestCase {
         // Get should return full notes
         let id = reminders[0]["id"] as! String
         let (getResult, getError) = tool.handle(params: [
-            "action": AnyCodable("get"),
+            "action": AnyCodable("read"),
             "id": AnyCodable(id),
         ])
         XCTAssertFalse(getError, getResult)
@@ -518,7 +518,7 @@ final class RemindersToolTests: XCTestCase {
         // Search by list name only (no query)
         let (searchResult, searchError) = tool.handle(params: [
             "action": AnyCodable("search"),
-            "list_name": AnyCodable(listName),
+            "list": AnyCodable(listName),
         ])
         XCTAssertFalse(searchError, searchResult)
         let json = parseJSON(searchResult)

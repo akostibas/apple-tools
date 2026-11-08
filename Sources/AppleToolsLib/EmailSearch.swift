@@ -48,7 +48,7 @@ enum EmailSearch {
             case .sqlFailed(let msg):
                 return "sql error: \(msg)"
             case .noCriteria:
-                return "search requires at least one of: query, from, to, after, before, mailbox"
+                return "search requires at least one of: query, from, to, start, end, mailbox"
             }
         }
     }

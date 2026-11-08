@@ -9,7 +9,7 @@ public struct CalendarTool: ProbeTool {
             type_: "object",
             properties: [
                 "action": PropertySchema(type_: "string", description: "calendars, list, search, create, update, or delete"),
-                "calendar_name": PropertySchema(type_: "string", description: "Calendar name to filter by (for list, search), create in (for create), or move the event to (for update)",
+                "calendar": PropertySchema(type_: "string", description: "Calendar name to filter by (for list, search), create in (for create), or move the event to (for update)",
                     summary: "Calendar to filter by (list/search), create in (create), or move to (update)", actions: ["list", "search", "create", "update"]),
                 "start": PropertySchema(type_: "string", description: "Start date/time, ISO 8601 e.g. 2026-04-15T09:00:00Z (required for create; for list defaults to start of today; for search defaults to 30 days ago; for update the new start of the chosen occurrence — with span=all the whole series shifts by the same amount). For an all-day event pass a bare date, 2026-04-15. A time without an offset is read in 'event_timezone' (or the Mac's zone).",
                     summary: "Start date/time, ISO 8601 (e.g. 2026-04-15T09:00:00Z)", actions: ["list", "search", "create", "update"]),
@@ -45,11 +45,11 @@ public struct CalendarTool: ProbeTool {
             ActionHelp(name: "calendars", summary: "List available calendars",
                 example: "apple-tools calendar calendars"),
             ActionHelp(name: "list", summary: "View events in a date range",
-                example: "apple-tools calendar list [--start <d>] [--end <d>] [--calendar_name <n>] [--dedupe_by_id]"),
+                example: "apple-tools calendar list [--start <d>] [--end <d>] [--calendar <n>] [--dedupe_by_id]"),
             ActionHelp(name: "search", summary: "Find events by keyword",
-                example: "apple-tools calendar search --query <text> [--start <d>] [--end <d>] [--calendar_name <n>] [--dedupe_by_id]", required: ["query"]),
+                example: "apple-tools calendar search --query <text> [--start <d>] [--end <d>] [--calendar <n>] [--dedupe_by_id]", required: ["query"]),
             ActionHelp(name: "create", summary: "Add an event (does not send invites)",
-                example: "apple-tools calendar create --title <t> --start <d> --end <d> [--all_day] [--location <l>] [--notes <n>] [--calendar_name <n>] [--recurrence <rrule>] [--event_timezone <tz>]", required: ["title", "start", "end"]),
+                example: "apple-tools calendar create --title <t> --start <d> --end <d> [--all_day] [--location <l>] [--notes <n>] [--calendar <n>] [--recurrence <rrule>] [--event_timezone <tz>]", required: ["title", "start", "end"]),
             ActionHelp(name: "update", summary: "Change an event you organize",
                 example: "apple-tools calendar update --id <id> [--occurrence <d>] [--span this|future|all] [--title <t>] [--start <d>] [--end <d>] ...", required: ["id"]),
             ActionHelp(name: "delete", summary: "Delete an event you organize",
@@ -81,7 +81,7 @@ public struct CalendarTool: ProbeTool {
         case "calendars":
             return listCalendars()
         case "list":
-            let calendarName = params?["calendar_name"]?.value as? String
+            let calendarName = params?["calendar"]?.value as? String
             let start = params?["start"]?.value as? String
             let end = params?["end"]?.value as? String
             let dedupe = (params?["dedupe_by_id"]?.value as? Bool) ?? false
@@ -96,7 +96,7 @@ public struct CalendarTool: ProbeTool {
             guard let endStr = params?["end"]?.value as? String else {
                 return ("missing required parameter: end", true)
             }
-            let calendarName = params?["calendar_name"]?.value as? String
+            let calendarName = params?["calendar"]?.value as? String
             let location = params?["location"]?.value as? String
             let notes = params?["notes"]?.value as? String
             let allDay = params?["all_day"]?.value as? Bool
@@ -118,7 +118,7 @@ public struct CalendarTool: ProbeTool {
             guard let query = params?["query"]?.value as? String, !query.isEmpty else {
                 return ("missing required parameter: query", true)
             }
-            let calendarName = params?["calendar_name"]?.value as? String
+            let calendarName = params?["calendar"]?.value as? String
             let start = params?["start"]?.value as? String
             let end = params?["end"]?.value as? String
             let dedupe = (params?["dedupe_by_id"]?.value as? Bool) ?? false
@@ -299,7 +299,7 @@ public struct CalendarTool: ProbeTool {
             }
             if event.endDate < event.startDate { throw ToolError("end is before start") }
 
-            if let name = str("calendar_name") {
+            if let name = str("calendar") {
                 if recurring && span == .this { throw ToolError("moving one occurrence to another calendar isn't supported; use span=all") }
                 guard let cal = CalendarIntegration.resolveCalendars(name: name)?.first else {
                     throw ToolError("no calendar found with name: \(name)")
@@ -316,7 +316,7 @@ public struct CalendarTool: ProbeTool {
             }
 
             guard changed else {
-                throw ToolError("nothing to update: pass at least one of title, start, end, all_day, location, notes, calendar_name, recurrence, event_timezone")
+                throw ToolError("nothing to update: pass at least one of title, start, end, all_day, location, notes, calendar, recurrence, event_timezone")
             }
             // EventKit doesn't move deleted dates with a series' time, so they come
             // back. Don't re-delete (the user may want them now); say so instead.

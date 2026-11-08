@@ -40,7 +40,7 @@ final class RemindersLiveTests: XCTestCase {
                             "priority": "high", "flagged": true])
         XCTAssertEqual(r["recurrence"] as? String, "FREQ=WEEKLY;BYDAY=TU")
         XCTAssertEqual(r["priority"] as? String, "high")
-        let got = try call(["action": "get", "id": r["id"]!])
+        let got = try call(["action": "read", "id": r["id"]!])
         XCTAssertEqual(got["recurrence"] as? String, "FREQ=WEEKLY;BYDAY=TU")
         XCTAssertEqual(got["is_flagged"] as? Bool, true)
     }
@@ -57,7 +57,7 @@ final class RemindersLiveTests: XCTestCase {
         let cleared = try call(["action": "update", "id": id, "due_date": "none", "recurrence": "none", "flagged": false])
         XCTAssertNil(cleared["due_date"])
         XCTAssertNil(cleared["recurrence"])
-        XCTAssertEqual(try call(["action": "get", "id": id])["is_flagged"] as? Bool, false)
+        XCTAssertEqual(try call(["action": "read", "id": id])["is_flagged"] as? Bool, false)
     }
 
     func testRepeatWithoutDueDateRefused() throws {
@@ -76,9 +76,9 @@ final class RemindersLiveTests: XCTestCase {
         let byDate = try call(["action": "search", "due_date": "2027-03-01T00:00:00Z", "due_date_end": "2027-03-03T00:00:00Z"])
         XCTAssertTrue((byDate["reminders"] as? [[String: Any]])?.contains { $0["id"] as? String == id } == true)
 
-        XCTAssertEqual(try call(["action": "get", "id": id])["notes"] as? String, "live-search-marker")
+        XCTAssertEqual(try call(["action": "read", "id": id])["notes"] as? String, "live-search-marker")
         XCTAssertEqual(try call(["action": "complete", "id": id])["completed"] as? Bool, true)
-        XCTAssertEqual(try call(["action": "get", "id": id])["completed"] as? Bool, true)
+        XCTAssertEqual(try call(["action": "read", "id": id])["completed"] as? Bool, true)
     }
 
     func testCreateList() throws {
@@ -87,7 +87,7 @@ final class RemindersLiveTests: XCTestCase {
         defer { RemindersIntegration.resolveLists(name: name)?.forEach { try? RemindersIntegration.removeList($0) } }
         XCTAssertEqual(r["name"] as? String, name)
         XCTAssertThrowsError(try call(["action": "create-list", "name": name]), "duplicate name must be refused")
-        let inList = try create(["list_name": name])
+        let inList = try create(["list": name])
         XCTAssertEqual(inList["list"] as? String, name)
     }
 
@@ -95,6 +95,6 @@ final class RemindersLiveTests: XCTestCase {
         let id = try create()["id"] as! String
         XCTAssertEqual(try call(["action": "delete", "id": id])["deleted"] as? Bool, true)
         created.removeAll()
-        XCTAssertThrowsError(try call(["action": "get", "id": id]))
+        XCTAssertThrowsError(try call(["action": "read", "id": id]))
     }
 }
