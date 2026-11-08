@@ -172,6 +172,7 @@ public struct EmailTool: ProbeTool {
             if entry.attachmentCount > 0 {
                 dict["attachment_count"] = entry.attachmentCount
             }
+            if let acct = entry.accountID { dict.merge(EmailSearch.accountFields(acct)) { a, _ in a } }
             return dict
         }
 
@@ -234,6 +235,7 @@ public struct EmailTool: ProbeTool {
                 "is_likely_spam": BulkSenderClassifier.isLikelyBulk(
                     address: h.senderAddress, name: h.senderName),
             ]
+            entry.merge(EmailSearch.accountFields(h.mailboxURL)) { a, _ in a }
             if let snip = h.snippet, !snip.isEmpty { entry["snippet"] = snip }
             if let ai = h.aiSummary, !ai.isEmpty { entry["ai_summary"] = ai }
             return entry
@@ -404,6 +406,8 @@ public struct EmailTool: ProbeTool {
             "body": parsed.body,
         ]
         if let cc = parsed.cc, !cc.isEmpty { response["cc"] = cc }
+        response["mailbox"] = prettifyMailboxURL(loc.mailboxURL)
+        response.merge(EmailSearch.accountFields(loc.mailboxURL)) { a, _ in a }
         if parsed.bodyIsHTMLOnly { response["body_is_html_stripped"] = true }
         if !parsed.attachments.isEmpty {
             response["attachments"] = parsed.attachments.map { att -> [String: Any] in
