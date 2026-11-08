@@ -25,7 +25,7 @@ image into the tool's output directory.
   - `--match content|filename|people` constrains which matcher runs; with no ML
     hit and no constraint, `--query` falls back to a filename match
     (`matched: filename`).
-  - `--start_date` / `--end_date` (ISO 8601) bound by capture date; `--limit`
+  - `--start` / `--end` (ISO 8601) bound by capture date; `--limit`
     caps results (default 20).
 - **fetch** — export one photo by `--id` (a local identifier from a search
   result) into the output dir and return its path. Default is a JPEG resized to
@@ -36,7 +36,7 @@ Run `apple-tools photos --help` for the exact parameters of each action.
 ## Examples
 
 ```bash
-apple-tools photos search --query "beach" --start_date 2026-06-01 --limit 10
+apple-tools photos search --query "beach" --start 2026-06-01 --limit 10
 apple-tools photos search --person "Sandy Ford"
 apple-tools photos search --match people
 apple-tools photos fetch --id "A1B2C3D4-.../L0/001" --full_resolution

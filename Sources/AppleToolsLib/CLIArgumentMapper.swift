@@ -8,10 +8,12 @@ public enum CLIArgumentMapper {
     public enum MappingError: Error, CustomStringConvertible, Equatable {
         case unexpectedArgument(String)
         case missingValue(flag: String)
+        case unknownFlag(String)
         public var description: String {
             switch self {
             case .unexpectedArgument(let a): return "unexpected argument: \(a) (expected --flag value)"
             case .missingValue(let f): return "flag --\(f) needs a value"
+            case .unknownFlag(let f): return "unknown flag --\(f) (run with --help to see this tool's flags)"
             }
         }
     }
@@ -68,6 +70,8 @@ public enum CLIArgumentMapper {
             }
 
             let key = normalizeKey(flagToken)
+            // Silently dropping a typo or renamed flag would run the action unfiltered.
+            if schema != nil, props[key] == nil { throw MappingError.unknownFlag(key) }
             let type = props[key]?.type_ ?? "string"
             // An inline value is self-contained (consumes only this token); a
             // space-separated value borrows the following non-flag token.

@@ -18,8 +18,9 @@ apple-tools list                                     # all tools
 apple-tools permissions                              # preflight / trigger TCC prompts
 ```
 
-- Flags map to the tool's parameters; `--calendar-name` and `--calendar_name`
-  are equivalent. Array params (e.g. `--attachments`) accept repeats or commas.
+- Flags map to the tool's parameters; `--due-date` and `--due_date` are
+  equivalent, and a flag the tool doesn't have is an error. Date ranges are
+  `--start`/`--end`. Array params (e.g. `--attachments`) accept repeats or commas.
 - Output is JSON on stdout (pretty-printed). Exit code is non-zero on error,
   with a message on stderr.
 - ISO 8601 for dates/times (e.g. `2026-06-15T09:00:00Z`).
@@ -62,7 +63,7 @@ Allow/Deny dialog; off by default.)
   `--recurrence` takes an RRULE, `--event_timezone` an IANA zone), `update`/`delete`
   (by `--id`; for a repeating event also `--occurrence <date>` and `--span
   this|future|all`, default `this`). Refuses invites you don't organize.
-- **reminders** — `lists`, `search`, `get`, `create`, `update`, `delete` (`--recurrence` RRULE, `--priority`, `--flagged`), `create-list` (new list,
+- **reminders** — `lists`, `search`, `read`, `create`, `update`, `delete` (`--recurrence` RRULE, `--priority`, `--flagged`), `create-list` (new list,
   optional `--account`; rejects duplicate names), `complete`.
 - **notes** — `folders`, `search`, `read`, `create`, `append`, `move`, `delete` (to Recently Deleted), `rename-folder`. Content is
   Markdown (headings, bold/italic/strike/mono, lists round-trip). `--folder`
@@ -70,10 +71,10 @@ Allow/Deny dialog; off by default.)
   missing path segments are created nested. `append` rewrites the whole note:
   it refuses notes with images/files/tables/mentions/hashtags, and may restyle
   titles and checklists elsewhere in the note.
-- **contacts** — `search` (name/email/phone/group), `get` (by ID, incl. `accounts`), `create` (refuses duplicates; optional `--account`), `update` (set fields; add/remove one phone, email, URL, or address per call).
-- **email** — `inbox`, `search`, `read`, `headers` (all or `--names`, no body), `fetch_attachment`, `draft` (does NOT
+- **contacts** — `search` (name/email/phone/group), `read` (by ID, incl. `accounts`), `create` (refuses duplicates; optional `--account`), `update` (set fields; add/remove one phone, email, URL, or address per call).
+- **email** — `inbox`, `search`, `read`, `headers` (all or `--names`, no body), `fetch_attachment`, `mailboxes`, `move` (not Gmail), `draft` (does NOT
   send; supports attachments by absolute path).
-- **imessage** — `recent`, `read`, `search`, `send` (iMessage/SMS; supports
+- **imessage** — `list`, `read`, `search`, `send` (iMessage/SMS; supports
   attachments), `fetch_attachment`.
 - **photos** — `search`, `fetch` (export a photo locally → path).
 - **voicememos** — `folders` (names + counts), `list` (recent recordings; last 30 days by default, `--all`

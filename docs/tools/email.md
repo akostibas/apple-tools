@@ -48,7 +48,7 @@ Run `apple-tools email --help` for the exact parameters of each action.
 ## Examples
 
 ```bash
-apple-tools email search --from "sam" --after 2026-07-01
+apple-tools email search --from "sam" --start 2026-07-01
 apple-tools email read --id "<MESSAGE-ID>"
 apple-tools email headers --id "<MESSAGE-ID>" --names Sender,X-Google-Calendar-Notification
 apple-tools email reply --id "<MESSAGE-ID>" --body "Sounds great, thanks!"

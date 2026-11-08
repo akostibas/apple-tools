@@ -17,9 +17,9 @@ public struct PhotosTool: ProbeTool {
                     summary: "Constrain match type: people | content | filename", actions: ["search"]),
                 "album": PropertySchema(type_: "string", description: "Album name to filter by (for search)",
                     summary: "Album name to filter by", actions: ["search"]),
-                "start_date": PropertySchema(type_: "string", description: "Start date, ISO 8601 e.g. 2026-01-15 (for search)",
+                "start": PropertySchema(type_: "string", description: "Start date, ISO 8601 e.g. 2026-01-15 (for search)",
                     summary: "Start date, ISO 8601 (e.g. 2026-01-15)", actions: ["search"]),
-                "end_date": PropertySchema(type_: "string", description: "End date, ISO 8601 (for search)",
+                "end": PropertySchema(type_: "string", description: "End date, ISO 8601 (for search)",
                     summary: "End date, ISO 8601", actions: ["search"]),
                 "limit": PropertySchema(type_: "integer", description: "Max results to return (for search, default 20)",
                     summary: "Max results (default 20)", actions: ["search"]),
@@ -33,7 +33,7 @@ public struct PhotosTool: ProbeTool {
         cliSummary: "Search the Apple Photos library and export photos.",
         actions: [
             ActionHelp(name: "search", summary: "Find photos by keyword, date, person, or album",
-                example: "apple-tools photos search [--query <text>] [--person <name>] [--album <name>] [--start_date <d>] [--end_date <d>] [--match <type>] [--limit <n>]"),
+                example: "apple-tools photos search [--query <text>] [--person <name>] [--album <name>] [--start <d>] [--end <d>] [--match <type>] [--limit <n>]"),
             ActionHelp(name: "fetch", summary: "Export a photo into the output dir; returns its path",
                 example: "apple-tools photos fetch --id <id> [--full_resolution]", required: ["id"]),
         ]
@@ -65,8 +65,8 @@ public struct PhotosTool: ProbeTool {
             let person = params?["person"]?.value as? String
             let match = (params?["match"]?.value as? String)?.lowercased()
             let album = params?["album"]?.value as? String
-            let startDate = params?["start_date"]?.value as? String
-            let endDate = params?["end_date"]?.value as? String
+            let startDate = params?["start"]?.value as? String
+            let endDate = params?["end"]?.value as? String
             let limit = params?["limit"]?.value as? Int ?? 20
             return search(query: query, person: person, match: match, album: album, startDate: startDate, endDate: endDate, limit: limit)
         case "fetch":
@@ -114,13 +114,13 @@ public struct PhotosTool: ProbeTool {
             var endDateObj: Date?
             if let startStr = startDate {
                 guard let d = PhotosIntegration.parseDate(startStr) else {
-                    return ("invalid start_date format (use ISO 8601, e.g. 2026-01-15 or 2026-01-15T09:00:00Z)", true)
+                    return ("invalid start format (use ISO 8601, e.g. 2026-01-15 or 2026-01-15T09:00:00Z)", true)
                 }
                 startDateObj = d
             }
             if let endStr = endDate {
                 guard let d = PhotosIntegration.parseEndDate(endStr) else {
-                    return ("invalid end_date format", true)
+                    return ("invalid end format", true)
                 }
                 endDateObj = d
             }
@@ -174,13 +174,13 @@ public struct PhotosTool: ProbeTool {
         var endDateObj: Date?
         if let startStr = startDate {
             guard let d = PhotosIntegration.parseDate(startStr) else {
-                return ("invalid start_date format (use ISO 8601, e.g. 2026-01-15 or 2026-01-15T09:00:00Z)", true)
+                return ("invalid start format (use ISO 8601, e.g. 2026-01-15 or 2026-01-15T09:00:00Z)", true)
             }
             startDateObj = d
         }
         if let endStr = endDate {
             guard let d = PhotosIntegration.parseEndDate(endStr) else {
-                return ("invalid end_date format", true)
+                return ("invalid end format", true)
             }
             endDateObj = d
         }
@@ -239,13 +239,13 @@ public struct PhotosTool: ProbeTool {
         var endDateObj: Date?
         if let startStr = startDate {
             guard let d = PhotosIntegration.parseDate(startStr) else {
-                return ("invalid start_date format (use ISO 8601, e.g. 2026-01-15 or 2026-01-15T09:00:00Z)", true)
+                return ("invalid start format (use ISO 8601, e.g. 2026-01-15 or 2026-01-15T09:00:00Z)", true)
             }
             startDateObj = d
         }
         if let endStr = endDate {
             guard let d = PhotosIntegration.parseEndDate(endStr) else {
-                return ("invalid end_date format", true)
+                return ("invalid end format", true)
             }
             endDateObj = d
         }
@@ -301,13 +301,13 @@ public struct PhotosTool: ProbeTool {
         var endDateObj: Date?
         if let startStr = startDate {
             guard let d = PhotosIntegration.parseDate(startStr) else {
-                return ("invalid start_date format (use ISO 8601, e.g. 2026-01-15 or 2026-01-15T09:00:00Z)", true)
+                return ("invalid start format (use ISO 8601, e.g. 2026-01-15 or 2026-01-15T09:00:00Z)", true)
             }
             startDateObj = d
         }
         if let endStr = endDate {
             guard let d = PhotosIntegration.parseEndDate(endStr) else {
-                return ("invalid end_date format", true)
+                return ("invalid end format", true)
             }
             endDateObj = d
         }

@@ -16,7 +16,7 @@ downloaded locally.
 
 ## Actions
 
-- **recent** — conversations with recent activity, newest first (`limit`,
+- **list** — conversations with recent activity, newest first (`limit`,
   optional `since`; `exclude_spam`/`humans_only` to drop flagged senders).
   Each entry carries an unread count, last-message preview, and `is_likely_spam`
   / `is_shortcode` flags.
@@ -39,7 +39,7 @@ Run `apple-tools imessage --help` for the exact parameters of each action.
 ## Examples
 
 ```bash
-apple-tools imessage recent --limit 10 --humans-only
+apple-tools imessage list --limit 10 --humans-only
 apple-tools imessage read --chat "+16502530000" --limit 20
 apple-tools imessage search --query "dinner reservation" --since 2026-07-01
 apple-tools imessage send --to "+16502530000" --text "On my way" --attachments ~/map.png
@@ -68,12 +68,12 @@ apple-tools imessage send --to "+16502530000" --text "On my way" --attachments ~
 - **`search` only scans the plain `text` column.** Its `WHERE` requires
   `m.text IS NOT NULL AND m.text != ''`, so messages whose body lives *only* in
   the `attributedBody` blob (e.g. some formatted or edited messages) are
-  invisible to search — even though `read`/`recent` decode that blob for display.
+  invisible to search — even though `read`/`list` decode that blob for display.
 - **`attributedBody` decoding is a best-effort byte scan.** Bodies are recovered
   by locating an `NSString` marker and reading a typedstream varint length; if
   the layout doesn't match, `text` comes back empty rather than raising an error.
 - **`read`/`search` don't filter out associated (reaction) rows by `item_type`.**
-  `recent`'s unread count and `stats` restrict to `item_type = 0`, but `read` and
+  `list`'s unread count and `stats` restrict to `item_type = 0`, but `read` and
   `search` have no such filter, so tapback/system rows can appear in a
   conversation's message list.
 - **Attachments not downloaded from iCloud can't be fetched.** `fetch_attachment`

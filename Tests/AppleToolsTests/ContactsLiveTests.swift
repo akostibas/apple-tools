@@ -46,7 +46,7 @@ final class ContactsLiveTests: XCTestCase {
         XCTAssertEqual(values(c, "phones"), ["+14155550177"])
         let accounts = try XCTUnwrap(c["accounts"] as? [String])
         XCTAssertFalse(accounts.isEmpty)
-        XCTAssertEqual(try call(["action": "get", "id": id])["accounts"] as? [String], accounts)
+        XCTAssertEqual(try call(["action": "read", "id": id])["accounts"] as? [String], accounts)
 
         for dup: [String: Any] in [
             ["given_name": "new", "family_name": marker],                // same name, any case
@@ -85,7 +85,7 @@ final class ContactsLiveTests: XCTestCase {
         let byEmail = try call(["action": "search", "query": "\(marker)@example.com"])["contacts"] as? [[String: Any]] ?? []
         XCTAssertEqual(byEmail.count, 1)
 
-        let got = try call(["action": "get", "id": fixture.identifier])
+        let got = try call(["action": "read", "id": fixture.identifier])
         XCTAssertEqual(got["name"] as? String, "Test \(marker)")
         XCTAssertEqual(values(got, "phones"), ["+14155550101"])
     }

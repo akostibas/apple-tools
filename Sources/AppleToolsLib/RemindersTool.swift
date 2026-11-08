@@ -6,12 +6,12 @@ public struct RemindersTool: ProbeTool {
 
     public let definition = ToolDefinition(
         name: "reminders",
-        description: "Manage Apple Reminders. Use 'lists' to see available lists, 'search' to find reminders (by keyword, list, or date range), 'get' to view a single reminder's full details, 'create' to add one, 'update' to change one, 'delete' to remove one, 'create-list' to add a new list, 'complete' to mark done.",
+        description: "Manage Apple Reminders. Use 'lists' to see available lists, 'search' to find reminders (by keyword, list, or date range), 'read' to view a single reminder's full details, 'create' to add one, 'update' to change one, 'delete' to remove one, 'create-list' to add a new list, 'complete' to mark done.",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "lists, search, get, create, update, delete, create-list, or complete"),
-                "list_name": PropertySchema(type_: "string", description: "Reminder list name: filter for search, target for create, destination for update (moving to/from a shared list re-creates it with a new id; see moved/previous_id in the result)",
+                "action": PropertySchema(type_: "string", description: "lists, search, read, create, update, delete, create-list, or complete"),
+                "list": PropertySchema(type_: "string", description: "Reminder list name: filter for search, target for create, destination for update (moving to/from a shared list re-creates it with a new id; see moved/previous_id in the result)",
                     summary: "Reminder list name", actions: ["search", "create", "update"]),
                 "title": PropertySchema(type_: "string", description: "Reminder title (required for create; new title for update)",
                     summary: "Reminder title", actions: ["create", "update"]),
@@ -29,8 +29,8 @@ public struct RemindersTool: ProbeTool {
                     summary: "End of date-range filter, ISO 8601", actions: ["search"]),
                 "notes": PropertySchema(type_: "string", description: "Reminder notes (for create, update)",
                     summary: "Reminder notes", actions: ["create", "update"]),
-                "id": PropertySchema(type_: "string", description: "Reminder identifier (required for get, update, delete, complete)",
-                    summary: "Reminder identifier", actions: ["get", "update", "delete", "complete"]),
+                "id": PropertySchema(type_: "string", description: "Reminder identifier (required for read, update, delete, complete)",
+                    summary: "Reminder identifier", actions: ["read", "update", "delete", "complete"]),
                 "query": PropertySchema(type_: "string", description: "Search keyword (optional for search)",
                     summary: "Search keyword", actions: ["search"]),
                 "show_completed": PropertySchema(type_: "boolean", description: "Include completed reminders (for search, default false)",
@@ -45,13 +45,13 @@ public struct RemindersTool: ProbeTool {
             ActionHelp(name: "lists", summary: "See available reminder lists",
                 example: "apple-tools reminders lists"),
             ActionHelp(name: "search", summary: "Find reminders by keyword, list, or date range",
-                example: "apple-tools reminders search [--query <text>] [--list_name <name>] [--due_date <date>] [--due_date_end <date>] [--show_completed] [--flagged]"),
-            ActionHelp(name: "get", summary: "View a single reminder's full details",
-                example: "apple-tools reminders get --id <id>", required: ["id"]),
+                example: "apple-tools reminders search [--query <text>] [--list <name>] [--due_date <date>] [--due_date_end <date>] [--show_completed] [--flagged]"),
+            ActionHelp(name: "read", summary: "View a single reminder's full details",
+                example: "apple-tools reminders read --id <id>", required: ["id"]),
             ActionHelp(name: "create", summary: "Add a reminder",
-                example: "apple-tools reminders create --title <text> [--list_name <name>] [--due_date <date>] [--notes <text>] [--priority <p>] [--flagged] [--recurrence <rrule>]", required: ["title"]),
+                example: "apple-tools reminders create --title <text> [--list <name>] [--due_date <date>] [--notes <text>] [--priority <p>] [--flagged] [--recurrence <rrule>]", required: ["title"]),
             ActionHelp(name: "update", summary: "Change a reminder's title, notes, due date, list, priority, flag, or repeat",
-                example: "apple-tools reminders update --id <id> [--title <text>] [--due_date <date|none>] [--list_name <name>] [--notes <text>] [--priority <p>] [--flagged true|false] [--recurrence <rrule|none>]", required: ["id"]),
+                example: "apple-tools reminders update --id <id> [--title <text>] [--due_date <date|none>] [--list <name>] [--notes <text>] [--priority <p>] [--flagged true|false] [--recurrence <rrule|none>]", required: ["id"]),
             ActionHelp(name: "delete", summary: "Delete a reminder (a repeating one is deleted entirely)",
                 example: "apple-tools reminders delete --id <id>", required: ["id"]),
             ActionHelp(name: "create-list", summary: "Add a new reminder list",
@@ -64,7 +64,7 @@ public struct RemindersTool: ProbeTool {
     public let accessPolicy: ToolAccessPolicy = .perAction([
         "lists":       .read,
         "search":      .read,
-        "get":         .read,
+        "read":         .read,
         "create":      .readWrite,
         "update":      .readWrite,
         "delete":      .readWrite,
@@ -87,17 +87,17 @@ public struct RemindersTool: ProbeTool {
             return listLists()
         case "search":
             let query = params?["query"]?.value as? String
-            let listName = params?["list_name"]?.value as? String
+            let listName = params?["list"]?.value as? String
             let dueDate = params?["due_date"]?.value as? String
             let dueDateEnd = params?["due_date_end"]?.value as? String
             let showCompleted = params?["show_completed"]?.value as? Bool ?? false
             let flaggedOnly = params?["flagged"]?.value as? Bool ?? false
             if query == nil && listName == nil && dueDate == nil && dueDateEnd == nil && !flaggedOnly {
-                return ("search requires at least one of: query, list_name, due_date, due_date_end, or flagged", true)
+                return ("search requires at least one of: query, list, due_date, due_date_end, or flagged", true)
             }
             guard RemindersIntegration.requestAccess() else { return accessDenied }
             return searchReminders(query: query, listName: listName, dueDate: dueDate, dueDateEnd: dueDateEnd, showCompleted: showCompleted, flaggedOnly: flaggedOnly)
-        case "get":
+        case "read":
             guard let id = params?["id"]?.value as? String, !id.isEmpty else {
                 return ("missing required parameter: id", true)
             }
@@ -137,7 +137,7 @@ public struct RemindersTool: ProbeTool {
             guard RemindersIntegration.requestAccess() else { return accessDenied }
             return completeReminder(id: id)
         default:
-            return ("unknown action: \(action) (use lists, search, get, create, update, delete, create-list, or complete)", true)
+            return ("unknown action: \(action) (use lists, search, read, create, update, delete, create-list, or complete)", true)
         }
     }
 
@@ -314,7 +314,7 @@ public struct RemindersTool: ProbeTool {
 
     // MARK: - Create / update / delete
 
-    private static let editableFields = ["title", "notes", "due_date", "list_name", "priority", "recurrence", "flagged"]
+    private static let editableFields = ["title", "notes", "due_date", "list", "priority", "recurrence", "flagged"]
     private static let priorities = ["high": 1, "medium": 5, "low": 9, "none": 0]
 
     /// Validates every field before touching `reminder`: the EKEventStore is
@@ -329,7 +329,7 @@ public struct RemindersTool: ProbeTool {
         if let title = str("title"), title.isEmpty { return ("title can't be empty", true) }
 
         var list: EKCalendar?
-        if let name = str("list_name") {
+        if let name = str("list") {
             guard let cal = RemindersIntegration.resolveLists(name: name)?.first else {
                 return ("no reminder list found with name: \(name)", true)
             }

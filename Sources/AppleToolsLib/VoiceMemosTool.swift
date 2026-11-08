@@ -21,9 +21,9 @@ public struct VoiceMemosTool: ProbeTool {
                     summary: "Title keywords (AND-of-terms)", actions: ["search"]),
                 "folder": PropertySchema(type_: "string", description: "Restrict to a named Voice Memos folder as 'folders' reports it, case-insensitive (for list/search)",
                     summary: "Restrict to a named folder, case-insensitive", actions: ["list", "search"]),
-                "start_date": PropertySchema(type_: "string", description: "Only recordings on/after this date, ISO 8601 e.g. 2026-01-15 (for list/search)",
+                "start": PropertySchema(type_: "string", description: "Only recordings on/after this date, ISO 8601 e.g. 2026-01-15 (for list/search)",
                     summary: "Recordings on/after this date (ISO 8601, e.g. 2026-01-15)", actions: ["list", "search"]),
-                "end_date": PropertySchema(type_: "string", description: "Only recordings on/before this date, ISO 8601 (for list/search)",
+                "end": PropertySchema(type_: "string", description: "Only recordings on/before this date, ISO 8601 (for list/search)",
                     summary: "Recordings on/before this date (ISO 8601)", actions: ["list", "search"]),
                 "limit": PropertySchema(type_: "integer", description: "Max recordings to return (for list/search)",
                     summary: "Max recordings to return", actions: ["list", "search"]),
@@ -51,7 +51,7 @@ public struct VoiceMemosTool: ProbeTool {
             ActionHelp(name: "list", summary: "List recent recordings (last 30 days by default), newest first",
                 example: "apple-tools voicememos list [--all] [--folder <name>] [--limit <n>]"),
             ActionHelp(name: "search", summary: "Filter all recordings by title, folder, or date",
-                example: "apple-tools voicememos search [--query <text>] [--folder <name>] [--start_date <date>] ..."),
+                example: "apple-tools voicememos search [--query <text>] [--folder <name>] [--start <date>] ..."),
             ActionHelp(name: "export", summary: "Copy a recording's .m4a audio into the output dir",
                 example: "apple-tools voicememos export --id <id> [--with_waveform]", required: ["id"]),
             ActionHelp(name: "transcribe", summary: "On-device transcript of a recording (macOS 26+)",
@@ -135,15 +135,15 @@ public struct VoiceMemosTool: ProbeTool {
 
         var start: Date?
         var end: Date?
-        if let s = params?["start_date"]?.value as? String {
+        if let s = params?["start"]?.value as? String {
             guard let d = VoiceMemosIntegration.parseDate(s) else {
-                return ("invalid start_date format (use ISO 8601, e.g. 2026-01-15 or 2026-01-15T09:00:00Z)", true)
+                return ("invalid start format (use ISO 8601, e.g. 2026-01-15 or 2026-01-15T09:00:00Z)", true)
             }
             start = d
         }
-        if let e = params?["end_date"]?.value as? String {
+        if let e = params?["end"]?.value as? String {
             guard let d = VoiceMemosIntegration.parseEndDate(e) else {
-                return ("invalid end_date format", true)
+                return ("invalid end format", true)
             }
             end = d
         }
