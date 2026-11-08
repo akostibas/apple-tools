@@ -416,6 +416,49 @@ enum EmailSearch {
         guard let cstr = sqlite3_column_text(stmt, idx) else { return nil }
         return String(cString: cstr)
     }
+
+    // MARK: - Account names
+
+    struct Account { let name: String; let email: String? }
+
+    /// Mailbox URLs carry an account UUID; name and address live in the system
+    /// Accounts store. Mail child rows are often blank, so fall back to the parent.
+    static let accounts: [String: Account] = {
+        let path = NSHomeDirectory() + "/Library/Accounts/Accounts4.sqlite"
+        var db: OpaquePointer?
+        let uri = "file://\(path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path)?mode=ro"
+        guard sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK, let db = db else {
+            if let d = db { sqlite3_close(d) }
+            Log.info("email: can't open Accounts4.sqlite; results will omit account")
+            return [:]
+        }
+        defer { sqlite3_close(db) }
+        let sql = """
+        SELECT a.ZIDENTIFIER,
+               COALESCE(NULLIF(a.ZACCOUNTDESCRIPTION, ''), p.ZACCOUNTDESCRIPTION),
+               COALESCE(NULLIF(a.ZUSERNAME, ''), p.ZUSERNAME)
+        FROM ZACCOUNT a LEFT JOIN ZACCOUNT p ON a.ZPARENTACCOUNT = p.Z_PK
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return [:] }
+        defer { sqlite3_finalize(stmt) }
+        var out: [String: Account] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let id = columnString(stmt, 0), let name = columnString(stmt, 1) else { continue }
+            out[id] = Account(name: name, email: columnString(stmt, 2).flatMap { $0.contains("@") ? $0 : nil })
+        }
+        return out
+    }()
+
+    /// `account` / `account_email` result fields for a mailbox URL or bare account UUID.
+    static func accountFields(_ urlOrID: String) -> [String: Any] {
+        if urlOrID.hasPrefix("local:") { return ["account": "On My Mac"] }
+        let id = URLComponents(string: urlOrID)?.host ?? urlOrID
+        guard let acct = accounts[id] else { return [:] }
+        var f: [String: Any] = ["account": acct.name]
+        if let e = acct.email { f["account_email"] = e }
+        return f
+    }
 }
 
 // MARK: - Word boundary matching

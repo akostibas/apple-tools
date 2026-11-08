@@ -28,6 +28,12 @@ Envelope Index; also used by the AppleScript fallback).
   quotes the original in a real indented `<blockquote>`. Put **only** your new
   text in `body` — the original is quoted automatically. Does not send.
 
+`inbox`, `search` and `read` results name the Mail account each message is in:
+`account` (as shown in Mail, e.g. "iCloud") and `account_email` when known.
+It comes from the account the message is filed in, not from headers, so it
+can't be spoofed by the sender. It's omitted if the system Accounts store
+can't be read.
+
 Run `apple-tools email --help` for the exact parameters of each action.
 
 ## Examples

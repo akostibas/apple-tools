@@ -42,6 +42,7 @@ public enum EmailIntegration {
         public let date: String
         public let read: Bool
         public let attachmentCount: Int
+        public var accountID: String? = nil
     }
 
     public struct AttachmentMeta {
@@ -137,6 +138,7 @@ public enum EmailIntegration {
             set allAccounts to every account
             repeat with acct in allAccounts
                 try
+                    set acctID to id of acct
                     set inboxBox to mailbox "INBOX" of acct
                     set msgs to messages of inboxBox
                     set msgCount to count of msgs
@@ -151,7 +153,7 @@ public enum EmailIntegration {
                         set mDate to my atDateComponents(date received of m)
                         set mRead to read status of m
                         set mAttCount to count of mail attachments of m
-                        set output to output & mID & fieldSep & mSubject & fieldSep & mFrom & fieldSep & mDate & fieldSep & mRead & fieldSep & mAttCount & linefeed
+                        set output to output & mID & fieldSep & mSubject & fieldSep & mFrom & fieldSep & mDate & fieldSep & mRead & fieldSep & mAttCount & fieldSep & acctID & linefeed
                     end repeat
                 end try
             end repeat
@@ -184,7 +186,8 @@ public enum EmailIntegration {
                 from: parts[2],
                 date: DateFormatting.isoFromAppleScriptComponents(parts[3]),
                 read: parts[4] == "true",
-                attachmentCount: attCount
+                attachmentCount: attCount,
+                accountID: parts.count >= 7 && !parts[6].isEmpty ? parts[6] : nil
             ))
         }
 

@@ -586,6 +586,19 @@ final class EmailToolTests: XCTestCase {
         XCTAssertEqual(merged.first?.attachmentCount, 3)
     }
 
+    func testMergeInboxRowsCarriesAccountID() {
+        let sep = EmailIntegration.fieldSep
+        let row = inboxRow(id: "a1", subject: "S", from: "x@a.com", comps: "2026,6,1,9,0,0")
+        let merged = EmailIntegration.mergeInboxRows(row + sep + "ACCT-UUID", limit: 10)
+        XCTAssertEqual(merged.first?.accountID, "ACCT-UUID")
+        XCTAssertNil(EmailIntegration.mergeInboxRows(row, limit: 10).first?.accountID)
+    }
+
+    func testAccountFieldsLocalAndUnknown() {
+        XCTAssertEqual(EmailSearch.accountFields("local://foo/Bar")["account"] as? String, "On My Mac")
+        XCTAssertTrue(EmailSearch.accountFields("imap://NOT-A-REAL-ACCOUNT/INBOX").isEmpty)
+    }
+
     // MARK: - Message-ID bracket stripping (issue #26)
 
     func testBareMessageIDStripsAngleBrackets() {
