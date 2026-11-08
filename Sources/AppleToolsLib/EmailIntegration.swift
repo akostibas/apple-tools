@@ -266,8 +266,21 @@ public enum EmailIntegration {
         return String(out.dropFirst(2)).replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
     }
 
+    /// Moves a message to `mailbox` of the account with id `toAccount`. Never launches Mail.
+    /// Not for Gmail: label removals there are reverted on the next sync.
+    public static func moveMessage(rowID: Int64, mailboxURL: String, toAccount: String, toMailbox: String) throws {
+        let out = try runOnRow(rowID: rowID, mailboxURL: mailboxURL, verb: """
+            set destID to do shell script "printenv APPLE_TOOLS_MAIL_DEST_ACCOUNT"
+            set destName to do shell script "printenv APPLE_TOOLS_MAIL_DEST_MAILBOX"
+            move theMsg to mailbox destName of (first account whose id is destID)
+            return "OK"
+            """, extraEnv: ["APPLE_TOOLS_MAIL_DEST_ACCOUNT": toAccount, "APPLE_TOOLS_MAIL_DEST_MAILBOX": toMailbox])
+        guard out == "OK" else { throw EmailError.scriptFailed(out) }
+    }
+
     /// Runs `verb` against `theMsg`; the verb must return a string starting "OK".
-    private static func runOnRow(rowID: Int64, mailboxURL: String, verb: String) throws -> String {
+    private static func runOnRow(rowID: Int64, mailboxURL: String, verb: String,
+                                 extraEnv: [String: String] = [:]) throws -> String {
         guard isMailRunning() else { throw EmailError.mailNotRunning }
         guard let loc = accountAndMailbox(fromMailboxURL: mailboxURL) else {
             throw EmailError.parseFailure("unsupported mailbox url: \(mailboxURL)")
@@ -275,7 +288,7 @@ public enum EmailIntegration {
         let env = [
             "APPLE_TOOLS_MAIL_ACCOUNT": loc.account,
             "APPLE_TOOLS_MAIL_MAILBOX": loc.mailbox,
-        ]
+        ].merging(extraEnv) { a, _ in a }
         let script = """
         set acctID to do shell script "printenv APPLE_TOOLS_MAIL_ACCOUNT"
         set boxName to do shell script "printenv APPLE_TOOLS_MAIL_MAILBOX"

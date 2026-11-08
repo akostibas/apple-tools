@@ -14,6 +14,7 @@ enum EmailSearch {
         var limit: Int = 20
         var excludeSelf: Bool = true
         var excludeBulk: Bool = false  // drop likely-automated/bulk senders
+        var mailboxIDs: [Int64]?  // stored in, or (Gmail) labelled with, one of these
     }
 
     struct Hit {
@@ -24,6 +25,7 @@ enum EmailSearch {
         let senderName: String?
         let subject: String
         let mailboxURL: String
+        var labelURLs: [String] = []  // Gmail labels (INBOX, user folders); empty elsewhere
         let snippet: String?
         let aiSummary: String?
     }
@@ -46,7 +48,7 @@ enum EmailSearch {
             case .sqlFailed(let msg):
                 return "sql error: \(msg)"
             case .noCriteria:
-                return "search requires at least one of: query, from, to, after, before"
+                return "search requires at least one of: query, from, to, after, before, mailbox"
             }
         }
     }
@@ -80,23 +82,12 @@ enum EmailSearch {
         let hasFrom = (criteria.from?.isEmpty == false)
         let hasFromEmail = (criteria.fromEmail?.isEmpty == false)
         let hasTo = (criteria.to?.isEmpty == false)
-        if !hasQuery && !hasFrom && !hasFromEmail && !hasTo && criteria.after == nil && criteria.before == nil {
+        if !hasQuery && !hasFrom && !hasFromEmail && !hasTo && criteria.after == nil && criteria.before == nil
+            && criteria.mailboxIDs == nil {
             throw SearchError.noCriteria
         }
 
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: dbPath) else { throw SearchError.dbMissing(dbPath) }
-        guard fm.isReadableFile(atPath: dbPath) else { throw SearchError.dbUnreadable(dbPath) }
-
-        var db: OpaquePointer?
-        // SQLITE_OPEN_READONLY = 0x00000001. We use URI so we can be explicit.
-        let uri = "file://\(dbPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? dbPath)?mode=ro"
-        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI
-        guard sqlite3_open_v2(uri, &db, flags, nil) == SQLITE_OK, let db = db else {
-            let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
-            if let d = db { sqlite3_close(d) }
-            throw SearchError.dbOpenFailed(msg)
-        }
+        let db = try openReadOnly(dbPath)
         defer { sqlite3_close(db) }
 
         // Viewer identity (for --exclude-self). Query once per call; it's cheap (~10ms).
@@ -149,6 +140,13 @@ enum EmailSearch {
             wheres.append("m.date_received < ?")
             paramValues.append(Int64(b.timeIntervalSince1970))
         }
+        if let ids = criteria.mailboxIDs {
+            let list = ids.isEmpty ? "NULL" : ids.map(String.init).joined(separator: ",")
+            wheres.append("""
+            (m.mailbox IN (\(list))
+             OR EXISTS (SELECT 1 FROM labels l WHERE l.message_id = m.ROWID AND l.mailbox_id IN (\(list))))
+            """)
+        }
 
         // Oversample when we're going to post-filter; else ask only for what we need.
         let postFilters = !queryTokens.isEmpty
@@ -169,7 +167,8 @@ enum EmailSearch {
             mb.url                     AS mailbox_url,
             g.message_id_header         AS msgid,
             sm.summary                  AS snippet,
-            g.generated_summary         AS gen_summary_rowid
+            g.generated_summary         AS gen_summary_rowid,
+            \(labelsColumn)            AS label_urls
         FROM messages m
         JOIN addresses a  ON a.ROWID  = m.sender
         JOIN subjects s   ON s.ROWID  = m.subject
@@ -257,6 +256,7 @@ enum EmailSearch {
                 senderName: (senderName?.isEmpty == false) ? senderName : nil,
                 subject: subject,
                 mailboxURL: mailboxURL,
+                labelURLs: splitLabels(columnString(stmt, 9)),
                 snippet: snippet?.isEmpty == false ? snippet : nil,
                 aiSummary: ai
             ))
@@ -306,24 +306,14 @@ enum EmailSearch {
     struct MessageLocation {
         let rowID: Int64
         let mailboxURL: String
+        var labelURLs: [String] = []
     }
 
     /// Look up an RFC Message-ID in the Envelope Index. Returns the ROWID
     /// and mailbox URL, which together let us derive the on-disk .emlx path.
     /// Returns nil if the Message-ID isn't known to Mail.
     static func resolveMessageID(_ messageID: String, dbPath: String = defaultDatabasePath) throws -> MessageLocation? {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: dbPath) else { throw SearchError.dbMissing(dbPath) }
-        guard fm.isReadableFile(atPath: dbPath) else { throw SearchError.dbUnreadable(dbPath) }
-
-        var db: OpaquePointer?
-        let uri = "file://\(dbPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? dbPath)?mode=ro"
-        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI
-        guard sqlite3_open_v2(uri, &db, flags, nil) == SQLITE_OK, let db = db else {
-            let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
-            if let d = db { sqlite3_close(d) }
-            throw SearchError.dbOpenFailed(msg)
-        }
+        let db = try openReadOnly(dbPath)
         defer { sqlite3_close(db) }
 
         // `message_id_header` is stored WITH angle brackets (`<id@host>`), but
@@ -332,7 +322,7 @@ enum EmailSearch {
         // — and LLMs routinely strip the brackets when echoing an ID back.
         // Match bracket-insensitively so all three forms resolve.
         let sql = """
-        SELECT m.ROWID, mb.url
+        SELECT m.ROWID, mb.url, \(labelsColumn)
         FROM messages m
         JOIN message_global_data g ON g.ROWID = m.global_message_id
         JOIN mailboxes mb ON mb.ROWID = m.mailbox
@@ -353,7 +343,74 @@ enum EmailSearch {
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         let rowid = sqlite3_column_int64(stmt, 0)
         let url = columnString(stmt, 1) ?? ""
-        return MessageLocation(rowID: rowid, mailboxURL: url)
+        return MessageLocation(rowID: rowid, mailboxURL: url, labelURLs: splitLabels(columnString(stmt, 2)))
+    }
+
+    // MARK: - Mailboxes
+
+    struct Mailbox {
+        let rowID: Int64
+        let url: String
+        let total: Int
+        let unread: Int
+        /// Account UUID, or "local" for On My Mac.
+        var accountID: String { url.hasPrefix("local:") ? "local" : (URLComponents(string: url)?.host ?? "") }
+        var name: String { mailboxName(url) }
+    }
+
+    /// Every mailbox Mail knows, from the Envelope Index (no Mail launch).
+    static func mailboxes(dbPath: String = defaultDatabasePath) throws -> [Mailbox] {
+        let db = try openReadOnly(dbPath)
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        let sql = "SELECT ROWID, url, total_count, unread_count FROM mailboxes ORDER BY url"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else {
+            throw SearchError.sqlFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+        var out: [Mailbox] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let url = columnString(stmt, 1), !mailboxName(url).isEmpty else { continue }
+            out.append(Mailbox(rowID: sqlite3_column_int64(stmt, 0), url: url,
+                               total: Int(sqlite3_column_int64(stmt, 2)), unread: Int(sqlite3_column_int64(stmt, 3))))
+        }
+        return out
+    }
+
+    /// Gmail accounts expose their system folders under "[Gmail]/".
+    static func isGmail(accountID: String, in boxes: [Mailbox]) -> Bool {
+        boxes.contains { $0.accountID == accountID && $0.name.hasPrefix("[Gmail]") }
+    }
+
+    /// `imap://UUID/%5BGmail%5D/All%20Mail` → `[Gmail]/All Mail`.
+    static func mailboxName(_ url: String) -> String {
+        guard let c = URLComponents(string: url) else { return url }
+        return (c.path.removingPercentEncoding ?? c.path).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    /// Gmail stores each message once (All Mail); INBOX and user folders are rows in `labels`.
+    private static let labelsColumn = """
+        (SELECT group_concat(lmb.url, char(31)) FROM labels l
+         JOIN mailboxes lmb ON lmb.ROWID = l.mailbox_id WHERE l.message_id = m.ROWID)
+        """
+
+    private static func splitLabels(_ s: String?) -> [String] {
+        guard let s = s, !s.isEmpty else { return [] }
+        return s.components(separatedBy: "\u{1F}")
+    }
+
+    private static func openReadOnly(_ dbPath: String) throws -> OpaquePointer {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: dbPath) else { throw SearchError.dbMissing(dbPath) }
+        guard fm.isReadableFile(atPath: dbPath) else { throw SearchError.dbUnreadable(dbPath) }
+        var db: OpaquePointer?
+        let uri = "file://\(dbPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? dbPath)?mode=ro"
+        guard sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK, let db = db else {
+            let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
+            if let d = db { sqlite3_close(d) }
+            throw SearchError.dbOpenFailed(msg)
+        }
+        return db
     }
 
     // MARK: - Self detection
