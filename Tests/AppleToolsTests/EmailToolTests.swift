@@ -594,6 +594,18 @@ final class EmailToolTests: XCTestCase {
         XCTAssertNil(EmailIntegration.mergeInboxRows(row, limit: 10).first?.accountID)
     }
 
+    func testMailboxNameAndGmailDetection() {
+        XCTAssertEqual(EmailSearch.mailboxName("imap://A/%5BGmail%5D/All%20Mail"), "[Gmail]/All Mail")
+        XCTAssertEqual(EmailSearch.mailboxName("imap://A/Archive/2025"), "Archive/2025")
+        let boxes = [
+            EmailSearch.Mailbox(rowID: 1, url: "imap://G/%5BGmail%5D/All%20Mail", total: 0, unread: 0),
+            EmailSearch.Mailbox(rowID: 2, url: "imap://G/INBOX", total: 0, unread: 0),
+            EmailSearch.Mailbox(rowID: 3, url: "imap://I/INBOX", total: 0, unread: 0),
+        ]
+        XCTAssertTrue(EmailSearch.isGmail(accountID: "G", in: boxes))
+        XCTAssertFalse(EmailSearch.isGmail(accountID: "I", in: boxes))
+    }
+
     func testAccountFieldsLocalAndUnknown() {
         XCTAssertEqual(EmailSearch.accountFields("local://foo/Bar")["account"] as? String, "On My Mac")
         XCTAssertTrue(EmailSearch.accountFields("imap://NOT-A-REAL-ACCOUNT/INBOX").isEmpty)

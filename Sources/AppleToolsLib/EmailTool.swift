@@ -5,15 +5,19 @@ import UniformTypeIdentifiers
 public struct EmailTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "email",
-        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'headers' (a message's headers by ID — all, or only those in 'names'; never downloads the body), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message — does NOT send; supports file attachments by absolute path), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send).",
+        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'headers' (a message's headers by ID — all, or only those in 'names'; never downloads the body), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message — does NOT send; supports file attachments by absolute path), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send), 'mailboxes' (list each account's mailboxes with counts), 'move' (move a message by ID to a mailbox, in the same or another account; refused for Gmail accounts; needs Mail running).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "inbox, search, read, headers, fetch_attachment, draft, or reply"),
+                "action": PropertySchema(type_: "string", description: "inbox, search, read, headers, fetch_attachment, draft, reply, mailboxes, or move"),
+                "mailbox": PropertySchema(type_: "string", description: "Mailbox name as listed by 'mailboxes', e.g. 'Archive' or 'Archive/2025'; case-insensitive. For search, only messages in it (Gmail: with that label). For move, the destination",
+                    summary: "Mailbox name (search: filter; move: destination)", actions: ["search", "move"]),
+                "account": PropertySchema(type_: "string", description: "Account name or address as shown in results' 'account'/'account_email'. Narrows 'mailbox' when the name exists in several accounts. For move, defaults to the message's own account when it has that mailbox",
+                    summary: "Account name/address for --mailbox", actions: ["search", "move", "mailboxes"]),
                 "limit": PropertySchema(type_: "integer", description: "Max messages to return (for inbox and search, default 20, max 50)",
                     summary: "Max messages (default 20, max 50)", actions: ["inbox", "search"]),
-                "id": PropertySchema(type_: "string", description: "Message ID (for read, headers, fetch_attachment, reply)",
-                    summary: "Message ID", actions: ["read", "headers", "fetch_attachment", "reply"]),
+                "id": PropertySchema(type_: "string", description: "Message ID (for read, headers, fetch_attachment, reply, move)",
+                    summary: "Message ID", actions: ["read", "headers", "fetch_attachment", "reply", "move"]),
                 "names": PropertySchema(
                     type_: "array",
                     description: "Header names to return, matched case-insensitively, e.g. ['Sender', 'X-Google-Calendar-Notification']. Omit for all headers. Absent headers are left out (for headers)",
@@ -73,6 +77,10 @@ public struct EmailTool: ProbeTool {
                 example: "apple-tools email reply --id <id> --body <text> [--reply_all] [--cc <a>] [--attachments <p>]", required: ["id", "body"]),
             ActionHelp(name: "fetch_attachment", summary: "Retrieve an attachment file from a message",
                 example: "apple-tools email fetch_attachment --id <id> [--filename <name>]", required: ["id"]),
+            ActionHelp(name: "mailboxes", summary: "List each account's mailboxes with message counts",
+                example: "apple-tools email mailboxes [--account <name>]"),
+            ActionHelp(name: "move", summary: "Move a message to a mailbox (not Gmail; Mail must be running)",
+                example: "apple-tools email move --id <id> --mailbox <name> [--account <name>]", required: ["id", "mailbox"]),
         ]
     )
 
@@ -86,6 +94,8 @@ public struct EmailTool: ProbeTool {
         "fetch_attachment": .read,
         "draft":            .readWrite,
         "reply":            .readWrite,
+        "mailboxes":        .read,
+        "move":             .readWrite,
     ])
 
     public init(host: ToolHost) {
@@ -140,9 +150,125 @@ public struct EmailTool: ProbeTool {
             }
             let filename = params?["filename"]?.value as? String
             return fetchAttachment(id: id, filename: filename)
+        case "mailboxes":
+            return listMailboxes(account: params?["account"]?.value as? String)
+        case "move":
+            guard let id = params?["id"]?.value as? String, !id.isEmpty else {
+                return ("missing required parameter: id", true)
+            }
+            guard let box = params?["mailbox"]?.value as? String, !box.isEmpty else {
+                return ("missing required parameter: mailbox", true)
+            }
+            return move(id: id, mailbox: box, account: params?["account"]?.value as? String)
         default:
-            return ("unknown action: \(action) (use inbox, search, read, headers, fetch_attachment, draft, or reply)", true)
+            return ("unknown action: \(action) (use inbox, search, read, headers, fetch_attachment, draft, reply, mailboxes, or move)", true)
         }
+    }
+
+    // MARK: - Mailboxes / move
+
+    private func listMailboxes(account: String?) -> (String, Bool) {
+        let boxes: [EmailSearch.Mailbox]
+        do { boxes = try EmailSearch.mailboxes() } catch { return ("\(error)", true) }
+        var ids = Array(Set(boxes.map { $0.accountID })).sorted()
+        if let a = account, !a.isEmpty {
+            ids = ids.filter { accountMatches($0, a) }
+            if ids.isEmpty { return ("no account matching '\(a)'. Accounts: \(accountNames(boxes))", true) }
+        }
+        let accounts: [[String: Any]] = ids.map { id in
+            var entry = accountFields(id)
+            entry["can_move"] = !EmailSearch.isGmail(accountID: id, in: boxes)
+            entry["mailboxes"] = boxes.filter { $0.accountID == id }.map {
+                ["name": $0.name, "total": $0.total, "unread": $0.unread] as [String: Any]
+            }
+            return entry
+        }
+        return (jsonEncode(["accounts": accounts]), false)
+    }
+
+    private func move(id: String, mailbox: String, account: String?) -> (String, Bool) {
+        let loc: EmailSearch.MessageLocation
+        let boxes: [EmailSearch.Mailbox]
+        do {
+            guard let l = try EmailSearch.resolveMessageID(id) else { return ("message not found: \(id)", true) }
+            loc = l
+            boxes = try EmailSearch.mailboxes()
+        } catch {
+            return ("\(error)", true)
+        }
+        guard let source = boxes.first(where: { $0.url == loc.mailboxURL }) else {
+            return ("can't tell which mailbox this message is in", true)
+        }
+        let target: EmailSearch.Mailbox
+        switch resolveMailbox(mailbox, account: account, preferAccount: source.accountID, in: boxes) {
+        case .failure(let msg): return (msg, true)
+        case .success(let t): target = t
+        }
+        for acct in Set([source.accountID, target.accountID]) where EmailSearch.isGmail(accountID: acct, in: boxes) {
+            let name = accountFields(acct)["account"] as? String ?? acct
+            return ("can't move messages in Gmail accounts (\(name)): Gmail reverts label removals made through Mail. Move it in Mail or Gmail instead.", true)
+        }
+        if target.url == source.url { return ("message is already in \(target.name)", true) }
+
+        do {
+            try EmailIntegration.moveMessage(rowID: loc.rowID, mailboxURL: loc.mailboxURL,
+                                             toAccount: target.accountID, toMailbox: target.name)
+        } catch {
+            return ("move failed, message left in \(source.name): \(error)", true)
+        }
+        var result: [String: Any] = [
+            "id": id,
+            "from": accountFields(source.accountID).merging(["mailbox": source.name]) { a, _ in a },
+            "to": accountFields(target.accountID).merging(["mailbox": target.name]) { a, _ in a },
+        ]
+        // Mail applies the move asynchronously; confirm it reached the index.
+        let deadline = Date().addingTimeInterval(5)
+        var confirmed = false
+        while Date() < deadline {
+            if let now = try? EmailSearch.resolveMessageID(id), now.mailboxURL == target.url { confirmed = true; break }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        result["moved"] = confirmed ? true : "pending"
+        if !confirmed { result["note"] = "Mail accepted the move but hasn't shown it in \(target.name) yet" }
+        return (jsonEncode(result), false)
+    }
+
+    private enum Resolved { case success(EmailSearch.Mailbox), failure(String) }
+
+    /// Name → mailbox. Ambiguous names prefer `preferAccount` (the message's own), else need --account.
+    private func resolveMailbox(_ name: String, account: String?, preferAccount: String?,
+                                in boxes: [EmailSearch.Mailbox]) -> Resolved {
+        var matches = boxes.filter { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        if let a = account, !a.isEmpty {
+            guard boxes.contains(where: { accountMatches($0.accountID, a) }) else {
+                return .failure("no account matching '\(a)'. Accounts: \(accountNames(boxes))")
+            }
+            matches = matches.filter { accountMatches($0.accountID, a) }
+        }
+        if matches.count > 1, let p = preferAccount, let own = matches.first(where: { $0.accountID == p }) {
+            return .success(own)
+        }
+        switch matches.count {
+        case 1: return .success(matches[0])
+        case 0: return .failure("no mailbox named '\(name)'\(account.map { " in \($0)" } ?? ""). Run 'email mailboxes' to list them")
+        default:
+            let where_ = matches.compactMap { accountFields($0.accountID)["account"] as? String }.joined(separator: ", ")
+            return .failure("'\(name)' exists in several accounts (\(where_)); pass --account")
+        }
+    }
+
+    private func accountFields(_ accountID: String) -> [String: Any] {
+        accountID == "local" ? ["account": "On My Mac"] : EmailSearch.accountFields(accountID)
+    }
+
+    private func accountMatches(_ accountID: String, _ query: String) -> Bool {
+        let f = accountFields(accountID)
+        return [f["account"], f["account_email"]].compactMap { $0 as? String }
+            .contains { $0.caseInsensitiveCompare(query) == .orderedSame }
+    }
+
+    private func accountNames(_ boxes: [EmailSearch.Mailbox]) -> String {
+        Set(boxes.map { $0.accountID }).compactMap { accountFields($0)["account"] as? String }.sorted().joined(separator: ", ")
     }
 
     public func preflight() -> (ok: Bool, message: String) {
@@ -213,6 +339,19 @@ public struct EmailTool: ProbeTool {
             }
             criteria.before = d
         }
+        let account = (params?["account"]?.value as? String).flatMap { $0.isEmpty ? nil : $0 }
+        if let box = (params?["mailbox"]?.value as? String).flatMap({ $0.isEmpty ? nil : $0 }) {
+            let boxes: [EmailSearch.Mailbox]
+            do { boxes = try EmailSearch.mailboxes() } catch { return ("\(error)", true) }
+            var matches = boxes.filter { $0.name.caseInsensitiveCompare(box) == .orderedSame }
+            if let a = account { matches = matches.filter { accountMatches($0.accountID, a) } }
+            if matches.isEmpty {
+                return ("no mailbox named '\(box)'\(account.map { " in \($0)" } ?? ""). Run 'email mailboxes' to list them", true)
+            }
+            criteria.mailboxIDs = matches.map { $0.rowID }
+        } else if account != nil {
+            return ("--account narrows --mailbox; pass a mailbox too", true)
+        }
 
         let hits: [EmailSearch.Hit]
         do {
@@ -236,6 +375,7 @@ public struct EmailTool: ProbeTool {
                     address: h.senderAddress, name: h.senderName),
             ]
             entry.merge(EmailSearch.accountFields(h.mailboxURL)) { a, _ in a }
+            if !h.labelURLs.isEmpty { entry["labels"] = h.labelURLs.map(EmailSearch.mailboxName) }
             if let snip = h.snippet, !snip.isEmpty { entry["snippet"] = snip }
             if let ai = h.aiSummary, !ai.isEmpty { entry["ai_summary"] = ai }
             return entry
@@ -408,6 +548,7 @@ public struct EmailTool: ProbeTool {
         if let cc = parsed.cc, !cc.isEmpty { response["cc"] = cc }
         response["mailbox"] = prettifyMailboxURL(loc.mailboxURL)
         response.merge(EmailSearch.accountFields(loc.mailboxURL)) { a, _ in a }
+        if !loc.labelURLs.isEmpty { response["labels"] = loc.labelURLs.map(EmailSearch.mailboxName) }
         if parsed.bodyIsHTMLOnly { response["body_is_html_stripped"] = true }
         if !parsed.attachments.isEmpty {
             response["attachments"] = parsed.attachments.map { att -> [String: Any] in

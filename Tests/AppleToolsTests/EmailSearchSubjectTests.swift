@@ -19,6 +19,7 @@ final class EmailSearchSubjectTests: XCTestCase {
         CREATE TABLE addresses (ROWID INTEGER PRIMARY KEY, address TEXT, comment TEXT);
         CREATE TABLE message_global_data (ROWID INTEGER PRIMARY KEY, message_id_header TEXT, generated_summary INTEGER);
         CREATE TABLE summaries (ROWID INTEGER PRIMARY KEY, summary TEXT);
+        CREATE TABLE labels (message_id INTEGER, mailbox_id INTEGER);
         INSERT INTO subjects VALUES (1, 'Invitation: EFKaylaire');
         INSERT INTO mailboxes VALUES (1, 'imap://A/INBOX');
         INSERT INTO addresses VALUES (1, 'kayla@sway.co', 'Kayla'), (2, 'claire@sway.co', 'Claire');

@@ -27,6 +27,15 @@ Envelope Index; also used by the AppleScript fallback).
   addresses the original sender (`reply_all` folds in the other recipients), and
   quotes the original in a real indented `<blockquote>`. Put **only** your new
   text in `body` — the original is quoted automatically. Does not send.
+- **mailboxes** — each account's mailboxes with total/unread counts, and whether
+  the account allows `move` (Gmail doesn't). Names are what `--mailbox` takes.
+- **move** — move a message by `id` to `mailbox`, in its own account or another
+  one (`account` picks which when the name is ambiguous). Needs Mail running; it
+  never launches Mail. Refused for Gmail accounts (see Shortcomings).
+
+`search --mailbox <name>` keeps only messages in that mailbox. Gmail stores every
+message in All Mail, so for Gmail it matches on labels, and results carry a
+`labels` list (e.g. `INBOX`, `Mint`) alongside `mailbox`.
 
 `inbox`, `search` and `read` results name the Mail account each message is in:
 `account` (as shown in Mail, e.g. "iCloud") and `account_email` when known.
@@ -48,6 +57,11 @@ apple-tools email draft --to a@b.com --subject "Hi" --body "…" --attachments ~
 
 ## Shortcomings
 
+- **Gmail messages can't be moved.** Mail's scripting can add a Gmail label but
+  can't reliably take one away: Mail shows the move, then Gmail puts the message
+  back on the next sync. Removing a label via a round-trip through Trash held
+  once and reverted the next time. Moving a Gmail message is refused. Use Mail
+  or Gmail directly; a real fix would need the Gmail API and a Google sign-in.
 - **Replies aren't header-threaded.** `reply` composes a *new* message — it
   carries no `In-Reply-To`/`References` headers (AppleScript can't set them), so
   the recipient's client threads it by "Re:" subject only. Outlook/Exchange,
