@@ -1,10 +1,11 @@
 # photos — Photos
 
 Search the Apple Photos library by ML-recognized content, recognized people,
-album, date, or filename, and export a single photo to a local file. Read-only:
-it never modifies the library.
+album, date, or filename, export a single photo to a local file, and import
+image or video files into the library. Import is the only action that changes
+the library; it only ever adds.
 
-**Access:** read
+**Access:** read/write (`import` is the only write)
 **Permissions:** Photos (the first access triggers the system dialog; grant in
 System Settings → Privacy & Security → Photos). `fetch` also writes the exported
 image into the tool's output directory.
@@ -34,6 +35,9 @@ image into the tool's output directory.
 - **fetch** — export one photo by `--id` (a local identifier from a search
   result) into the output dir and return its path. Default is a JPEG resized to
   max 1568px (for LLM vision); pass `--full_resolution` for the original.
+- **import** — copy one or more image/video files (`--path`, repeatable) into
+  the library and return each new item's `id`. Each file succeeds or fails on
+  its own; the call errors only if nothing was imported.
 
 Run `apple-tools photos --help` for the exact parameters of each action.
 
@@ -45,13 +49,19 @@ apple-tools photos search --person "Sandy Ford"
 apple-tools photos search --match people
 apple-tools photos search --query receipt --match text
 apple-tools photos fetch --id "A1B2C3D4-.../L0/001" --full_resolution
+apple-tools photos import --path ~/Downloads/receipt.jpg --path ~/Desktop/clip.mov
 ```
 
 ## Shortcomings
 
-- **Read-only — no writing of any kind.** Both actions are declared `.read`, so
-  the tool cannot add, delete, edit, favorite, tag, or organize photos, and it
-  cannot create, rename, or add to albums. It only searches and exports copies.
+- **Import is the only write.** The tool cannot delete, edit, favorite, tag,
+  or organize photos, and cannot create, rename, or add to albums — imports
+  land in the library only, not in any album.
+- **Re-importing makes a duplicate.** Photos doesn't dedupe files added this
+  way, so importing the same file twice gives two copies.
+- **Import picks photo vs. video by file extension.** Anything that isn't an
+  image or movie type (PDFs, audio) is refused per file. Imported videos get an
+  id but, like all videos, don't show up in `search` and can't be `fetch`ed.
 - **Images only; videos are invisible.** Every fetch predicate is
   `mediaType == image` (`searchAllPhotos`, `searchInAlbum`, PSI, and person
   search all pin it), so videos never appear in results and can't be fetched.

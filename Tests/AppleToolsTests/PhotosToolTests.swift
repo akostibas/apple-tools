@@ -140,7 +140,7 @@ final class PhotosToolTests: XCTestCase {
         ])
         XCTAssertTrue(isError)
         XCTAssertTrue(result.contains("unknown action"))
-        XCTAssertTrue(result.contains("search or fetch"))
+        XCTAssertTrue(result.contains("search, fetch, or import"))
     }
 
     func testFetchMissingID() {
@@ -245,5 +245,24 @@ final class PhotosToolTests: XCTestCase {
         if isError && result.contains("Photos access denied") { return }
         XCTAssertTrue(isError)
         XCTAssertTrue(result.contains("no photo found"))
+    }
+
+    // MARK: - Import
+
+    func testImportResourceTypeByExtension() {
+        XCTAssertEqual(PhotosIntegration.importResourceType(for: URL(fileURLWithPath: "/x/a.HEIC")), .photo)
+        XCTAssertEqual(PhotosIntegration.importResourceType(for: URL(fileURLWithPath: "/x/a.jpg")), .photo)
+        XCTAssertEqual(PhotosIntegration.importResourceType(for: URL(fileURLWithPath: "/x/a.mov")), .video)
+        XCTAssertNil(PhotosIntegration.importResourceType(for: URL(fileURLWithPath: "/x/a.pdf")))
+    }
+
+    func testImportMissingFileReportsFailureWithoutTouchingLibrary() {
+        let (result, isError) = tool.handle(params: [
+            "action": AnyCodable("import"),
+            "path": AnyCodable(["/nonexistent/apple-tools-test.jpg"]),
+        ])
+        if isError && result.contains("Photos access denied") { return }
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("file not found"))
     }
 }
