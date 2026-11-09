@@ -4,11 +4,11 @@ import Photos
 public struct PhotosTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "photos",
-        description: "Access the Apple Photos library. Actions: 'search' (find photos by keyword, date, or album), 'fetch' (export a photo into the local output dir; returns its path).",
+        description: "Access the Apple Photos library. Actions: 'search' (find photos by keyword, date, or album), 'fetch' (export a photo into the local output dir; returns its path), 'import' (add image or video files to the library; returns their new ids).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "search or fetch"),
+                "action": PropertySchema(type_: "string", description: "search, fetch, or import"),
                 "query": PropertySchema(type_: "string", description: "Search keyword — matches ML-recognized content (car, dog, beach), people, and filenames (for search). Each result is tagged `matched: person|content|filename`.",
                     summary: "Keyword matched against ML content, people, filenames", actions: ["search"]),
                 "person": PropertySchema(type_: "string", description: "Restrict results to photos OF a recognized person by name (e.g. 'Sandy Ford'). Uses Photos face recognition. Results are tagged `matched: person` (for search)",
@@ -27,15 +27,23 @@ public struct PhotosTool: ProbeTool {
                     summary: "Photo local identifier from search results", actions: ["fetch"]),
                 "full_resolution": PropertySchema(type_: "boolean", description: "Export at full resolution instead of LLM-optimized size (for fetch, default false)",
                     summary: "Export at full resolution (default false)", actions: ["fetch"]),
+                "path": PropertySchema(
+                    type_: "array",
+                    description: "Image or video file paths to add to the library; '~' is expanded. Files are copied, not moved (for import)",
+                    items: ItemsSchema(type_: "string"),
+                    summary: "Image/video file paths to import", actions: ["import"]
+                ),
             ],
             required: ["action"]
         ),
-        cliSummary: "Search the Apple Photos library and export photos.",
+        cliSummary: "Search the Apple Photos library, export photos, and import files into it.",
         actions: [
             ActionHelp(name: "search", summary: "Find photos by keyword, date, person, or album",
                 example: "apple-tools photos search [--query <text>] [--person <name>] [--album <name>] [--start <d>] [--end <d>] [--match <type>] [--limit <n>]"),
             ActionHelp(name: "fetch", summary: "Export a photo into the output dir; returns its path",
                 example: "apple-tools photos fetch --id <id> [--full_resolution]", required: ["id"]),
+            ActionHelp(name: "import", summary: "Add image or video files to the library",
+                example: "apple-tools photos import --path <file> [--path <file>...]", required: ["path"]),
         ]
     )
 
@@ -44,6 +52,7 @@ public struct PhotosTool: ProbeTool {
     public let accessPolicy: ToolAccessPolicy = .perAction([
         "search": .read,
         "fetch":  .read,
+        "import": .readWrite,
     ])
 
     public init(host: ToolHost) {
@@ -75,8 +84,13 @@ public struct PhotosTool: ProbeTool {
             }
             let fullRes = params?["full_resolution"]?.value as? Bool ?? false
             return fetch(id: id, fullResolution: fullRes)
+        case "import":
+            let paths = (params?["path"]?.value as? [Any])?.compactMap { $0 as? String }
+                ?? (params?["path"]?.value as? String).map { [$0] } ?? []
+            guard !paths.isEmpty else { return ("missing required parameter: path", true) }
+            return importFiles(paths)
         default:
-            return ("unknown action: \(action) (use search or fetch)", true)
+            return ("unknown action: \(action) (use search, fetch, or import)", true)
         }
     }
 
@@ -437,6 +451,30 @@ public struct PhotosTool: ProbeTool {
         case .failure(let error):
             return ("upload failed: \(error)", true)
         }
+    }
+
+    // MARK: - Import
+
+    /// Each file is its own change block, so one bad file doesn't sink the rest.
+    private func importFiles(_ paths: [String]) -> (String, Bool) {
+        var imported: [[String: Any]] = []
+        var failed: [[String: Any]] = []
+        for raw in paths {
+            let path = (raw.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue else {
+                failed.append(["path": raw, "error": "file not found"])
+                continue
+            }
+            do {
+                let id = try PhotosIntegration.importFile(URL(fileURLWithPath: path))
+                imported.append(["path": raw, "id": id])
+            } catch {
+                failed.append(["path": raw, "error": error.localizedDescription])
+            }
+        }
+        let response: [String: Any] = ["imported_count": imported.count, "imported": imported, "failed": failed]
+        return (jsonEncode(response), imported.isEmpty)
     }
 
     // MARK: - LLM payload formatting

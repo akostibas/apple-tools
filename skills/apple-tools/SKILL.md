@@ -76,7 +76,7 @@ Allow/Deny dialog; off by default.)
   send; supports attachments by absolute path).
 - **imessage** — `list`, `read`, `search`, `send` (iMessage/SMS; supports
   attachments), `fetch_attachment`.
-- **photos** — `search`, `fetch` (export a photo locally → path).
+- **photos** — `search`, `fetch` (export a photo locally → path), `import` (add image/video files to the library → ids).
 - **voicememos** — `folders` (names + counts), `list` (recent recordings; last 30 days by default, `--all`
   for the full history), `search` (by title/folder/date), `export` (copy a
   recording's `.m4a` locally → path), `transcribe` (on-device transcript of a

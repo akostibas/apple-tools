@@ -159,6 +159,33 @@ public enum PhotosIntegration {
         return result.firstObject
     }
 
+    /// Resource type for a file by its extension, or nil if Photos can't take it.
+    public static func importResourceType(for url: URL) -> PHAssetResourceType? {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return nil }
+        if type.conforms(to: .image) { return .photo }
+        if type.conforms(to: .movie) { return .video }
+        return nil
+    }
+
+    /// Copy a file into the library via PhotoKit; returns the new asset's local identifier.
+    public static func importFile(_ url: URL) throws -> String {
+        guard let kind = importResourceType(for: url) else {
+            throw NSError(domain: "apple-tools", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "not an image or video file"])
+        }
+        var id: String?
+        try PHPhotoLibrary.shared().performChangesAndWait {
+            let req = PHAssetCreationRequest.forAsset()
+            req.addResource(with: kind, fileURL: url, options: nil)
+            id = req.placeholderForCreatedAsset?.localIdentifier
+        }
+        guard let id else {
+            throw NSError(domain: "apple-tools", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Photos accepted the file but returned no id"])
+        }
+        return id
+    }
+
     // MARK: - PSI (ML label) search
 
     /// Why a content search produced no results. "The index says no photos of

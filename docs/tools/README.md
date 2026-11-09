@@ -11,7 +11,7 @@ into your installed version, run `apple-tools list`.
 - [`contacts`](contacts.md) — Contacts (read)
 - [`email`](email.md) — Mail (read + draft)
 - [`imessage`](imessage.md) — Messages, iMessage/SMS (read/write)
-- [`photos`](photos.md) — Photos (read)
+- [`photos`](photos.md) — Photos (read/write)
 - [`voicememos`](voicememos.md) — Voice Memos (read)
 - [`documents`](documents.md) — the user's documents, under configurable named roots (default `~/Documents`) (read)
 - [`clipboard`](clipboard.md) — Clipboard (read/write)
