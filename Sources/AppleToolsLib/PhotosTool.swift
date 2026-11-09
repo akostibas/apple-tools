@@ -13,8 +13,8 @@ public struct PhotosTool: ProbeTool {
                     summary: "Keyword matched against ML content, people, filenames", actions: ["search"]),
                 "person": PropertySchema(type_: "string", description: "Restrict results to photos OF a recognized person by name (e.g. 'Sandy Ford'). Uses Photos face recognition. Results are tagged `matched: person` (for search)",
                     summary: "Photos of a recognized person by name", actions: ["search"]),
-                "match": PropertySchema(type_: "string", description: "Constrain match type for --query: people | content | filename. With 'people' and no --query/--person, lists recognized people in the library (for search)",
-                    summary: "Constrain match type: people | content | filename", actions: ["search"]),
+                "match": PropertySchema(type_: "string", description: "Constrain match type for --query: people | content | filename | text. 'text' matches words Photos read inside the image (signs, receipts, labels; macOS 27+); other searches report `text_match_count` instead of mixing these in. With 'people' and no --query/--person, lists recognized people in the library (for search)",
+                    summary: "Constrain match type: people | content | filename | text", actions: ["search"]),
                 "album": PropertySchema(type_: "string", description: "Album name to filter by (for search)",
                     summary: "Album name to filter by", actions: ["search"]),
                 "start": PropertySchema(type_: "string", description: "Start date, ISO 8601 e.g. 2026-01-15 (for search)",
@@ -125,6 +125,11 @@ public struct PhotosTool: ProbeTool {
                 endDateObj = d
             }
 
+            if match == "text" {
+                return searchText(query: query, start: startDateObj, end: endDateObj, limit: limit)
+            }
+            let hint = textMatchHint(query: query, start: startDateObj, end: endDateObj)
+
             switch PhotosIntegration.searchByContentLabels(query: query, start: startDateObj, end: endDateObj, limit: limit) {
             case .matched(let psi):
                 var results: [[String: Any]] = []
@@ -140,7 +145,7 @@ public struct PhotosTool: ProbeTool {
                     "matched_labels": Array(psi.matchedLabels.prefix(5)),
                     "search_method": "ml_labels",
                     "photos": results,
-                ]
+                ].merging(hint) { a, _ in a }
                 return (jsonEncode(response), false)
 
             case .unavailable(let reason):
@@ -159,17 +164,49 @@ public struct PhotosTool: ProbeTool {
                         "matched_labels": [],
                         "search_method": "ml_labels",
                         "photos": [],
-                    ]
+                    ].merging(hint) { a, _ in a }
                     return (jsonEncode(response), false)
                 }
-                // Fall through to filename search.
+                return searchViaPhotoKit(query: query, startDate: startDate, endDate: endDate, limit: limit, extra: hint)
             }
         }
 
         return searchViaPhotoKit(query: query, startDate: startDate, endDate: endDate, limit: limit)
     }
 
-    private func searchViaPhotoKit(query: String?, startDate: String?, endDate: String?, limit: Int) -> (String, Bool) {
+    /// OCR-text matches, kept apart from content: "dog" here means the word
+    /// appears in the photo (a sign, a label), not that a dog is pictured.
+    private func searchText(query: String, start: Date?, end: Date?, limit: Int) -> (String, Bool) {
+        switch PhotosIntegration.searchByText(query: query, start: start, end: end, limit: limit) {
+        case .unavailable(let reason):
+            return ("photo text search is unavailable: \(reason)", true)
+        case .noMatch:
+            return (jsonEncode(["count": 0, "matched_text": [], "search_method": "ocr_text", "photos": []] as [String: Any]), false)
+        case .matched(let r):
+            var results: [[String: Any]] = []
+            r.assets.enumerateObjects { asset, _, _ in results.append(self.assetMetadata(asset, matched: "text")) }
+            let response: [String: Any] = [
+                "count": results.count,
+                "matched_text": Array(r.matchedLabels.prefix(5)),
+                "search_method": "ocr_text",
+                "photos": results,
+            ]
+            return (jsonEncode(response), false)
+        }
+    }
+
+    /// Count of photos whose scanned text matches, so a content search can point
+    /// at them without mixing them in. Empty when there are none or no text index.
+    private func textMatchHint(query: String, start: Date?, end: Date?) -> [String: Any] {
+        guard case .matched(let r) = PhotosIntegration.searchByText(query: query, start: start, end: end, limit: 0),
+              r.assets.count > 0 else { return [:] }
+        return [
+            "text_match_count": r.assets.count,
+            "text_match_hint": "\(r.assets.count) photos contain the text '\(query)'. Use --match text to list them.",
+        ]
+    }
+
+    private func searchViaPhotoKit(query: String?, startDate: String?, endDate: String?, limit: Int, extra: [String: Any] = [:]) -> (String, Bool) {
         var startDateObj: Date?
         var endDateObj: Date?
         if let startStr = startDate {
@@ -219,7 +256,7 @@ public struct PhotosTool: ProbeTool {
         var response: [String: Any] = [
             "count": results.count,
             "photos": results,
-        ]
+        ].merging(extra) { a, _ in a }
         if hasQuery {
             response["search_method"] = "filename"
             if hitScanCap {

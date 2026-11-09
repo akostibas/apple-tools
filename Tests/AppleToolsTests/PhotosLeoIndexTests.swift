@@ -105,6 +105,15 @@ final class PhotosLeoIndexTests: XCTestCase {
                        "item CCCC only has the OCR lexeme, nothing depicting a dog")
     }
 
+    func testTextSearchMatchesOnlyOCRText() {
+        let db = open(makeLeoDB())
+        defer { sqlite3_close(db) }
+
+        let match = PhotosIntegration.leoMatches(db: db, query: "dog",
+                                                 categories: PhotosIntegration.leoTextCategories)
+        XCTAssertEqual(match!.identifiers, ["CCCC/L0/001"])
+    }
+
     /// Empty is not the same as broken: this must be an empty result, never nil.
     func testGenuineNoMatchIsEmptyNotFailure() {
         let db = open(makeLeoDB())
