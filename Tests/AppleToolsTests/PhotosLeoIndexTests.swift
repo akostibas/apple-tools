@@ -124,6 +124,29 @@ final class PhotosLeoIndexTests: XCTestCase {
         XCTAssertTrue(match!.identifiers.isEmpty)
     }
 
+    // MARK: Photos.sqlite face data (names attached to results)
+
+    func testNamedPeopleSkipsUnnamedFacesAndPrefersFullName() {
+        let path = dir.appendingPathComponent("Photos.sqlite").path
+        runSQLite(path, """
+            CREATE TABLE ZASSET (Z_PK INTEGER PRIMARY KEY, ZUUID TEXT);
+            CREATE TABLE ZPERSON (Z_PK INTEGER PRIMARY KEY, ZFULLNAME TEXT, ZDISPLAYNAME TEXT);
+            CREATE TABLE ZDETECTEDFACE (Z_PK INTEGER PRIMARY KEY, ZASSETFORFACE INTEGER, ZPERSONFORFACE INTEGER);
+            INSERT INTO ZASSET VALUES (1,'A'),(2,'B'),(3,'C');
+            INSERT INTO ZPERSON VALUES (10,'Sandy Ford','Sandy'),(11,'','Ben'),(12,'',''),(13,NULL,NULL);
+            -- A: two named people (one display-name only) plus an unnamed person.
+            INSERT INTO ZDETECTEDFACE VALUES (1,1,10),(2,1,11),(3,1,12);
+            -- B: an unassigned face and a nameless person only.
+            INSERT INTO ZDETECTEDFACE VALUES (4,2,NULL),(5,2,13);
+            """)
+        let db = open(path)
+        defer { sqlite3_close(db) }
+
+        let names = PhotosIntegration.namedPeople(db: db, uuids: ["A", "B", "C"])
+        XCTAssertEqual(names, ["A": ["Ben", "Sandy Ford"]],
+                       "only named people; B and C have none and are absent")
+    }
+
     func testUnrecognizedSchemaIsRejected() {
         let path = dir.appendingPathComponent("wrong.sqlite").path
         runSQLite(path, "CREATE TABLE lexicon (pk INTEGER, content TEXT);")

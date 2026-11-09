@@ -13,7 +13,8 @@ image into the tool's output directory.
 ## Actions
 
 - **search** — find photos and return their metadata (id, dimensions, filename,
-  created/modified dates, location, favorite flag). Matching is layered:
+  created/modified dates, location, favorite flag, and `people`: the named
+  people Photos recognized in it; unnamed faces are left out). Matching is layered:
   - `--query` runs an ML-label ("content") search first — the words Photos has
     recognized in the image (car, dog, beach). Each result is tagged
     `matched: content`.
