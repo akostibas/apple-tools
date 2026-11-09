@@ -146,7 +146,7 @@ public struct PhotosTool: ProbeTool {
                     "search_method": "ml_labels",
                     "photos": results,
                 ].merging(hint) { a, _ in a }
-                return (jsonEncode(response), false)
+                return (withPeople(response), false)
 
             case .unavailable(let reason):
                 // Never quietly downgrade to filename matching here: it returns
@@ -191,7 +191,7 @@ public struct PhotosTool: ProbeTool {
                 "search_method": "ocr_text",
                 "photos": results,
             ]
-            return (jsonEncode(response), false)
+            return (withPeople(response), false)
         }
     }
 
@@ -264,7 +264,7 @@ public struct PhotosTool: ProbeTool {
                 response["scanned"] = examined
             }
         }
-        return (jsonEncode(response), false)
+        return (withPeople(response), false)
     }
 
     private func searchInAlbum(albumName: String, query: String?, startDate: String?, endDate: String?, limit: Int) -> (String, Bool) {
@@ -328,7 +328,7 @@ public struct PhotosTool: ProbeTool {
             response["truncated"] = true
             response["scanned"] = examined
         }
-        return (jsonEncode(response), false)
+        return (withPeople(response), false)
     }
 
     // MARK: - People (face recognition)
@@ -379,7 +379,7 @@ public struct PhotosTool: ProbeTool {
             "matched_people": result.matchedPeople,
             "photos": results,
         ]
-        return (jsonEncode(response), false)
+        return (withPeople(response), false)
     }
 
     private func listPeople() -> (String, Bool) {
@@ -487,6 +487,23 @@ public struct PhotosTool: ProbeTool {
         if subtypes.contains(.photoLive) { labels.append("live") }
         if subtypes.contains(.photoDepthEffect) { labels.append("depth") }
         return labels
+    }
+
+    /// Encode a search response, tagging each photo with the named people in it.
+    /// One lookup per response rather than per asset. Unreadable face data just
+    /// omits the field: names are an extra, not what the search answered.
+    private func withPeople(_ response: [String: Any]) -> String {
+        guard let photos = response["photos"] as? [[String: Any]] else { return jsonEncode(response) }
+        let uuid = { (p: [String: Any]) in (p["id"] as? String)?.split(separator: "/").first.map(String.init) }
+        guard let names = PhotosIntegration.namedPeople(inAssetUUIDs: photos.compactMap(uuid)) else {
+            return jsonEncode(response)
+        }
+        var out = response
+        out["photos"] = photos.map { p -> [String: Any] in
+            guard let u = uuid(p), let n = names[u] else { return p }
+            return p.merging(["people": n]) { a, _ in a }
+        }
+        return jsonEncode(out)
     }
 
     private func jsonEncode(_ value: Any) -> String {

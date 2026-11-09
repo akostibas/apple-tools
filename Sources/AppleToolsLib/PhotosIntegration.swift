@@ -630,6 +630,42 @@ public enum PhotosIntegration {
         return PersonResult(assets: assets, matchedPeople: matched.map { $0.label })
     }
 
+    /// Named people in each asset, keyed by asset UUID (the localIdentifier's
+    /// leading segment). Unnamed faces are skipped. nil when unreadable.
+    public static func namedPeople(inAssetUUIDs uuids: [String]) -> [String: [String]]? {
+        if uuids.isEmpty { return [:] }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(photosDatabasePath, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK,
+              let db = db else { return nil }
+        defer { sqlite3_close(db) }
+        guard validatePhotosPersonSchema(db) else { return nil }
+        return namedPeople(db: db, uuids: uuids)
+    }
+
+    static func namedPeople(db: OpaquePointer, uuids: [String]) -> [String: [String]]? {
+        let placeholders = uuids.map { _ in "?" }.joined(separator: ",")
+        let sql = """
+            SELECT DISTINCT a.ZUUID, COALESCE(NULLIF(p.ZFULLNAME, ''), p.ZDISPLAYNAME)
+            FROM ZASSET a
+            JOIN ZDETECTEDFACE f ON f.ZASSETFORFACE = a.Z_PK
+            JOIN ZPERSON p ON p.Z_PK = f.ZPERSONFORFACE
+            WHERE a.ZUUID IN (\(placeholders))
+              AND COALESCE(NULLIF(p.ZFULLNAME, ''), NULLIF(p.ZDISPLAYNAME, '')) IS NOT NULL
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        for (i, uuid) in uuids.enumerated() {
+            sqlite3_bind_text(stmt, Int32(i + 1), uuid, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        }
+        var out: [String: [String]] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let u = sqlite3_column_text(stmt, 0), let n = sqlite3_column_text(stmt, 1) else { continue }
+            out[String(cString: u), default: []].append(String(cString: n))
+        }
+        return out.mapValues { $0.sorted() }
+    }
+
     private static var photosDatabasePath: String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/Pictures/Photos Library.photoslibrary/database/Photos.sqlite"
