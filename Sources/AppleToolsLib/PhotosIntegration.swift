@@ -336,12 +336,14 @@ public enum PhotosIntegration {
     /// it in means "dog" matches a billboard reading DOG, and "the" matches half
     /// the library — that is a text search wearing a content search's label.
     /// Worth having as its own match mode; it is not this one.
-    private static let leoLabelCategories = "4000"
+    static let leoLabelCategories = "4000"
+    /// OCR'd words from inside the image, one lexicon row per word.
+    static let leoTextCategories = "4120"
 
     /// macOS 27's index inverts psi's layout: instead of a `ga` join table,
     /// each item carries a packed list of the lexeme ids that describe it.
     private static func searchLeo(db: OpaquePointer, query: String, start: Date?, end: Date?, limit: Int) -> ContentSearchOutcome {
-        guard let match = leoMatches(db: db, query: query) else {
+        guard let match = leoMatches(db: db, query: query, categories: leoLabelCategories) else {
             return .unavailable("the Photos search index could not be queried")
         }
         return resolveAssets(localIdentifiers: match.identifiers, matchedLabels: match.labels,
@@ -352,11 +354,11 @@ public enum PhotosIntegration {
     /// PhotoKit resolution so the schema assumptions can be tested against a
     /// fixture. Returns nil only when the index itself could not be queried —
     /// an empty result means the library genuinely has no such photos.
-    static func leoMatches(db: OpaquePointer, query: String) -> (identifiers: [String], labels: [String])? {
+    static func leoMatches(db: OpaquePointer, query: String, categories: String = leoLabelCategories) -> (identifiers: [String], labels: [String])? {
         let searchPattern = "%\(SQLEscaping.escapeLIKE(query.lowercased()))%"
         let lexiconSQL = """
             SELECT DISTINCT lexeme_id, content FROM lexicon
-            WHERE content LIKE ?1 ESCAPE '\\' AND category IN (\(leoLabelCategories))
+            WHERE content LIKE ?1 ESCAPE '\\' AND category IN (\(categories))
             ORDER BY
                 CASE WHEN length(content) = length(?2) THEN 0 ELSE 1 END,
                 length(content)
@@ -415,6 +417,30 @@ public enum PhotosIntegration {
             if wanted.contains(id) { return true }
         }
         return false
+    }
+
+    /// Search the text Photos read out of each image. leo-only: psi has no
+    /// equivalent, so pre-27 reports unavailable rather than an empty result.
+    /// `limit` 0 means unlimited (PhotoKit fetchLimit semantics), for counting.
+    // ponytail: substring match per OCR word; multi-word queries ("trader joe")
+    // won't match until we intersect per-word results.
+    public static func searchByText(query: String, start: Date?, end: Date?, limit: Int) -> ContentSearchOutcome {
+        guard FileManager.default.isReadableFile(atPath: leoDatabasePath) else {
+            return .unavailable("searching text inside photos needs the macOS 27 Photos search index")
+        }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(leoDatabasePath, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK, let db = db else {
+            return .unavailable("the Photos search index could not be opened for reading")
+        }
+        defer { sqlite3_close(db) }
+        guard validateLeoSchema(db) else {
+            return .unavailable("the Photos search index is in an unrecognized format")
+        }
+        guard let match = leoMatches(db: db, query: query, categories: leoTextCategories) else {
+            return .unavailable("the Photos search index could not be queried")
+        }
+        return resolveAssets(localIdentifiers: match.identifiers, matchedLabels: match.labels,
+                             start: start, end: end, limit: limit)
     }
 
     /// Validate leo.sqlite's shape before trusting it.

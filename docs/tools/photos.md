@@ -22,8 +22,11 @@ image into the tool's output directory.
   - `--match people` with no name **lists** the recognized people in the library.
   - `--album NAME` filters to an album (exact title); `--query` inside an album
     matches filenames only.
-  - `--match content|filename|people` constrains which matcher runs; with no ML
-    hit and no constraint, `--query` falls back to a filename match
+  - `--match text` searches the words Photos read *inside* the image (signs,
+    receipts, labels; macOS 27+), tagged `matched: text`. Other `--query`
+    searches never mix these in; they report `text_match_count` instead.
+  - `--match content|filename|people|text` constrains which matcher runs; with
+    no ML hit and no constraint, `--query` falls back to a filename match
     (`matched: filename`).
   - `--start` / `--end` (ISO 8601) bound by capture date; `--limit`
     caps results (default 20).
@@ -39,6 +42,7 @@ Run `apple-tools photos --help` for the exact parameters of each action.
 apple-tools photos search --query "beach" --start 2026-06-01 --limit 10
 apple-tools photos search --person "Sandy Ford"
 apple-tools photos search --match people
+apple-tools photos search --query receipt --match text
 apple-tools photos fetch --id "A1B2C3D4-.../L0/001" --full_resolution
 ```
 
@@ -69,12 +73,9 @@ apple-tools photos fetch --id "A1B2C3D4-.../L0/001" --full_resolution
   degrades quietly: an empty result is reserved for a search that genuinely
   matched nothing, because a caller cannot otherwise tell "no photos of dogs"
   from "we could not look".
-- **Content search matches depictions, not text in the photo.** It searches
-  Photos' scene labels — what the image is *of*. macOS 27's index also stores
-  text scanned out of images, and that is deliberately excluded: including it
-  would make `--query dog` return a photo of a billboard reading DOG, and
-  `--query the` match a large share of the library. Searching the text inside
-  photos is a separate capability that doesn't exist here yet.
+- **Text search is macOS 27+ and one word at a time.** macOS 26's index has no
+  scanned text, so `--match text` reports unavailable there. Each scanned word
+  is matched separately, so a multi-word query like `trader joe` finds nothing.
 - **Filename fallback scan is capped.** A keyword with no ML hit scans at most
   `max(limit*50, 500)` assets newest-first; a matching filename older than that
   cutoff won't be found (the response flags `truncated: true` when the cap is
