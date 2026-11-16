@@ -112,6 +112,16 @@ public enum MailDraftVerifier {
         return .inconclusive
     }
 
+    /// Id of the draft Mail just saved, or nil if the index hasn't caught up by the deadline.
+    public static func savedDraftID(
+        recipient: String, subject: String, sinceROWID: Int64, deadline: TimeInterval = 10.0
+    ) -> String? {
+        guard case .confirmed(let id?) = verify(recipient: recipient, subject: subject,
+                                                sinceROWID: sinceROWID, deadline: deadline),
+              let row = Int64(id) else { return nil }
+        return EmailSearch.documentID(rowID: row, dbPath: databasePath)?.uuidString
+    }
+
     // MARK: - SQLite query
 
     /// One-shot lookup against the Envelope Index. Joins `messages` →

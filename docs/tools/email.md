@@ -1,8 +1,8 @@
 # email — Mail
 
 Read Apple Mail and stage outgoing messages. Reading spans every account's
-mailboxes; writing only ever creates **drafts** (a compose window you review) —
-this tool never sends.
+mailboxes; writing only ever creates **drafts**, saved in the Drafts mailbox for
+you to review — this tool never sends. Drafting opens no window.
 
 **Access:** read + draft
 **Permissions:** Full Disk Access (reads Mail's on-disk `.emlx` store and the
@@ -21,12 +21,20 @@ Envelope Index; also used by the AppleScript fallback).
   enough to call per message after a search.
 - **fetch_attachment** — retrieve one attachment's bytes from a message (returns
   a local `path`; images are resized for LLM vision).
-- **draft** — create a new draft (`to`, `subject`, `body`, `cc`, `attachments`).
-  Does not send.
+- **draft** — create a new draft (`to`, `subject`, `body`, `cc`, `attachments`),
+  saved in Drafts. Does not send. Returns the draft's `id`, which is only for
+  `discard` — it is not a message id, so `read` won't take it.
 - **reply** — draft a reply to a message by `id`. Builds a "Re:" subject,
   addresses the original sender (`reply_all` folds in the other recipients), and
   quotes the original in a real indented `<blockquote>`. Put **only** your new
-  text in `body` — the original is quoted automatically. Does not send.
+  text in `body` — the original is quoted automatically. Does not send. Returns
+  the draft's `id`.
+- **discard** — move a draft to its account's Trash by the `id` that `draft` or
+  `reply` returned. Only drafts are accepted: a message anywhere but a Drafts
+  mailbox (received, sent, archived, already trashed) is refused, so this can't
+  delete real mail. Nothing is erased; the draft can be recovered from Trash.
+  Once a draft has been sent, its id is refused too. Needs Mail running; it
+  never launches Mail.
 - **mailboxes** — each account's mailboxes with total/unread counts, and whether
   the account allows `move` (Gmail doesn't). Names are what `--mailbox` takes.
 - **move** — move a message by `id` to `mailbox`, in its own account or another
@@ -53,6 +61,7 @@ apple-tools email read --id "<MESSAGE-ID>"
 apple-tools email headers --id "<MESSAGE-ID>" --names Sender,X-Google-Calendar-Notification
 apple-tools email reply --id "<MESSAGE-ID>" --body "Sounds great, thanks!"
 apple-tools email draft --to a@b.com --subject "Hi" --body "…" --attachments ~/f.pdf
+apple-tools email discard --id "<ID-RETURNED-BY-DRAFT>"
 ```
 
 ## Shortcomings
@@ -80,7 +89,20 @@ apple-tools email draft --to a@b.com --subject "Hi" --body "…" --attachments ~
   fall back to AppleScript for mailbox layouts the Envelope Index fast path
   can't resolve; that fallback scans INBOX only and is impractically slow on
   large IMAP mailboxes (e.g. `[Gmail]/All Mail`).
-- **No send / delete / modify.** By design — the tool only reads and drafts.
+- **Discarding a draft made in the last 45 seconds is slow.** On Gmail and
+  iCloud, Mail saves a new draft a second time 10 to 30 seconds after the
+  first, which would bring a just-discarded draft back. `discard` waits that
+  out and trashes the second copy as well, so both copies end up in Trash and
+  the call can take up to 45 seconds. Older drafts are discarded at once.
+- **`draft`/`reply` can come back without an `id`.** If Mail is slow to file the
+  draft, the result carries a `note` instead, and that draft can only be
+  deleted in Mail.
+- **`discard` works on iCloud, Gmail and other IMAP accounts only.** Those are
+  the kinds it has been shown to hold on, checked again after a sync. Drafts in
+  On My Mac or an Exchange account are refused, as is any account set to erase
+  deleted messages instead of moving them to Trash. Delete those in Mail.
+- **No send, and no deleting or changing real mail.** By design — the tool
+  reads, drafts, and discards its drafts.
 
 ## Why `reply` doesn't use Mail's native reply
 
