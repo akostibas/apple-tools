@@ -5,7 +5,7 @@ import XCTest
 /// NotesSearchLiveTests: folders, list, append, move, delete, rename-folder.
 /// Opt-in. Run with:
 ///
-///     bin/check --slow --tool notes
+///     make test-slow TOOL=notes
 ///
 /// Scripted folder deletes don't stick in iCloud (the folder comes back), so the
 /// suite reuses three fixed folders and only ever deletes notes. Locked notes

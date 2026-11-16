@@ -4,7 +4,7 @@ import XCTest
 /// Live round-trip tests against the real Reminders store. Opt-in, because they create and delete reminders in
 /// the default list. Run with:
 ///
-///     bin/check --slow --tool reminders
+///     make test-slow TOOL=reminders
 final class RemindersLiveTests: XCTestCase {
 
     private let tool = RemindersTool()

@@ -3,7 +3,7 @@ import XCTest
 @testable import AppleToolsLib
 
 /// Writes to the real clipboard and reads it back, then puts back whatever was
-/// there (any type, not just text). Run with `bin/check --slow --tool clipboard`.
+/// there (any type, not just text). Run with `make test-slow TOOL=clipboard`.
 final class ClipboardLiveTests: XCTestCase {
     private var saved: [[NSPasteboard.PasteboardType: Data]] = []
 

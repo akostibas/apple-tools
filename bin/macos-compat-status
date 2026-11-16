@@ -103,7 +103,7 @@ read it".
 Offer to run the test command. Its read-only group reads this machine's real
 data and checks that items it found on an earlier run can still be found:
 
-  bin/check          (add --slow to also create, read back and remove test data)
+  make test          (make test-slow also creates, reads back and removes test data)
 
 Anything it raises needs the user: ask them to look for the same items in the
 app itself. Then record the outcome in the matrix, noting which groups ran.

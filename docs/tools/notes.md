@@ -103,7 +103,7 @@ apple-tools notes rename-folder --folder "Misc" --name "Archive"
 
 ## Testing gaps
 
-What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
 - **Test folders are left behind.** The slow suite reuses `AppleToolsLive A/B/C` and `AppleToolsFmtLive`, because a scripted folder delete comes back through iCloud.
 - **Locked notes** can't be created by script, so their refusal is untested.

@@ -52,7 +52,7 @@ apple-tools <tool> <action> …
 
 ## Testing gaps
 
-- <What `bin/check` can't prove for this tool, and why: data that can't be
+- <What `make test` can't prove for this tool, and why: data that can't be
   planted, artifacts a test leaves behind, actions with no live test.>
 ```
 

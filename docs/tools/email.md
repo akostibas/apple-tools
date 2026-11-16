@@ -92,7 +92,7 @@ path, at the cost of the threading headers above.
 
 ## Testing gaps
 
-What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
 - **Received mail can't be planted.** If a read comes back empty, only the remembered messages or a look in Mail can tell "none" from "broken".
 - **Reads are skipped while Mail is closed**, because reading the inbox would open it (#84).

@@ -4,7 +4,7 @@ import XCTest
 
 /// The read-only group: each test reads this Mac's real data and changes nothing.
 /// Tests find real items once, remember them (`LiveTargets`), and on later runs
-/// check they can still be found. Run with `bin/check`.
+/// check they can still be found. Run with `make test`.
 class ReadOnlyCase: XCTestCase {
     private(set) var outDir: String!
 

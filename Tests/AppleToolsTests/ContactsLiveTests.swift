@@ -3,7 +3,7 @@ import XCTest
 @testable import AppleToolsLib
 
 /// Live tests against the real Contacts store, using one throwaway contact
-/// created and deleted per test. Run with `bin/check --slow --tool contacts`.
+/// created and deleted per test. Run with `make test-slow TOOL=contacts`.
 final class ContactsLiveTests: XCTestCase {
 
     private let tool = ContactsTool()

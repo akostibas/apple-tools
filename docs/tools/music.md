@@ -236,7 +236,7 @@ CLI):
 
 ## Testing gaps
 
-What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
 - **Play history and the library can't be planted.** `stats`, `mix` and `search` are checked against remembered tracks only.
 - **Reads are skipped while Music is closed**, because scripting it would open it.

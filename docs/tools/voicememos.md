@@ -82,7 +82,7 @@ apple-tools voicememos transcribe --id "<RECORDING-ID>" --timestamps --inline
 
 ## Testing gaps
 
-What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
 - **Nothing can be planted.** Voice Memos can't be written to (#62), so with no recordings on this Mac the tests report "nothing to check"; look in Voice Memos to tell "none" from "broken".
 - **Transcription quality isn't judged**, only that a transcript comes back.

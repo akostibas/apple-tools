@@ -57,6 +57,6 @@ apple-tools clipboard write --text "https://example.com/page"
 
 ## Testing gaps
 
-What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
 - **None known.** The slow test writes text, reads it back, and restores what was there, including non-text contents.

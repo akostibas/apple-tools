@@ -2,7 +2,7 @@ import XCTest
 @testable import AppleToolsLib
 
 /// Reads one real message's headers from disk and via Mail.app; both must agree.
-/// Read-only; uses the newest inbox message. Run with `bin/check --tool email`.
+/// Read-only; uses the newest inbox message. Run with `make test TOOL=email`.
 final class EmailHeadersLiveTests: ReadOnlyCase {
     func testAppleScriptFallbackMatchesDisk() throws {
         try LiveTest.reads("email", "headers")

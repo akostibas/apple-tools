@@ -184,11 +184,11 @@ OSLog subsystem.
 
 ```bash
 make build      # release build
-bin/check       # unit tests, then read-only checks against this Mac's real data
-bin/check --slow   # also create, read back and remove labeled test data
+make test       # unit tests, then read-only checks against this Mac's real data
+make test-slow   # also create, read back and remove labeled test data
 ```
 
-`bin/check` reports each group separately, because they fail for different
+`make test` reports each group separately, because they fail for different
 reasons. A unit failure means the code is wrong. A read-only failure means items
 this Mac had on an earlier run can no longer be found: either Apple moved a data
 store (macOS 27 did this to podcast history and photo search, silently) or you

@@ -103,7 +103,7 @@ apple-tools calendar delete --id <id> --span all
 
 ## Testing gaps
 
-What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
 - **Create, update and delete have no live test yet** (#79). The read-only group covers `calendars`, `list` and `search`.
 - **Invites from other people** are never touched, so the refusals for them are only unit-tested.

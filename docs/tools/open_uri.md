@@ -50,6 +50,6 @@ apple-tools open_uri --uri "tel:+15551234567"
 
 ## Testing gaps
 
-What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
 - **No live test.** Opening a URI puts something in front of the user, so it can only be an attended test, which isn't written yet (#79).

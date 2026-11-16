@@ -49,6 +49,6 @@ apple-tools media list --hours 168 --limit 10
 
 ## Testing gaps
 
-What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
 - **Nothing can be planted.** Podcasts and Books can't be written to, so if the list comes back empty only the remembered titles or a look in those apps can tell "none" from "broken". On a new Mac there is no way to tell from here.

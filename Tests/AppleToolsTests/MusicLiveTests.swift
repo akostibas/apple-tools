@@ -3,7 +3,7 @@ import XCTest
 
 /// Live tests against the real Music library. They create one labeled playlist
 /// and delete it; they never touch playback. Run with
-/// `bin/check --slow --tool music`.
+/// `make test-slow TOOL=music`.
 final class MusicLiveTests: XCTestCase {
 
     private let tool = MusicTool()

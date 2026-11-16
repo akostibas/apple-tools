@@ -89,7 +89,7 @@ apple-tools imessage send --to "+16502530000" --text "On my way" --attachments ~
 
 ## Testing gaps
 
-What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
 - **Message history can't be planted** except by sending, and a sent message can't be removed. The send test is not written yet (#79); it will go to your own number only and leave that message behind.
 - **Search is checked with a handful of common words**, so a Mac whose messages contain none of them reports "nothing to check".

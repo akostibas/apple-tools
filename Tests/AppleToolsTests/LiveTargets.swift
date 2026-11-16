@@ -14,7 +14,7 @@ struct LiveTargets {
 
         var advice: String {
             switch self {
-            case .slowTest(let tool): return "run `bin/check --slow --tool \(tool)`, which creates an item and reads it back"
+            case .slowTest(let tool): return "run `make test-slow TOOL=\(tool)`, which creates an item and reads it back"
             case .lookIn(let app): return "open \(app) and see whether it shows any; nothing can be planted there to test with"
             }
         }
@@ -89,7 +89,7 @@ struct LiveTargets {
             return .lost("\(key): listed \(entry.values.count) item(s) but could not find any of them again.")
         }
         return .lost("\(key): found \(entry.values.count) item(s) on \(entry.recorded), and none of them now. "
-            + "If you removed them yourself, re-run with `bin/check --refresh`; otherwise the store has likely moved.")
+            + "If you removed them yourself, re-run with `make test-refresh`; otherwise the store has likely moved.")
     }
 
     /// Test-facing wrapper: skips when there is nothing to check, fails on a loss.

@@ -111,7 +111,7 @@ apple-tools photos import --path ~/Downloads/receipt.jpg --path ~/Desktop/clip.m
 
 ## Testing gaps
 
-What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
 - **Keyword search can't be planted.** Photos labels an image some time after import, so the read-only group tries a list of common subjects and remembers which ones hit.
 - **Import has no live test and won't get one.** A photo the tool imports can only be removed by clicking a system dialog (#97), so every run would leave one in the library.

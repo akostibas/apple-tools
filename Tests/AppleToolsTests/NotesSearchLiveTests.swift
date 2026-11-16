@@ -6,7 +6,7 @@ import XCTest
 /// core acceptance criterion on real data: a broad query returns well within
 /// the AppleScript deadline, and full-text is a superset of title-only.
 ///
-///     bin/check --tool notes
+///     make test TOOL=notes
 ///
 /// Mutation-free (only reads NoteStore.sqlite), so it's safe to run anytime.
 final class NotesSearchLiveTests: XCTestCase {

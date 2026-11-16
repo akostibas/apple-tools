@@ -4,7 +4,7 @@ import XCTest
 /// Live round-trip tests against the real Notes app. Opt-in, because they create/delete notes and read the
 /// on-disk store. Run with:
 ///
-///     bin/check --slow --tool notes
+///     make test-slow TOOL=notes
 ///
 /// These are the "emit Markdown → Notes → read back → compare" checks that
 /// prove fidelity end-to-end (issue).

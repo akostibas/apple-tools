@@ -6,7 +6,7 @@ import XCTest
 /// Opt-in, and need at least one
 /// downloaded recording:
 ///
-///     bin/check --tool voicememos
+///     make test TOOL=voicememos
 final class VoiceMemosLiveTests: XCTestCase {
 
     private var outDir: String!

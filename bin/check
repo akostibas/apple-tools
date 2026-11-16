@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# check — the one test command. Runs groups of tests and reports each separately,
-# because they fail for different reasons:
+# check — runs groups of tests and reports each separately, because they fail
+# for different reasons. Normally reached through the Makefile (`make test`,
+# `make test-slow`, ...); see Tests/README.md.
 #
 #   unit       fixtures only. A failure means our code is wrong.
 #   read-only  reads this Mac's real data, changes nothing. A failure means a
@@ -15,7 +16,7 @@
 #   check --unit           unit only (what pre-commit runs)
 #   check --slow           unit + read-only + slow
 #   check --attended       also run the attended tests (implies --slow)
-#   check --tool NAME      limit the live groups to one tool (repeatable); skips unit
+#   check --tool NAME      limit the live groups to one tool (repeatable, or a,b); skips unit
 #   check --refresh        re-discover the read-only group's remembered items.
 #                          Only after you have confirmed the data really changed.
 #
@@ -115,7 +116,7 @@ Agent: a unit failure is a code defect; fix it. A read-only failure is NOT
 proof of breakage: it means items this Mac had before can no longer be found.
 Ask the user to look for them in the app itself. If the app shows them and we
 do not, that is a real breakage worth an issue. If the user removed them,
-re-run with --refresh. Do not record this macOS build as verified until then.
+run `make test-refresh`. Do not record this macOS build as verified until then.
 EOF
   exit 1
 fi

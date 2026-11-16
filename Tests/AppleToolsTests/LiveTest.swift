@@ -18,15 +18,15 @@ enum LiveTest {
     static let label = "apple-tools live test"
 
     static func reads(_ tool: String, _ actions: String...) throws {
-        try gate(readVar, tool: tool, hint: "bin/check")
+        try gate(readVar, tool: tool, hint: "make test")
     }
 
     static func writes(_ tool: String, _ actions: String...) throws {
-        try gate(writeVar, tool: tool, hint: "bin/check --slow")
+        try gate(writeVar, tool: tool, hint: "make test-slow")
     }
 
     static func attended(_ tool: String, _ actions: String...) throws {
-        try gate(attendedVar, tool: tool, hint: "bin/check --attended")
+        try gate(attendedVar, tool: tool, hint: "make test-attended")
     }
 
     /// Scripting a closed app launches it in front of the user, so tests that script one wait until it is open.

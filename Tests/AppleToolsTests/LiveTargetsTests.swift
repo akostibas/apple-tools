@@ -51,7 +51,7 @@ final class LiveTargetsTests: XCTestCase {
 
     func testGateIsOptInAndCanBeLimitedToTools() {
         func reason(_ env: [String: String]) -> String? {
-            LiveTest.skipReason(env: env, flag: LiveTest.readVar, tool: "notes", hint: "bin/check")
+            LiveTest.skipReason(env: env, flag: LiveTest.readVar, tool: "notes", hint: "make test")
         }
         XCTAssertNotNil(reason([:]))
         XCTAssertNil(reason([LiveTest.readVar: "1"]))

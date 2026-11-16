@@ -15,7 +15,7 @@ on that date, and behaved correctly.* It does **not** guarantee:
   row is pinned to a commit for exactly this reason),
 - anything about tools/rows marked **not recorded** (just untested, not known-broken).
 
-Verify with `bin/check` (add `--slow` to exercise writes) and say in the row's
+Verify with `make test` (add `--slow` to exercise writes) and say in the row's
 Notes which groups ran; a skipped test is not a pass. Then add/update the row
 with the current `apple-tools --version`, `git rev-parse --short HEAD`,
 `sw_vers`, and today's date.

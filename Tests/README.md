@@ -1,15 +1,15 @@
 # Tests
 
-One command runs everything: `bin/check`. It runs groups of tests and reports
+One command runs everything: `make test`. It runs groups of tests and reports
 each one separately, because they fail for different reasons.
 
 ```bash
-bin/check                    # unit + read-only (the default, about a minute)
-bin/check --unit             # unit only; this is what pre-commit runs
-bin/check --slow             # unit + read-only + slow
-bin/check --attended         # everything, including tests that need you at the screen
-bin/check --tool notes       # the live groups for one tool (repeatable)
-bin/check --refresh          # re-discover the read-only group's remembered items
+make test                  # unit + read-only (the default, a minute or two)
+make test-unit             # unit only; this is what pre-commit runs
+make test-slow             # unit + read-only + slow
+make test-attended         # everything, including tests that need you at the screen
+make test-slow TOOL=notes  # any target, limited to one tool (or TOOL=notes,calendar)
+make test-refresh          # re-discover the read-only group's remembered items
 ```
 
 | Group | What it touches | A failure means |
