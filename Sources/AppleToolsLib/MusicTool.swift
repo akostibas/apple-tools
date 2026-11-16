@@ -13,19 +13,19 @@ public struct MusicTool: ProbeTool {
 
     public let definition = ToolDefinition(
         name: "music",
-        description: "Read and control Apple Music / Music.app. Read: 'now-playing' (current track + state, works for streams), 'search' (local library), 'stats' (raw play history: most-played, recently-played, most-loved), 'mix' ('what to play now' picks: neglected-favorites, rediscover, velocity, fresh, unplayed-gems), 'airplay-list' (output devices). Control: 'play' (resume, or a --playlist / --query), 'pause', 'playpause', 'next', 'previous', 'stop', 'volume' (--level 0-100), 'shuffle' (--state on|off), 'repeat' (--mode off|one|all), 'seek' (--position seconds), 'airplay-select' (--device). Curate (edits the library — each reads back and reports 'verified'): 'love' (--state on|off, current track or --query), 'rate' (--stars 0-5, current track or --query), 'playlist-create' (--name), 'playlist-add' (--name --query), 'playlist-remove' (--name --query). Play counts/dates are local to THIS Mac, not your full cross-device Apple Music history.",
+        description: "Read and control Apple Music / Music.app. Read: 'now-playing' (current track + state, works for streams), 'search' (local library), 'stats' (raw play history: most-played, recently-played, most-loved), 'mix' ('what to play now' picks: neglected-favorites, rediscover, velocity, fresh, unplayed-gems), 'airplay-list' (output devices). Control: 'play' (resume, or a --playlist / --query), 'pause', 'playpause', 'next', 'previous', 'stop', 'volume' (--level 0-100), 'shuffle' (--state on|off), 'repeat' (--mode off|one|all), 'seek' (--position seconds), 'airplay-select' (--device). Curate (edits the library — each reads back and reports 'verified'): 'love' (--state on|off, current track or --query), 'rate' (--stars 0-5, current track or --query), 'playlist-create' (--name), 'playlist-add' (--name --query), 'playlist-remove' (--name --query), 'playlist-delete' (--name; deletes a playlist you made — refuses smart, subscribed, built-in, or duplicate-named playlists). Play counts/dates are local to THIS Mac, not your full cross-device Apple Music history.",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "now-playing, search, stats, mix, play, pause, playpause, next, previous, stop, volume, shuffle, repeat, seek, love, rate, playlist-create, playlist-add, playlist-remove, airplay-list, or airplay-select"),
+                "action": PropertySchema(type_: "string", description: "now-playing, search, stats, mix, play, pause, playpause, next, previous, stop, volume, shuffle, repeat, seek, love, rate, playlist-create, playlist-add, playlist-remove, playlist-delete, airplay-list, or airplay-select"),
                 "query": PropertySchema(type_: "string", description: "Text to match (required for search, playlist-add, playlist-remove; optional for play/love/rate — targets the top library match)",
                     summary: "Search / target-match text", actions: ["search", "play", "love", "rate", "playlist-add", "playlist-remove"]),
                 "field": PropertySchema(type_: "string", description: "Which field to match: any (default), title, artist, or album",
                     summary: "Match field: any (default), title, artist, album", actions: ["search", "play", "love", "rate", "playlist-add", "playlist-remove"]),
                 "playlist": PropertySchema(type_: "string", description: "Play a user playlist by name (for play)",
                     summary: "Playlist name to play", actions: ["play"]),
-                "name": PropertySchema(type_: "string", description: "User playlist name (required for playlist-create, playlist-add, playlist-remove)",
-                    summary: "Playlist name", actions: ["playlist-create", "playlist-add", "playlist-remove"]),
+                "name": PropertySchema(type_: "string", description: "User playlist name (required for playlist-create, playlist-add, playlist-remove, playlist-delete)",
+                    summary: "Playlist name", actions: ["playlist-create", "playlist-add", "playlist-remove", "playlist-delete"]),
                 "stars": PropertySchema(type_: "integer", description: "Star rating 0–5 (required for rate; 0 clears it)",
                     summary: "Star rating 0–5", actions: ["rate"]),
                 "device": PropertySchema(type_: "string", description: "AirPlay device name, exact match (required for airplay-select)",
@@ -84,6 +84,8 @@ public struct MusicTool: ProbeTool {
                 example: "apple-tools music playlist-add --name \"Road Trip\" --query \"hey jude\"", required: ["name", "query"]),
             ActionHelp(name: "playlist-remove", summary: "Remove a matching track from a playlist (verifies)",
                 example: "apple-tools music playlist-remove --name \"Road Trip\" --query \"hey jude\"", required: ["name", "query"]),
+            ActionHelp(name: "playlist-delete", summary: "Delete a playlist you made (refuses smart, subscribed, built-in, duplicate-named)",
+                example: "apple-tools music playlist-delete --name \"Road Trip\"", required: ["name"]),
             ActionHelp(name: "airplay-list", summary: "List AirPlay output devices",
                 example: "apple-tools music airplay-list"),
             ActionHelp(name: "airplay-select", summary: "Route output to an AirPlay device (verifies)",
@@ -111,6 +113,7 @@ public struct MusicTool: ProbeTool {
         "playlist-create": .readWrite,
         "playlist-add":    .readWrite,
         "playlist-remove": .readWrite,
+        "playlist-delete": .readWrite,
         "airplay-list":    .read,
         "airplay-select":  .readWrite,
     ])
@@ -210,11 +213,14 @@ public struct MusicTool: ProbeTool {
             return curationTarget(params) { query, field in
                 try MusicIntegration.setRating(stars: stars, query: query, field: field)
             } render: { curationDict($0, valueKey: "rating", value: $0.value, extra: ["stars": $0.value / 20]) }
-        case "playlist-create":
+        case "playlist-create", "playlist-delete":
             guard let name = params?["name"]?.value as? String, !name.isEmpty else {
                 return ("missing required parameter: name", true)
             }
-            return playlist { try MusicIntegration.createPlaylist(name) }
+            return playlist {
+                action == "playlist-create" ? try MusicIntegration.createPlaylist(name)
+                                            : try MusicIntegration.deletePlaylist(name)
+            }
         case "playlist-add":
             return playlistTrack(params, add: true)
         case "playlist-remove":
@@ -230,7 +236,7 @@ public struct MusicTool: ProbeTool {
                 return (jsonString(["ok": true, "verified": r.verified, "device": r.name]) ?? "{}", false)
             } catch { return (errorText(error), true) }
         default:
-            return ("unknown action: \(action) (use now-playing, search, stats, mix, play, pause, playpause, next, previous, stop, volume, shuffle, repeat, seek, love, rate, playlist-create, playlist-add, playlist-remove, airplay-list, or airplay-select)", true)
+            return ("unknown action: \(action) (use now-playing, search, stats, mix, play, pause, playpause, next, previous, stop, volume, shuffle, repeat, seek, love, rate, playlist-create, playlist-add, playlist-remove, playlist-delete, airplay-list, or airplay-select)", true)
         }
     }
 

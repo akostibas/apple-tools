@@ -129,10 +129,11 @@ public enum MusicIntegration {
     public enum MusicError: Error, CustomStringConvertible {
         case scriptFailed(String)
         case notFound(String)
+        case refused(String)
         public var description: String {
             switch self {
             case .scriptFailed(let detail): return "Music automation failed: \(detail)"
-            case .notFound(let detail): return detail
+            case .notFound(let detail), .refused(let detail): return detail
             }
         }
     }
@@ -666,6 +667,73 @@ public enum MusicIntegration {
             verified: { after, before in after < before }
         )
     }
+
+    /// Delete the one playlist named `name`, only when it is a plain playlist
+    /// the user made: anything else (or an ambiguous name) is refused untouched.
+    public static func deletePlaylist(_ name: String) throws -> PlaylistResult {
+        // applescript-runner: no-verifier — verified in-script via read-back
+        // (playlist gone by persistent ID); Music has no external store to poll.
+        let script = """
+        set theName to do shell script "printenv APPLE_TOOLS_MUSIC_PLAYLIST"
+        tell application "Music"
+            -- every playlist, not just user playlists: a name shared with a
+            -- subscribed or built-in playlist is ambiguous too.
+            set pls to (every playlist whose name is theName)
+            if (count of pls) is 0 then error "NO_PLAYLIST"
+            if (count of pls) > 1 then error "REFUSED_DUPLICATE"
+            set thePl to item 1 of pls
+            set verdict to "REFUSED_UNSURE"
+            try
+                set cls to (class of thePl)
+                if cls is subscription playlist then
+                    set verdict to "REFUSED_SUBSCRIBED"
+                else if cls is folder playlist then
+                    set verdict to "REFUSED_FOLDER"
+                else if cls is not user playlist then
+                    set verdict to "REFUSED_BUILTIN"
+                else if (special kind of thePl) is not none then
+                    set verdict to "REFUSED_BUILTIN"
+                else if (smart of thePl) is not false then
+                    set verdict to "REFUSED_SMART"
+                else if (genius of thePl) is not false then
+                    set verdict to "REFUSED_SMART"
+                else
+                    set verdict to "OK"
+                end if
+            end try
+            if verdict is not "OK" then error verdict
+            set plId to (persistent ID of thePl as text)
+            log "PHASE: pre-commit"
+            delete thePl
+            log "PHASE: committed"
+            delay 0.2
+            set remaining to (count of (every playlist whose persistent ID is plId))
+            return (remaining as text) & (character id 31) & plId
+        end tell
+        """
+        let out: String
+        do {
+            out = try runMutation(script, env: ["APPLE_TOOLS_MUSIC_PLAYLIST": name])
+        } catch let MusicError.scriptFailed(detail) {
+            if detail.contains("NO_PLAYLIST") { throw MusicError.notFound("no playlist named: \(name)") }
+            for (sentinel, reason) in deleteRefusals where detail.contains(sentinel) {
+                throw MusicError.refused("refused to delete \"\(name)\": \(reason). Nothing was deleted.")
+            }
+            throw MusicError.scriptFailed(detail)
+        }
+        let f = out.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: fieldSep)
+        return PlaylistResult(verified: Int(f.first ?? "") == 0, already: false,
+                              playlistID: f.count > 1 && !f[1].isEmpty ? f[1] : nil, track: nil)
+    }
+
+    static let deleteRefusals: [(String, String)] = [
+        ("REFUSED_DUPLICATE", "more than one playlist has that name, so it is not clear which one you mean"),
+        ("REFUSED_SUBSCRIBED", "it is a subscribed Apple Music playlist, not one you made"),
+        ("REFUSED_FOLDER", "it is a playlist folder, and deleting it would delete the playlists inside"),
+        ("REFUSED_BUILTIN", "it is one of Music's built-in playlists"),
+        ("REFUSED_SMART", "it is a smart playlist"),
+        ("REFUSED_UNSURE", "could not confirm it is a plain playlist you made"),
+    ]
 
     /// Shared runner for playlist add/remove: run, map the NO_PLAYLIST/NO_MATCH
     /// sentinels, and decide `verified` from the before/after counts the script
