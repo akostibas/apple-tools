@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import AppleToolsLib
 
 /// Exercises MediaIntegration against fixture SQLite stores shaped like the
@@ -205,6 +206,41 @@ final class MediaIntegrationTests: XCTestCase {
         XCTAssertFalse(result.items.isEmpty)
         // Degrading is fine; hiding that it degraded is not.
         XCTAssertEqual(result.unavailable, ["book"])
+    }
+
+    /// Issue #94: a store locked by its app must read as "busy, retry", not
+    /// as "Apple changed the schema".
+    func testLockedPodcastsDBReportsBusyNotUnrecognized() {
+        let path = makePodcastsDB()
+        let books = makeBooksDB()
+        var locker: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &locker), SQLITE_OK)
+        defer { sqlite3_close(locker) }
+        XCTAssertEqual(sqlite3_exec(locker, "BEGIN EXCLUSIVE", nil, nil, nil), SQLITE_OK)
+
+        let locked = MediaIntegration.recent(
+            hours: 24, limit: nil, now: now, podcastsDBPath: path,
+            booksDBPath: books)
+        XCTAssertEqual(locked.unavailable, ["podcast"])
+        XCTAssertEqual(locked.busy, ["podcast"])
+
+        XCTAssertEqual(sqlite3_exec(locker, "ROLLBACK", nil, nil, nil), SQLITE_OK)
+        let freed = MediaIntegration.recent(
+            hours: 24, limit: nil, now: now, podcastsDBPath: path,
+            booksDBPath: books)
+        XCTAssertTrue(freed.unavailable.isEmpty)
+        XCTAssertTrue(freed.busy.isEmpty)
+    }
+
+    /// A reshaped store is not busy: that distinction is the whole point.
+    func testUnrecognizedSchemaIsNotBusy() {
+        let path = dir.appendingPathComponent("reshaped.sqlite").path
+        runSQLite(path, "CREATE TABLE SOMETHING_ELSE (X INTEGER);")
+        let result = MediaIntegration.recent(
+            hours: 24, limit: nil, now: now, podcastsDBPath: path,
+            booksDBPath: makeBooksDB())
+        XCTAssertEqual(result.unavailable, ["podcast"])
+        XCTAssertTrue(result.busy.isEmpty)
     }
 
     func testUnreadablePodcastsDBReturnsNil() {
