@@ -112,21 +112,14 @@ public enum MailDraftVerifier {
         return .inconclusive
     }
 
-    /// Message-ID of the draft Mail just saved, or nil if the index hasn't caught up by the deadline.
-    public static func savedDraftMessageID(
+    /// Id of the draft Mail just saved, or nil if the index hasn't caught up by the deadline.
+    public static func savedDraftID(
         recipient: String, subject: String, sinceROWID: Int64, deadline: TimeInterval = 10.0
     ) -> String? {
-        let end = Date().addingTimeInterval(deadline)
-        while Date() < end {
-            // The row can be indexed a beat before its Message-ID is, so keep polling both.
-            if case .confirmed(let id?) = verify(recipient: recipient, subject: subject, sinceROWID: sinceROWID,
-                                                 deadline: max(end.timeIntervalSinceNow, defaultPollInterval)),
-               let row = Int64(id), let messageID = EmailSearch.messageIDHeader(rowID: row, dbPath: databasePath) {
-                return messageID
-            }
-            Thread.sleep(forTimeInterval: defaultPollInterval)
-        }
-        return nil
+        guard case .confirmed(let id?) = verify(recipient: recipient, subject: subject,
+                                                sinceROWID: sinceROWID, deadline: deadline),
+              let row = Int64(id) else { return nil }
+        return EmailSearch.documentID(rowID: row, dbPath: databasePath)?.uuidString
     }
 
     // MARK: - SQLite query

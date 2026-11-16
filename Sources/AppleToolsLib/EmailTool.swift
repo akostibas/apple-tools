@@ -16,8 +16,8 @@ public struct EmailTool: ProbeTool {
                     summary: "Account name/address for --mailbox", actions: ["search", "move", "mailboxes"]),
                 "limit": PropertySchema(type_: "integer", description: "Max messages to return (for inbox and search, default 20, max 50)",
                     summary: "Max messages (default 20, max 50)", actions: ["inbox", "search"]),
-                "id": PropertySchema(type_: "string", description: "Message ID (for read, headers, fetch_attachment, reply, move; for discard, the id that draft or reply returned)",
-                    summary: "Message ID", actions: ["read", "headers", "fetch_attachment", "reply", "discard", "move"]),
+                "id": PropertySchema(type_: "string", description: "Message ID (for read, headers, fetch_attachment, reply, move). For discard, the draft id that draft or reply returned, which is not a Message ID",
+                    summary: "Message ID (discard: the id draft/reply returned)", actions: ["read", "headers", "fetch_attachment", "reply", "discard", "move"]),
                 "names": PropertySchema(
                     type_: "array",
                     description: "Header names to return, matched case-insensitively, e.g. ['Sender', 'X-Google-Calendar-Notification']. Omit for all headers. Absent headers are left out (for headers)",
@@ -901,7 +901,7 @@ public struct EmailTool: ProbeTool {
 
     /// Adds the saved draft's `id` (what `discard` takes), or says why there isn't one.
     private func addDraftID(to: String, subject: String, since: Int64, into response: inout [String: Any]) {
-        if let id = MailDraftVerifier.savedDraftMessageID(recipient: to, subject: subject, sinceROWID: since) {
+        if let id = MailDraftVerifier.savedDraftID(recipient: to, subject: subject, sinceROWID: since) {
             response["id"] = id
         } else {
             response["note"] = "Mail hasn't shown the draft in Drafts yet, so there is no id to discard it by"
@@ -920,18 +920,25 @@ public struct EmailTool: ProbeTool {
         return "not a draft: this message is in \(name.isEmpty ? "an unknown mailbox" : name). Only drafts can be discarded; received and sent mail is never deleted."
     }
 
-    private func discard(id: String) -> (String, Bool) {
-        let loc: EmailSearch.MessageLocation
-        do {
-            guard let l = try EmailSearch.resolveMessageID(id) else {
-                return ("no draft with this id. It may have been edited (which gives it a new id), sent, or already discarded.", true)
-            }
-            loc = l
-        } catch {
-            return ("\(error)", true)
-        }
-        if let refusal = Self.discardRefusal(mailboxURL: loc.mailboxURL) { return (refusal, true) }
+    /// The one row `discard` may act on. A sent draft's copy keeps the id, so only a row in Drafts counts.
+    static func draftRow(_ rows: [EmailSearch.MessageLocation]) -> EmailSearch.MessageLocation? {
+        rows.first { discardRefusal(mailboxURL: $0.mailboxURL) == nil }
+    }
 
+    private func discard(id: String) -> (String, Bool) {
+        guard let documentID = UUID(uuidString: id) else {
+            return ("not a draft id: discard takes the id that draft or reply returned", true)
+        }
+        let rows: [EmailSearch.MessageLocation]
+        do { rows = try EmailSearch.rows(documentID: documentID) } catch { return ("\(error)", true) }
+        guard let newest = rows.first else {
+            return ("no draft with this id. It may already be gone from Mail.", true)
+        }
+        guard let loc = Self.draftRow(rows) else {
+            return (Self.discardRefusal(mailboxURL: newest.mailboxURL) ?? "not a draft", true)
+        }
+
+        let since = MailDraftVerifier.snapshotMaxRowID()
         do {
             try EmailIntegration.discardDraft(rowID: loc.rowID, mailboxURL: loc.mailboxURL)
         } catch EmailIntegration.EmailError.notFound {
@@ -941,12 +948,13 @@ public struct EmailTool: ProbeTool {
         }
         var result: [String: Any] = ["id": id]
         result.merge(EmailSearch.accountFields(loc.mailboxURL)) { a, _ in a }
-        // Mail applies the delete asynchronously; confirm where the draft ended up.
+        // Mail applies the delete asynchronously; the trashed copy shows up as a new row.
         let deadline = Date().addingTimeInterval(5)
         var landed: String?
         while Date() < deadline, landed == nil {
-            if let now = try? EmailSearch.resolveMessageID(id), now.mailboxURL != loc.mailboxURL {
-                landed = EmailSearch.mailboxName(now.mailboxURL)
+            let now = (try? EmailSearch.rows(documentID: documentID)) ?? []
+            if !now.contains(where: { $0.rowID == loc.rowID }), let moved = now.first(where: { $0.rowID > since }) {
+                landed = EmailSearch.mailboxName(moved.mailboxURL)
             } else {
                 Thread.sleep(forTimeInterval: 0.25)
             }
@@ -954,8 +962,27 @@ public struct EmailTool: ProbeTool {
         result["discarded"] = landed != nil ? true : "pending"
         if let landed = landed { result["moved_to"] = landed }
         else { result["note"] = "Mail accepted the discard but hasn't shown the draft in Trash yet" }
+
+        // Gmail and iCloud save a new draft a second time 10-30s after the first, which brings a
+        // just-discarded draft back. Stay until that has passed and trash the copy too.
+        // ponytail: window is from a handful of observations; widen it if drafts are seen coming back.
+        let settled = (loc.date ?? .distantPast).addingTimeInterval(Self.draftResaveWindow)
+        while Date() < settled {
+            Thread.sleep(forTimeInterval: 1)
+            guard let back = Self.draftRow((try? EmailSearch.rows(documentID: documentID)) ?? []) else { continue }
+            do {
+                try EmailIntegration.discardDraft(rowID: back.rowID, mailboxURL: back.mailboxURL)
+            } catch {
+                result["discarded"] = "pending"
+                result["note"] = "Mail saved the draft again after it was discarded, and that copy is still in Drafts: \(error)"
+                break
+            }
+        }
         return (jsonEncode(result), false)
     }
+
+    /// How long after a draft is saved Mail may still save it again by itself.
+    static var draftResaveWindow: TimeInterval = 45
 
     /// Validate attachment paths: expand `~`, confirm each exists and is a
     /// regular file under the size cap. Returns the list of absolute paths to

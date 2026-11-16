@@ -1,3 +1,4 @@
+import SQLite3
 import XCTest
 @testable import AppleToolsLib
 
@@ -59,6 +60,50 @@ final class EmailDiscardTests: XCTestCase {
             let refusal = EmailTool.discardRefusal(mailboxURL: url)
             XCTAssertEqual(refusal?.contains("kind of account"), true, "\(url): \(refusal ?? "accepted")")
         }
+    }
+
+    func testOnlyDraftIDsAreAccepted() {
+        for id in ["<abc@example.com>", "abc@example.com", "12345", "not-a-uuid"] {
+            let (result, isError) = EmailTool(host: .test()).handle(params: [
+                "action": AnyCodable("discard"), "id": AnyCodable(id),
+            ])
+            XCTAssertTrue(isError)
+            XCTAssertTrue(result.hasPrefix("not a draft id"), result)
+        }
+    }
+
+    func testSentCopyOfADraftIsNeverPicked() {
+        let sent = EmailSearch.MessageLocation(rowID: 9, mailboxURL: "imap://ABC-UUID/Sent%20Messages")
+        let allMail = EmailSearch.MessageLocation(rowID: 8, mailboxURL: "imap://ABC-UUID/%5BGmail%5D/All%20Mail")
+        let draft = EmailSearch.MessageLocation(rowID: 7, mailboxURL: draftsURL)
+        XCTAssertNil(EmailTool.draftRow([sent, allMail]))
+        XCTAssertNil(EmailTool.draftRow([]))
+        XCTAssertEqual(EmailTool.draftRow([sent, allMail, draft])?.rowID, 7)
+    }
+
+    func testDraftIDFollowsADraftAcrossReSavesAndIntoSent() throws {
+        let path = NSTemporaryDirectory() + "apple-tools-discard-\(UUID().uuidString).sqlite"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &db), SQLITE_OK)
+        let doc = UUID(), other = UUID()
+        func hex(_ u: UUID) -> String { u.uuidString.replacingOccurrences(of: "-", with: "") }
+        let setup = """
+        CREATE TABLE mailboxes (ROWID INTEGER PRIMARY KEY, url TEXT);
+        CREATE TABLE messages (ROWID INTEGER PRIMARY KEY, document_id, mailbox INTEGER, deleted INTEGER, date_received INTEGER);
+        INSERT INTO mailboxes VALUES (1, 'imap://ABC-UUID/Drafts'), (2, 'imap://ABC-UUID/Sent');
+        INSERT INTO messages VALUES (10, x'\(hex(doc))', 1, 1, 100), (11, x'\(hex(doc))', 1, 0, 120),
+                                    (12, x'\(hex(doc))', 2, 0, 130), (13, x'\(hex(other))', 1, 0, 140), (14, NULL, 2, 0, 150);
+        """
+        XCTAssertEqual(sqlite3_exec(db, setup, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
+
+        XCTAssertEqual(EmailSearch.documentID(rowID: 11, dbPath: path), doc)
+        XCTAssertNil(EmailSearch.documentID(rowID: 14, dbPath: path), "received mail has no draft id")
+        let rows = try EmailSearch.rows(documentID: doc, dbPath: path)
+        XCTAssertEqual(rows.map { $0.rowID }, [12, 11], "newest first, the superseded save left out")
+        XCTAssertEqual(EmailTool.draftRow(rows)?.rowID, 11)
+        XCTAssertEqual(rows.last?.date, Date(timeIntervalSince1970: 120))
     }
 
     // MARK: - What Mail is asked to do
@@ -125,9 +170,14 @@ final class EmailDiscardLiveTests: XCTestCase {
         let tool = EmailTool(host: .test())
         let subject = "apple-tools live test \(UUID().uuidString)"
 
+        let attachment = NSTemporaryDirectory() + "apple-tools-live-\(UUID().uuidString).txt"
+        try "attached by a test".write(toFile: attachment, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(atPath: attachment) }
+
         let (drafted, draftFailed) = tool.handle(params: [
             "action": AnyCodable("draft"), "to": AnyCodable("nobody@example.com"),
             "subject": AnyCodable(subject), "body": AnyCodable("Created by a test; safe to delete."),
+            "attachments": AnyCodable([attachment]),
         ])
         XCTAssertFalse(draftFailed, drafted)
         let id = try XCTUnwrap(json(drafted)["id"] as? String, "draft returned no id: \(drafted)")
@@ -140,15 +190,17 @@ final class EmailDiscardLiveTests: XCTestCase {
             "tell application \"Mail\" to return (name of every window) as text", [:], nil)
         XCTAssertNil(err)
         XCTAssertFalse(windows.contains(subject), "drafting must not open a window")
-        let loc = try XCTUnwrap(EmailSearch.resolveMessageID(id))
-        XCTAssertTrue(EmailSearch.isDraftsMailbox(loc.mailboxURL), loc.mailboxURL)
+        let documentID = try XCTUnwrap(UUID(uuidString: id), "draft id should be Mail's document id: \(id)")
+        XCTAssertNotNil(EmailTool.draftRow(try EmailSearch.rows(documentID: documentID)), "draft should be in Drafts")
 
+        // Slow on purpose: discard stays until Mail can no longer save the new draft again.
         let (result, failed) = tool.handle(params: ["action": AnyCodable("discard"), "id": AnyCodable(id)])
         discarded = true
         XCTAssertFalse(failed, result)
         XCTAssertEqual(json(result)["discarded"] as? Bool, true, result)
-        let after = try XCTUnwrap(EmailSearch.resolveMessageID(id), "the draft must be in Trash, not erased")
-        XCTAssertFalse(EmailSearch.isDraftsMailbox(after.mailboxURL), after.mailboxURL)
+        let after = try EmailSearch.rows(documentID: documentID)
+        XCTAssertFalse(after.isEmpty, "the draft must be in Trash, not erased")
+        XCTAssertNil(EmailTool.draftRow(after), "nothing may be left in Drafts")
 
         // Now that it's in Trash it is no longer a draft, so a second discard is refused.
         let (again, refused) = tool.handle(params: ["action": AnyCodable("discard"), "id": AnyCodable(id)])

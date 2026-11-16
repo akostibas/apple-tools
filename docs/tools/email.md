@@ -22,7 +22,8 @@ Envelope Index; also used by the AppleScript fallback).
 - **fetch_attachment** — retrieve one attachment's bytes from a message (returns
   a local `path`; images are resized for LLM vision).
 - **draft** — create a new draft (`to`, `subject`, `body`, `cc`, `attachments`),
-  saved in Drafts. Does not send. Returns the draft's `id`.
+  saved in Drafts. Does not send. Returns the draft's `id`, which is only for
+  `discard` — it is not a message id, so `read` won't take it.
 - **reply** — draft a reply to a message by `id`. Builds a "Re:" subject,
   addresses the original sender (`reply_all` folds in the other recipients), and
   quotes the original in a real indented `<blockquote>`. Put **only** your new
@@ -32,7 +33,8 @@ Envelope Index; also used by the AppleScript fallback).
   `reply` returned. Only drafts are accepted: a message anywhere but a Drafts
   mailbox (received, sent, archived, already trashed) is refused, so this can't
   delete real mail. Nothing is erased; the draft can be recovered from Trash.
-  Needs Mail running; it never launches Mail.
+  Once a draft has been sent, its id is refused too. Needs Mail running; it
+  never launches Mail.
 - **mailboxes** — each account's mailboxes with total/unread counts, and whether
   the account allows `move` (Gmail doesn't). Names are what `--mailbox` takes.
 - **move** — move a message by `id` to `mailbox`, in its own account or another
@@ -87,11 +89,14 @@ apple-tools email discard --id "<ID-RETURNED-BY-DRAFT>"
   fall back to AppleScript for mailbox layouts the Envelope Index fast path
   can't resolve; that fallback scans INBOX only and is impractically slow on
   large IMAP mailboxes (e.g. `[Gmail]/All Mail`).
-- **A draft's `id` stops working once the draft is edited.** Mail gives a draft
-  a new id every time it is saved, so after you edit a draft in Mail, `discard`
-  with the old id reports that there is no such draft and leaves the edited one
-  alone. `draft`/`reply` also return no `id` (with a `note`) if Mail is slow to
-  file the draft.
+- **Discarding a draft made in the last 45 seconds is slow.** On Gmail and
+  iCloud, Mail saves a new draft a second time 10 to 30 seconds after the
+  first, which would bring a just-discarded draft back. `discard` waits that
+  out and trashes the second copy as well, so both copies end up in Trash and
+  the call can take up to 45 seconds. Older drafts are discarded at once.
+- **`draft`/`reply` can come back without an `id`.** If Mail is slow to file the
+  draft, the result carries a `note` instead, and that draft can only be
+  deleted in Mail.
 - **`discard` works on iCloud, Gmail and other IMAP accounts only.** Those are
   the kinds it has been shown to hold on, checked again after a sync. Drafts in
   On My Mac or an Exchange account are refused, as is any account set to erase

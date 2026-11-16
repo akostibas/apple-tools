@@ -307,6 +307,8 @@ enum EmailSearch {
         let rowID: Int64
         let mailboxURL: String
         var labelURLs: [String] = []
+        /// When Mail saved or received this row; only filled by `rows(documentID:)`.
+        var date: Date? = nil
     }
 
     /// Look up an RFC Message-ID in the Envelope Index. Returns the ROWID
@@ -393,20 +395,43 @@ enum EmailSearch {
         url.hasPrefix("imap:") && ["Drafts", "[Gmail]/Drafts"].contains(mailboxName(url))
     }
 
-    /// Message-ID header of an index row, in the form `search` reports ids.
-    static func messageIDHeader(rowID: Int64, dbPath: String = defaultDatabasePath) -> String? {
+    /// Mail's id for a message composed here. Unlike the Message-ID, it survives each re-save of a draft.
+    static func documentID(rowID: Int64, dbPath: String = defaultDatabasePath) -> UUID? {
         guard let db = try? openReadOnly(dbPath) else { return nil }
         defer { sqlite3_close(db) }
         var stmt: OpaquePointer?
-        let sql = """
-        SELECT g.message_id_header FROM messages m
-        JOIN message_global_data g ON g.ROWID = m.global_message_id WHERE m.ROWID = ?
-        """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return nil }
+        guard sqlite3_prepare_v2(db, "SELECT document_id FROM messages WHERE ROWID = ?", -1, &stmt, nil) == SQLITE_OK,
+              let stmt = stmt else { return nil }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_int64(stmt, 1, rowID)
-        guard sqlite3_step(stmt) == SQLITE_ROW, let id = columnString(stmt, 0), !id.isEmpty else { return nil }
-        return id
+        guard sqlite3_step(stmt) == SQLITE_ROW, sqlite3_column_bytes(stmt, 0) == 16,
+              let bytes = sqlite3_column_blob(stmt, 0) else { return nil }
+        return NSUUID(uuidBytes: bytes.assumingMemoryBound(to: UInt8.self)) as UUID
+    }
+
+    /// Every live row with this document id, newest first. A sent copy keeps its draft's id,
+    /// so callers must still check which mailbox each row is in.
+    static func rows(documentID: UUID, dbPath: String = defaultDatabasePath) throws -> [MessageLocation] {
+        let db = try openReadOnly(dbPath)
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        let sql = """
+        SELECT m.ROWID, mb.url, m.date_received FROM messages m JOIN mailboxes mb ON mb.ROWID = m.mailbox
+        WHERE m.document_id = ? AND m.deleted = 0 ORDER BY m.ROWID DESC
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else {
+            throw SearchError.sqlFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+        let SQLITE_TRANSIENT = unsafeBitCast(OpaquePointer(bitPattern: -1), to: sqlite3_destructor_type.self)
+        var raw = documentID.uuid
+        withUnsafeBytes(of: &raw) { _ = sqlite3_bind_blob(stmt, 1, $0.baseAddress, 16, SQLITE_TRANSIENT) }
+        var out: [MessageLocation] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            out.append(MessageLocation(rowID: sqlite3_column_int64(stmt, 0), mailboxURL: columnString(stmt, 1) ?? "",
+                                       date: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 2)))))
+        }
+        return out
     }
 
     /// Gmail stores each message once (All Mail); INBOX and user folders are rows in `labels`.
