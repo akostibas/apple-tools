@@ -51,7 +51,7 @@ temp dir).
 
 These actions change state or are visible to others. Confirm with the user in
 chat before running them: `imessage send`, `email draft` (creates a draft),
-`calendar create`/`update`/`delete`, `reminders create`/`update`/`delete`/`complete`, `notes create`/`append`/`move`/`delete`/`rename-folder`, `contacts create`/`update`,
+`calendar create`/`update`/`delete`, `reminders create`/`update`/`delete`/`complete`, `notes create`/`append`/`move`/`delete`/`rename-folder`, `contacts create`/`update`/`delete`,
 `clipboard write`, `open_uri`. (`--confirm` additionally pops a native
 Allow/Deny dialog; off by default.)
 
@@ -71,7 +71,7 @@ Allow/Deny dialog; off by default.)
   missing path segments are created nested. `append` rewrites the whole note:
   it refuses notes with images/files/tables/mentions/hashtags, and may restyle
   titles and checklists elsewhere in the note.
-- **contacts** — `search` (name/email/phone/group), `read` (by ID, incl. `accounts`), `create` (refuses duplicates; optional `--account`), `update` (set fields; add/remove one phone, email, URL, or address per call).
+- **contacts** — `search` (name/email/phone/group), `read` (by ID, incl. `accounts`), `create` (refuses duplicates; optional `--account`), `update` (set fields; add/remove one phone, email, URL, or address per call), `delete` (by ID; permanent, one contact per call).
 - **email** — `inbox`, `search`, `read`, `headers` (all or `--names`, no body), `fetch_attachment`, `mailboxes`, `move` (not Gmail), `draft` (does NOT
   send; supports attachments by absolute path).
 - **imessage** — `list`, `read`, `search`, `send` (iMessage/SMS; supports
