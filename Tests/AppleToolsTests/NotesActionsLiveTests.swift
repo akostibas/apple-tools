@@ -3,9 +3,9 @@ import XCTest
 
 /// Live tests for the Notes actions not covered by NotesLiveTests /
 /// NotesSearchLiveTests: folders, list, append, move, delete, rename-folder.
-/// Skipped unless APPLE_TOOLS_NOTES_LIVE=1. Run with:
+/// Opt-in. Run with:
 ///
-///     APPLE_TOOLS_NOTES_LIVE=1 swift test --filter NotesActionsLiveTests
+///     bin/check --slow --tool notes
 ///
 /// Scripted folder deletes don't stick in iCloud (the folder comes back), so the
 /// suite reuses three fixed folders and only ever deletes notes. Locked notes
@@ -20,8 +20,7 @@ final class NotesActionsLiveTests: XCTestCase {
     private let renamedB = "AppleToolsLive B renamed"
 
     override func setUpWithError() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["APPLE_TOOLS_NOTES_LIVE"] == "1",
-                          "set APPLE_TOOLS_NOTES_LIVE=1 to run live Notes tests")
+        try LiveTest.writes("notes", "folders", "list", "create", "append", "move", "delete", "rename-folder")
     }
 
     override func tearDown() {

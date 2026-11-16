@@ -100,3 +100,10 @@ apple-tools notes rename-folder --folder "Misc" --name "Archive"
 - **`read` folder resolution is a linear scan.** The note's folder is found by
   scanning every folder for the note id and reports `"unknown"` if none contains
   it, which can be slow on large stores.
+
+## Testing gaps
+
+What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+
+- **Test folders are left behind.** The slow suite reuses `AppleToolsLive A/B/C` and `AppleToolsFmtLive`, because a scripted folder delete comes back through iCloud.
+- **Locked notes** can't be created by script, so their refusal is untested.

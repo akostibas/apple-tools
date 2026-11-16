@@ -79,3 +79,10 @@ apple-tools --root "samlexi=$HOME/Library/Mobile Documents/com~apple~CloudDocs/s
   resolve symlink targets. A symlink whose name lives under a root passes
   the guard, and `FileManager` follows it — so a link inside a root pointing
   elsewhere can list/read/fetch content that physically lives outside the tree.
+
+## Testing gaps
+
+What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+
+- **Search depends on Spotlight.** A file Spotlight hasn't indexed looks the same as a broken search, so an empty result is reported as "nothing to check".
+- **Only the top level of `~/Documents`** is sampled; extra roots are not.

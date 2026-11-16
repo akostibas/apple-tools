@@ -89,3 +89,9 @@ apple-tools reminders delete --id <id>
   lists, but `create` silently uses the *first* match. Likewise `create-list
   --account` matches source titles case-insensitively.
 ```
+
+## Testing gaps
+
+What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+
+- **None known.** The slow suite covers every action and removes what it creates, including the test list.

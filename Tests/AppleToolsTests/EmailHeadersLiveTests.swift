@@ -2,13 +2,14 @@ import XCTest
 @testable import AppleToolsLib
 
 /// Reads one real message's headers from disk and via Mail.app; both must agree.
-/// Mail must be running. Skipped unless given a Message-ID that's on disk:
-///
-///     APPLE_TOOLS_EMAIL_LIVE_ID='<id@host>' swift test --filter EmailHeadersLiveTests
-final class EmailHeadersLiveTests: XCTestCase {
+/// Read-only; uses the newest inbox message. Run with `bin/check --tool email`.
+final class EmailHeadersLiveTests: ReadOnlyCase {
     func testAppleScriptFallbackMatchesDisk() throws {
-        guard let id = ProcessInfo.processInfo.environment["APPLE_TOOLS_EMAIL_LIVE_ID"] else {
-            throw XCTSkip("set APPLE_TOOLS_EMAIL_LIVE_ID to run live email header tests")
+        try LiveTest.reads("email", "headers")
+        try requireRunning("Mail")
+        let inbox = rows(try call(EmailTool(host: host), ["action": "inbox", "limit": 1]), "messages")
+        guard let id = inbox.first?["id"] as? String else {
+            throw XCTSkip("no inbox message to check. Either this Mac has none or the lookup is broken: open Mail and see whether it shows any.")
         }
         let loc = try XCTUnwrap(EmailSearch.resolveMessageID(id), "id not in Envelope Index")
         let path = try XCTUnwrap(EmailMessage.emlxPath(rowID: loc.rowID, mailboxURL: loc.mailboxURL), "not on disk")

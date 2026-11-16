@@ -15,8 +15,9 @@ on that date, and behaved correctly.* It does **not** guarantee:
   row is pinned to a commit for exactly this reason),
 - anything about tools/rows marked **not recorded** (just untested, not known-broken).
 
-When you verify a tool on a new OS or after nontrivial changes, add/update its
-row with the current `apple-tools --version`, `git rev-parse --short HEAD`,
+Verify with `bin/check` (add `--slow` to exercise writes) and say in the row's
+Notes which groups ran; a skipped test is not a pass. Then add/update the row
+with the current `apple-tools --version`, `git rev-parse --short HEAD`,
 `sw_vers`, and today's date.
 
 Every registered tool must have a row here (enforced by
@@ -48,6 +49,25 @@ and stop being read.
 | voicememos | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `list` and `search` over the real store; schema still recognized. Export and transcribe NOT exercised. |
 | echo | n/a | n/a | n/a | n/a | Diagnostic tool; no OS interaction. |
 | open_uri | — | — | not recorded | — | Not exercised on 27 (side-effecting: opens a real URI). |
+
+## What a verified row can't prove
+
+One line per tool; each tool's page has the detail under *Testing gaps*.
+
+- **calendar**: create, update and delete have no live test yet.
+- **clipboard**: no known gap.
+- **contacts**: a read-only account's refusal can't be tested without such an account.
+- **documents**: an unindexed file looks the same as a broken Spotlight search.
+- **email**: received mail can't be planted; draft, reply and move are untested; skipped while Mail is closed.
+- **imessage**: history can't be planted; send is untested and would leave a message behind.
+- **media**: nothing can be planted, so an empty list is undecidable on a new Mac.
+- **music**: play history can't be planted; playback controls need the attended group; skipped while Music is closed.
+- **notes**: test folders are left behind; locked-note refusals are untested.
+- **open_uri**: no live test; attended only.
+- **photos**: keyword search can't be planted; import is untested because the photo can't be removed.
+- **reminders**: no known gap.
+- **screenshot**: skipped unless Screen Recording is already granted.
+- **voicememos**: nothing can be planted, so an empty list is undecidable on a new Mac.
 
 ## macOS 27 upgrade — what moved
 

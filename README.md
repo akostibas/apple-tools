@@ -184,35 +184,17 @@ OSLog subsystem.
 
 ```bash
 make build      # release build
-make test       # unit tests (live Notes tests gated behind APPLE_TOOLS_NOTES_LIVE=1)
+bin/check       # unit tests, then read-only checks against this Mac's real data
+bin/check --slow   # also create, read back and remove labeled test data
 ```
 
-### Verifying against a new macOS
+`bin/check` reports each group separately, because they fail for different
+reasons. A unit failure means the code is wrong. A read-only failure means items
+this Mac had on an earlier run can no longer be found: either Apple moved a data
+store (macOS 27 did this to podcast history and photo search, silently) or you
+removed them. Only you can say which, so look in the app itself.
 
-Unit tests run against fixtures, which are copies of the schema we already
-believe in — so they cannot tell you that Apple moved a data store. When that
-happens the tool typically returns an **empty result with a success exit code**,
-which looks exactly like "you genuinely have none of these". macOS 27 broke
-podcast history and photo keyword search this way, and `apple-tools permissions`
-reported everything healthy throughout.
-
-```bash
-cp verify-macos.example.json verify-macos.json   # once
-bin/verify-macos --record                        # capture a baseline you trust
-bin/verify-macos                                 # after a macOS upgrade
-```
-
-`verify-macos` runs every read-only tool against your real data and compares the
-result counts with the last run you confirmed was good. A count that was always
-zero stays quiet; one that **collapsed** gets raised. It never writes anything,
-and it never re-baselines unless you pass `--record`.
-
-Exit 1 means something needs a person — the suite can't tell "Apple moved the
-store" from "you deleted those podcasts". Open the app, run the same search, and
-see whether it finds what we couldn't.
-
-`verify-macos.json` is deliberately not committed: the counts describe how much
-personal data you have, and the search terms only mean something against your
-own library. A session-start hook (`bin/macos-compat-status`) notices when
-you're on a macOS build that has no row in
-[COMPATIBILITY.md](docs/tools/COMPATIBILITY.md) and suggests this.
+See [Tests/README.md](Tests/README.md) for the groups, what each one touches,
+and what it leaves behind. A session-start hook (`bin/macos-compat-status`)
+suggests a run when you're on a macOS build with no row in
+[COMPATIBILITY.md](docs/tools/COMPATIBILITY.md).

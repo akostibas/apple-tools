@@ -77,3 +77,10 @@ apple-tools contacts update --id "<CONTACT-ID>" --remove_phone "415 555 0101" --
   `searchByEmailOrPhone`, and `contactIDsInMatchingGroups` all swallow framework
   errors and return empty — a failed name predicate or group lookup looks
   identical to "no matches" rather than surfacing an error.
+
+## Testing gaps
+
+What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+
+- **Create and update have a live suite; a contact in a read-only account can't be tested** on a Mac that has no such account.
+- **Search by phone and by group** are not checked against real data; the read-only group searches by name.

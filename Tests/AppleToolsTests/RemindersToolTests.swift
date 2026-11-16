@@ -189,8 +189,7 @@ final class RemindersToolTests: XCTestCase {
 
     /// These write to the user's real Reminders, so they're opt-in like RemindersLiveTests.
     private func requireLive() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["APPLE_TOOLS_REMINDERS_LIVE"] == "1",
-                          "set APPLE_TOOLS_REMINDERS_LIVE=1 to run tests that create reminders")
+        try LiveTest.writes("reminders", "create", "complete")
     }
 
     private func deleteReminder(_ id: String) {

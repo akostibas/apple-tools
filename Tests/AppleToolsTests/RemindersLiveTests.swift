@@ -1,19 +1,18 @@
 import XCTest
 @testable import AppleToolsLib
 
-/// Live round-trip tests against the real Reminders store. Skipped unless
-/// APPLE_TOOLS_REMINDERS_LIVE=1, because they create and delete reminders in
+/// Live round-trip tests against the real Reminders store. Opt-in, because they create and delete reminders in
 /// the default list. Run with:
 ///
-///     APPLE_TOOLS_REMINDERS_LIVE=1 swift test --filter RemindersLiveTests
+///     bin/check --slow --tool reminders
 final class RemindersLiveTests: XCTestCase {
 
     private let tool = RemindersTool()
     private var created: [String] = []
 
     override func setUpWithError() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["APPLE_TOOLS_REMINDERS_LIVE"] == "1",
-                          "set APPLE_TOOLS_REMINDERS_LIVE=1 to run live Reminders tests")
+        try LiveTest.writes("reminders", "lists", "search", "read", "create", "update", "delete",
+                            "create-list", "complete")
     }
 
     override func tearDown() {

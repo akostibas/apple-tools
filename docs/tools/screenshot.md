@@ -52,3 +52,10 @@ apple-tools permissions   # grant Screen Recording first if capture returns empt
   generic "Screen Recording permission may be required" error rather than a
   system prompt. Run `apple-tools permissions` up front to trigger the TCC
   dialog.
+
+## Testing gaps
+
+What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+
+- **Skipped unless Screen Recording is already granted** to the terminal running the tests; asking would put a system prompt on screen.
+- **Only checks that an image was produced**, not what it shows.

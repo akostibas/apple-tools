@@ -47,3 +47,9 @@ apple-tools open_uri --uri "tel:+15551234567"
 - **Opens exactly one URI, no batching or options.** The only parameter is
   `uri`; there's no way to open multiple links at once or to pass activation
   options (e.g. open in background, hide the window).
+
+## Testing gaps
+
+What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+
+- **No live test.** Opening a URI puts something in front of the user, so it can only be an attended test, which isn't written yet (#79).
