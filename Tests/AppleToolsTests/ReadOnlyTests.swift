@@ -68,18 +68,7 @@ class ReadOnlyCase: XCTestCase {
         }
     }
 
-    /// Scripting a closed app launches it in front of the user, so those reads wait until it is open.
-    func requireRunning(_ app: String) throws {
-        // pgrep, not NSRunningApplication: its list goes stale in a process with no app run loop.
-        let pgrep = Process()
-        pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        pgrep.arguments = ["-x", app]
-        pgrep.standardOutput = FileHandle.nullDevice
-        try pgrep.run()
-        pgrep.waitUntilExit()
-        try XCTSkipIf(pgrep.terminationStatus != 0,
-                      "\(app) is closed, and these reads would open it. Open \(app) and re-run.")
-    }
+    func requireRunning(_ app: String) throws { try LiveTest.requireRunning(app) }
 }
 
 final class CalendarReadOnlyTests: ReadOnlyCase {

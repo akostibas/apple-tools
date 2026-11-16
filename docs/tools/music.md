@@ -241,4 +241,4 @@ What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/RE
 - **Play history and the library can't be planted.** `stats`, `mix` and `search` are checked against remembered tracks only.
 - **Reads are skipped while Music is closed**, because scripting it would open it.
 - **Playback controls** (play, pause, skip, seek, volume, shuffle, repeat, AirPlay) change what you hear, so they belong in the attended group and have no test yet (#79).
-- **Favorite, rating and playlist actions have no live test yet** (#79, #98).
+- **Favorite, rating, and adding or removing playlist tracks have no live test yet** (#79). Creating and deleting a playlist is covered.

@@ -56,7 +56,7 @@ One line per tool; each tool's page has the detail under *Testing gaps*.
 
 - **calendar**: create, update and delete have no live test yet.
 - **clipboard**: no known gap.
-- **contacts**: a read-only account's refusal can't be tested without such an account.
+- **contacts**: refusals for read-only accounts and cards spanning two accounts can't be tested without such contacts.
 - **documents**: an unindexed file looks the same as a broken Spotlight search.
 - **email**: received mail can't be planted; draft, reply and move are untested; skipped while Mail is closed.
 - **imessage**: history can't be planted; send is untested and would leave a message behind.

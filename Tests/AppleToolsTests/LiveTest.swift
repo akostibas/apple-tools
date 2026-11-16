@@ -29,6 +29,19 @@ enum LiveTest {
         try gate(attendedVar, tool: tool, hint: "bin/check --attended")
     }
 
+    /// Scripting a closed app launches it in front of the user, so tests that script one wait until it is open.
+    static func requireRunning(_ app: String) throws {
+        // pgrep, not NSRunningApplication: its list goes stale in a process with no app run loop.
+        let pgrep = Process()
+        pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        pgrep.arguments = ["-x", app]
+        pgrep.standardOutput = FileHandle.nullDevice
+        try pgrep.run()
+        pgrep.waitUntilExit()
+        try XCTSkipIf(pgrep.terminationStatus != 0,
+                      "\(app) is closed, and this test would open it. Open \(app) and re-run.")
+    }
+
     static func skipReason(env: [String: String], flag: String, tool: String, hint: String) -> String? {
         guard env[flag] == "1" else { return "live \(tool) tests are opt-in: run \(hint)" }
         if let only = env[toolsVar], !only.isEmpty,

@@ -91,5 +91,5 @@ apple-tools contacts delete --id "<CONTACT-ID>"
 
 What `bin/check` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
-- **Create and update have a live suite; a contact in a read-only account can't be tested** on a Mac that has no such account.
+- **A contact in a read-only account can't be tested** on a Mac that has no such account, so that refusal is unproven. The same goes for a contact whose cards span two accounts.
 - **Search by phone and by group** are not checked against real data; the read-only group searches by name.
