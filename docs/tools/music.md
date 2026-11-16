@@ -100,6 +100,16 @@ the iCloud-revert caveat: a read-back can pass and still revert on a later sync.
   already in your library can be added (see *Shortcomings*).
 - **playlist-remove** — `--name <n> --query <q>` removes the first matching track
   from the playlist; `verified` is the count going down.
+- **playlist-delete** — `--name <n>` deletes a playlist you made, along with its
+  track list. The songs stay in your library. `verified` is the playlist being
+  gone when checked. It cannot be undone, so it refuses, deleting nothing, when:
+  - the playlist is a smart playlist, a subscribed Apple Music playlist, a
+    playlist folder, or one of Music's built-in playlists;
+  - more than one playlist has that name (rename one in Music first);
+  - it can't confirm the playlist is a plain one you made.
+
+  A name that matches nothing reports `no playlist named: <n>`. The name must
+  match in full (upper/lower case is ignored).
 - **airplay-list** — list AirPlay output devices (`name`, `selected`, `kind`,
   per-device `volume`). Read-only.
 - **airplay-select** — `--device <name>` (exact match) routes output to that
@@ -149,6 +159,7 @@ apple-tools music rate --stars 5 --query "chariots of fire"
 apple-tools music playlist-create --name "Road Trip"
 apple-tools music playlist-add --name "Road Trip" --query "hey jude"
 apple-tools music playlist-remove --name "Road Trip" --query "hey jude"
+apple-tools music playlist-delete --name "Road Trip"
 apple-tools music airplay-list
 apple-tools music airplay-select --device "Living Room"
 ```
