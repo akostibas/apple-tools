@@ -44,6 +44,7 @@ It removes what it creates, even when a test fails. The exceptions:
 
 - **Notes:** three folders named `AppleToolsLive A/B/C` and `AppleToolsFmtLive`
   stay, empty. A scripted folder delete comes back through iCloud.
+- **Email:** the test draft ends up in the account's Trash, not erased.
 
 ## Adding an action
 

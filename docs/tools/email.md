@@ -118,4 +118,5 @@ What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/RE
 
 - **Received mail can't be planted.** If a read comes back empty, only the remembered messages or a look in Mail can tell "none" from "broken".
 - **Reads are skipped while Mail is closed**, because reading the inbox would open it (#84).
-- **Draft, reply, move and attachment fetch have no live test yet** (#79, #99).
+- **Reply, move and attachment fetch have no live test yet** (#79). A reply test would have to reply to one of your real messages.
+- **The draft test leaves its draft in Trash**, labeled `apple-tools live test`, and takes about a minute because a fresh draft can't be discarded quickly.

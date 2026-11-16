@@ -58,7 +58,7 @@ One line per tool; each tool's page has the detail under *Testing gaps*.
 - **clipboard**: no known gap.
 - **contacts**: refusals for read-only accounts and cards spanning two accounts can't be tested without such contacts.
 - **documents**: an unindexed file looks the same as a broken Spotlight search.
-- **email**: received mail can't be planted; draft, reply and move are untested; skipped while Mail is closed.
+- **email**: received mail can't be planted; reply and move are untested; skipped while Mail is closed.
 - **imessage**: history can't be planted; send is untested and would leave a message behind.
 - **media**: nothing can be planted, so an empty list is undecidable on a new Mac.
 - **music**: play history can't be planted; playback controls need the attended group; skipped while Music is closed.
