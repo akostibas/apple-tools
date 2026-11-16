@@ -46,3 +46,9 @@ apple-tools media list --hours 168 --limit 10
 - **Streaming music wouldn't appear anyway** (and isn't included here): Apple
   Music streams don't update local play history. That's a `music`-tool concern,
   noted only so the "why isn't X here" is clear.
+
+## Testing gaps
+
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+
+- **Nothing can be planted.** Podcasts and Books can't be written to, so if the list comes back empty only the remembered titles or a look in those apps can tell "none" from "broken". On a new Mac there is no way to tell from here.

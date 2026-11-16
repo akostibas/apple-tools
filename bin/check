@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+#
+# check — runs groups of tests and reports each separately, because they fail
+# for different reasons. Normally reached through the Makefile (`make test`,
+# `make test-slow`, ...); see Tests/README.md.
+#
+#   unit       fixtures only. A failure means our code is wrong.
+#   read-only  reads this Mac's real data, changes nothing. A failure means a
+#              store moved, or your data changed. Only you can say which.
+#   slow       creates labeled test data, reads it back, removes it. Nothing
+#              appears on screen.
+#   attended   tests that put a window or dialog in front of you.
+#
+# Usage:
+#   check                  unit + read-only (the default)
+#   check --unit           unit only (what pre-commit runs)
+#   check --slow           unit + read-only + slow
+#   check --attended       also run the attended tests (implies --slow)
+#   check --tool NAME      limit the live groups to one tool (repeatable, or a,b); skips unit
+#   check --refresh        re-discover the read-only group's remembered items.
+#                          Only after you have confirmed the data really changed.
+#
+# The read-only group remembers what it found in
+# ~/Library/Application Support/apple-tools/live-targets.json (never committed).
+
+set -uo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root" || exit 2
+
+unit=1; read_only=1; slow=0; attended=0; refresh=0; tools=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --unit) read_only=0; shift ;;
+    --slow) slow=1; shift ;;
+    --attended) slow=1; attended=1; shift ;;
+    --refresh) refresh=1; shift ;;
+    --tool) [ -n "${2:-}" ] || { echo "check: --tool needs a tool name" >&2; exit 2; }
+            tools="${tools:+$tools,}$2"; unit=0; shift 2 ;;
+    -h|--help) sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "check: unknown argument '$1' (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+if [ -n "$tools" ]; then
+  # Every tool has a doc page, so the doc folder is the tool list. A typo must not pass as "all skipped".
+  known="$(find docs/tools -name '*.md' ! -name README.md ! -name COMPATIBILITY.md -exec basename {} .md \; | sort | tr '\n' ' ')"
+  for t in ${tools//,/ }; do
+    case " $known " in
+      *" $t "*) ;;
+      *) echo "check: no tool named '$t'. Tools: $known" >&2; exit 2 ;;
+    esac
+  done
+fi
+
+echo "check — macOS $(sw_vers -productVersion) ($(sw_vers -buildVersion)), apple-tools $(git rev-parse --short HEAD 2>/dev/null)"
+[ -n "$tools" ] && echo "limited to: $tools"
+echo ""
+
+failed=0
+summary=""
+
+# xcrun: the Xcode toolchain is the one that matches the installed SDK (ADR-0004).
+run_group() {
+  local name="$1"; shift
+  local log; log="$(mktemp -t apple-tools-check)"
+  echo "== $name"
+  "$@" >"$log" 2>&1
+  local rc=$?
+  local totals; totals="$(grep -E 'Executed [0-9]+ tests?' "$log" | tail -1 | sed 's/^[[:space:]]*//')"
+  if [ "$name" != "unit" ]; then
+    # A skip in a live group is information: nothing to check, or an app is closed.
+    # Skips that only say "this test belongs to another group" are left out.
+    grep -E 'Test skipped - ' "$log" | grep -vE 'are opt-in: run|not selected \(|set APPLE_TOOLS_' | sed -E 's/^.*-\[AppleToolsTests\.([A-Za-z]+) ([A-Za-z_]+)\] : Test skipped - /  · \1: /' | sort -u
+  fi
+  grep -E ': error: ' "$log" | sed -E 's/^.*-\[AppleToolsTests\.([A-Za-z]+) ([A-Za-z_]+)\] : /  ✗ \1.\2: /'
+  if [ $rc -ne 0 ]; then
+    [ -n "$totals" ] || tail -20 "$log"
+    echo "  FAILED — ${totals:-did not run}"
+    echo "  full log: $log"
+    failed=$((failed + 1))
+    summary="$summary\n  ✗ $name: ${totals:-did not run}"
+  else
+    echo "  ok — $totals"
+    rm -f "$log"
+    summary="$summary\n  ✓ $name: $totals"
+  fi
+  echo ""
+}
+
+live_filter='(ReadOnly|Live)Tests'
+
+if [ "$unit" -eq 1 ]; then
+  run_group "unit" env -u APPLE_TOOLS_LIVE_READ -u APPLE_TOOLS_LIVE_WRITE -u APPLE_TOOLS_LIVE_ATTENDED xcrun swift test
+fi
+if [ "$read_only" -eq 1 ]; then
+  run_group "read-only" env APPLE_TOOLS_LIVE_READ=1 APPLE_TOOLS_LIVE_TOOLS="$tools" \
+    APPLE_TOOLS_LIVE_REFRESH="$refresh" xcrun swift test --filter "$live_filter"
+fi
+if [ "$slow" -eq 1 ]; then
+  run_group "slow" env APPLE_TOOLS_LIVE_WRITE=1 APPLE_TOOLS_LIVE_TOOLS="$tools" \
+    xcrun swift test --filter "$live_filter"
+fi
+if [ "$attended" -eq 1 ]; then
+  run_group "attended" env APPLE_TOOLS_LIVE_ATTENDED=1 APPLE_TOOLS_LIVE_TOOLS="$tools" \
+    xcrun swift test --filter "$live_filter"
+fi
+
+printf 'Summary:%b\n' "$summary"
+
+if [ "$failed" -gt 0 ]; then
+  cat <<'EOF'
+
+Agent: a unit failure is a code defect; fix it. A read-only failure is NOT
+proof of breakage: it means items this Mac had before can no longer be found.
+Ask the user to look for them in the app itself. If the app shows them and we
+do not, that is a real breakage worth an issue. If the user removed them,
+run `make test-refresh`. Do not record this macOS build as verified until then.
+EOF
+  exit 1
+fi
+
+if [ "$read_only" -eq 1 ] && [ -z "$tools" ]; then
+  echo ""
+  echo "Agent: if every group you ran is green, record this macOS build in docs/tools/COMPATIBILITY.md,"
+  echo "noting which groups were run. A skipped test is not a pass."
+fi
+exit 0

@@ -15,8 +15,9 @@ on that date, and behaved correctly.* It does **not** guarantee:
   row is pinned to a commit for exactly this reason),
 - anything about tools/rows marked **not recorded** (just untested, not known-broken).
 
-When you verify a tool on a new OS or after nontrivial changes, add/update its
-row with the current `apple-tools --version`, `git rev-parse --short HEAD`,
+Verify with `make test` (add `--slow` to exercise writes) and say in the row's
+Notes which groups ran; a skipped test is not a pass. Then add/update the row
+with the current `apple-tools --version`, `git rev-parse --short HEAD`,
 `sw_vers`, and today's date.
 
 Every registered tool must have a row here (enforced by
@@ -33,21 +34,40 @@ and stop being read.
 
 | Tool | apple-tools | Commit | macOS | Verified | Notes |
 |------|-------------|--------|-------|----------|-------|
-| calendar | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `calendars` and `list` over a real multi-calendar setup (CalDAV + shared). No drift from 26. |
-| clipboard | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `read` against an empty and a populated pasteboard. No drift from 26. |
-| contacts | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `search` over the real address book. No drift from 26. |
-| documents | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | Spotlight-backed `search`. No drift from 26. |
-| email | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `inbox` and `search` against live Mail. Store-version globbing (v0.26.0) holds on 27. Draft/reply/send NOT exercised. |
-| imessage | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `recent` and `search` over the real `chat.db`. Contact resolution and spam classification intact. `send` NOT exercised. |
+| calendar | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: `calendars`, `list` and `search` find remembered calendars and events. Create, update and delete NOT exercised. |
+| clipboard | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only and slow groups green: `read`, and `write` read back with the previous contents restored. |
+| contacts | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only and slow groups green: `search`, `read`, `create`, `update`, `delete` against the real address book (iCloud account only). |
+| documents | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: `list`, `info`, `fetch` and Spotlight `search` over `~/Documents`. |
+| email | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green with Mail open: `inbox`, `read`, `headers`, `mailboxes`, `search` by sender. Slow group green: `draft` (no window) then `discard`. Reply, move and attachment fetch NOT exercised. |
+| imessage | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: `list`, `read`, `stats`, `search` over the real `chat.db`. `send` and attachment fetch NOT exercised. |
 | media | 0.34.0 | 1e22516 | 27.2.1 (26B131) | 2026-11-16 | `list` over the real Podcasts store returned recent episodes with duration and progress; not cross-checked against the Podcasts app. The 27.0 duration probe still holds. #94 ("schema unrecognized" on 27.2 26B123) did not reproduce here and is treated as a locked store: locks are now waited out and reported as busy. Books also read (98 items over a long window). |
-| music | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `now-playing`, `search`, `stats`, `mix` verified. The 26 `loved`→`favorited` fallback still holds. Playback control (play/pause/next) NOT re-exercised on 27. |
-| notes | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `folders` (63 folders, nested paths) and `search`. No drift from 26. Create/append NOT exercised. |
-| photos | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | **Broke on 27 and was fixed.** macOS 27 deleted `psi.sqlite`; keyword search now reads its replacement, `leo.sqlite`. Verified by fetching matches for `dog` and `beach` and confirming the images. Listing, `--person`, `--album`, `--match filename` unaffected. |
-| reminders | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `lists` and `search`, including parent/subtask nesting. No drift from 26. |
-| screenshot | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | Capture to the output dir. No drift from 26. |
-| voicememos | 0.26.1 | 5504294 | 27.0 (26A428) | 2026-09-15 | `list` and `search` over the real store; schema still recognized. Export and transcribe NOT exercised. |
+| music | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green with Music open: `now-playing`, `search`, `stats`, `mix`, `airplay-list`. Slow group green: playlist create and delete. Playback control, favorite, rating and playlist tracks NOT exercised. |
+| notes | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: `folders`, `list`, `search`, `read`. Slow group: create, append, move, delete and rename-folder pass, but **a Markdown heading reads back as bold** (#100). |
+| photos | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: keyword search over common subjects, people search, `fetch`. The 27.0 `leo.sqlite` reading still holds. Import NOT exercised (#97). |
+| reminders | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only and slow groups green: every action, including subtasks, repeat rules and a test list that is removed afterwards. |
+| screenshot | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: a capture produced an image. |
+| voicememos | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: `folders`, `list`, `search`, `export`, `transcribe` over the real store. |
 | echo | n/a | n/a | n/a | n/a | Diagnostic tool; no OS interaction. |
 | open_uri | — | — | not recorded | — | Not exercised on 27 (side-effecting: opens a real URI). |
+
+## What a verified row can't prove
+
+One line per tool; each tool's page has the detail under *Testing gaps*.
+
+- **calendar**: create, update and delete have no live test yet.
+- **clipboard**: no known gap.
+- **contacts**: refusals for read-only accounts and cards spanning two accounts can't be tested without such contacts.
+- **documents**: an unindexed file looks the same as a broken Spotlight search.
+- **email**: received mail can't be planted; reply and move are untested; skipped while Mail is closed.
+- **imessage**: history can't be planted; send is untested and would leave a message behind.
+- **media**: nothing can be planted, so an empty list is undecidable on a new Mac.
+- **music**: play history can't be planted; playback controls need the attended group; skipped while Music is closed.
+- **notes**: test folders are left behind; locked-note refusals are untested.
+- **open_uri**: no live test; attended only.
+- **photos**: keyword search can't be planted; import is untested because the photo can't be removed.
+- **reminders**: no known gap.
+- **screenshot**: skipped unless Screen Recording is already granted.
+- **voicememos**: nothing can be planted, so an empty list is undecidable on a new Mac.
 
 ## macOS 27 upgrade — what moved
 

@@ -3,18 +3,17 @@ import XCTest
 
 /// Live tests against the real Voice Memos store. The tool is read-only, so
 /// these only read; exports and transcripts go to a temp dir that's removed.
-/// Skipped unless APPLE_TOOLS_VOICEMEMOS_LIVE=1, and need at least one
+/// Opt-in, and need at least one
 /// downloaded recording:
 ///
-///     APPLE_TOOLS_VOICEMEMOS_LIVE=1 swift test --filter VoiceMemosLiveTests
+///     make test TOOL=voicememos
 final class VoiceMemosLiveTests: XCTestCase {
 
     private var outDir: String!
     private var tool: VoiceMemosTool!
 
     override func setUpWithError() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["APPLE_TOOLS_VOICEMEMOS_LIVE"] == "1",
-                          "set APPLE_TOOLS_VOICEMEMOS_LIVE=1 to run live Voice Memos tests")
+        try LiveTest.reads("voicememos", "folders", "list", "search", "export", "transcribe")
         outDir = NSTemporaryDirectory() + "vm-live-" + UUID().uuidString
         try FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
         tool = VoiceMemosTool(host: .test(fileSink: LocalFileSink(outputDir: outDir)))
@@ -37,8 +36,10 @@ final class VoiceMemosLiveTests: XCTestCase {
     private func shortest() throws -> [String: Any] {
         let all = recordings(try call(["action": "list", "all": true]))
         let local = all.filter { $0["available"] as? Bool != false }
-        return try XCTUnwrap(local.min { ($0["duration_seconds"] as? Double ?? 0) < ($1["duration_seconds"] as? Double ?? 0) },
-                             "need at least one downloaded recording")
+        guard let rec = local.min(by: { ($0["duration_seconds"] as? Double ?? 0) < ($1["duration_seconds"] as? Double ?? 0) }) else {
+            throw XCTSkip("no downloaded recording to check. Either this Mac has none or the lookup is broken: open Voice Memos and see whether it shows any.")
+        }
+        return rec
     }
 
     func testFoldersAgreeWithList() throws {

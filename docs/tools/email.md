@@ -111,3 +111,12 @@ only reachable through the plain `content` property — which, on Exchange/Outlo
 HTML replies, reads empty and silently discards writes, so drafted text never
 lands. Setting `html content` at *creation* time (our approach) is the reliable
 path, at the cost of the threading headers above.
+
+## Testing gaps
+
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+
+- **Received mail can't be planted.** If a read comes back empty, only the remembered messages or a look in Mail can tell "none" from "broken".
+- **Reads are skipped while Mail is closed**, because reading the inbox would open it (#84).
+- **Reply, move and attachment fetch have no live test yet** (#79). A reply test would have to reply to one of your real messages.
+- **The draft test leaves its draft in Trash**, labeled `apple-tools live test`, and takes about a minute because a fresh draft can't be discarded quickly.

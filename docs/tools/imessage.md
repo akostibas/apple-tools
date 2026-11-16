@@ -86,3 +86,11 @@ apple-tools imessage send --to "+16502530000" --text "On my way" --attachments ~
   `(smsfp)`/`(smsft)` SMS-filter suffixes plus 5–6 digit short codes — a real
   contact match always wins, so anyone in Contacts is never flagged.
 ```
+
+## Testing gaps
+
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+
+- **Message history can't be planted** except by sending, and a sent message can't be removed. The send test is not written yet (#79); it will go to your own number only and leave that message behind.
+- **Search is checked with a handful of common words**, so a Mac whose messages contain none of them reports "nothing to check".
+- **Attachment fetch has no live test yet** (#79).

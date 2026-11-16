@@ -1,21 +1,19 @@
 import XCTest
 @testable import AppleToolsLib
 
-/// Live round-trip tests against the real Notes app. Skipped unless
-/// APPLE_TOOLS_NOTES_LIVE=1, because they create/delete notes and read the
+/// Live round-trip tests against the real Notes app. Opt-in, because they create/delete notes and read the
 /// on-disk store. Run with:
 ///
-///     APPLE_TOOLS_NOTES_LIVE=1 swift test --filter NotesLiveTests
+///     make test-slow TOOL=notes
 ///
 /// These are the "emit Markdown → Notes → read back → compare" checks that
 /// prove fidelity end-to-end (issue).
 final class NotesLiveTests: XCTestCase {
 
-    private var live: Bool { ProcessInfo.processInfo.environment["APPLE_TOOLS_NOTES_LIVE"] == "1" }
     private let folder = "AppleToolsFmtLive"
 
     override func setUpWithError() throws {
-        try XCTSkipUnless(live, "set APPLE_TOOLS_NOTES_LIVE=1 to run live Notes tests")
+        try LiveTest.writes("notes", "create", "read")
     }
 
     override func tearDown() {

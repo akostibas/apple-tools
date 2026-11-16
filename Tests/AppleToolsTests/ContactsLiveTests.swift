@@ -3,9 +3,7 @@ import XCTest
 @testable import AppleToolsLib
 
 /// Live tests against the real Contacts store, using one throwaway contact
-/// created and deleted per test. Skipped unless APPLE_TOOLS_CONTACTS_LIVE=1:
-///
-///     APPLE_TOOLS_CONTACTS_LIVE=1 xcrun swift test --filter ContactsLiveTests
+/// created and deleted per test. Run with `make test-slow TOOL=contacts`.
 final class ContactsLiveTests: XCTestCase {
 
     private let tool = ContactsTool()
@@ -15,8 +13,7 @@ final class ContactsLiveTests: XCTestCase {
     private static let testName = "apple-tools live test"
 
     override func setUpWithError() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["APPLE_TOOLS_CONTACTS_LIVE"] == "1",
-                          "set APPLE_TOOLS_CONTACTS_LIVE=1 to run live Contacts tests")
+        try LiveTest.writes("contacts", "search", "read", "create", "update", "delete")
         let c = CNMutableContact()
         c.givenName = Self.testName
         c.familyName = marker

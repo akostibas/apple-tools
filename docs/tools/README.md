@@ -49,6 +49,11 @@ apple-tools <tool> <action> …
 - <Honest, concrete limitations and gotchas — the failure modes a user or agent
   will actually hit. This section is required and should never be empty; if a
   tool genuinely has none worth noting, say so explicitly.>
+
+## Testing gaps
+
+- <What `make test` can't prove for this tool, and why: data that can't be
+  planted, artifacts a test leaves behind, actions with no live test.>
 ```
 
 ## Permissions

@@ -2,19 +2,17 @@ import XCTest
 @testable import AppleToolsLib
 
 /// Live, read-only smoke test of store-backed `notes search` against the real
-/// Notes store. Skipped unless APPLE_TOOLS_NOTES_LIVE=1. Proves issue #13's
+/// Notes store. Opt-in. Proves issue #13's
 /// core acceptance criterion on real data: a broad query returns well within
 /// the AppleScript deadline, and full-text is a superset of title-only.
 ///
-///     APPLE_TOOLS_NOTES_LIVE=1 swift test --filter NotesSearchLiveTests
+///     make test TOOL=notes
 ///
 /// Mutation-free (only reads NoteStore.sqlite), so it's safe to run anytime.
 final class NotesSearchLiveTests: XCTestCase {
 
-    private var live: Bool { ProcessInfo.processInfo.environment["APPLE_TOOLS_NOTES_LIVE"] == "1" }
-
     override func setUpWithError() throws {
-        try XCTSkipUnless(live, "set APPLE_TOOLS_NOTES_LIVE=1 to run live Notes search tests")
+        try LiveTest.reads("notes", "search", "read")
     }
 
     /// A broad single-letter query is the exact shape that timed out (60s) on

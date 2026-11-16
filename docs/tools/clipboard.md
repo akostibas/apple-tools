@@ -54,3 +54,9 @@ apple-tools clipboard write --text "https://example.com/page"
   image, or `.string` (e.g. RTF-only, custom app pasteboard types) comes back as
   `type: unknown` with just the raw `pasteboard_types` list — no usable content.
 ```
+
+## Testing gaps
+
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+
+- **None known.** The slow test writes text, reads it back, and restores what was there, including non-text contents.

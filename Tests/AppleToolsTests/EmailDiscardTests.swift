@@ -160,12 +160,10 @@ final class EmailDiscardTests: XCTestCase {
 
 /// Drafts, then discards, one real message addressed to example.com. Mail must be running:
 ///
-///     APPLE_TOOLS_EMAIL_LIVE=1 xcrun swift test --filter EmailDiscardLiveTests
+///     make test-slow TOOL=email
 final class EmailDiscardLiveTests: XCTestCase {
     func testDraftThenDiscard() throws {
-        guard ProcessInfo.processInfo.environment["APPLE_TOOLS_EMAIL_LIVE"] == "1" else {
-            throw XCTSkip("set APPLE_TOOLS_EMAIL_LIVE=1 to run live email tests")
-        }
+        try LiveTest.writes("email", "draft", "discard")
         guard EmailIntegration.isMailRunning() else { throw XCTSkip("Mail is not running; this test never launches it") }
         let tool = EmailTool(host: .test())
         let subject = "apple-tools live test \(UUID().uuidString)"

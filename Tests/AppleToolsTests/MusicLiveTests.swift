@@ -2,10 +2,8 @@ import XCTest
 @testable import AppleToolsLib
 
 /// Live tests against the real Music library. They create one labeled playlist
-/// and delete it; they never touch playback. Skipped unless
-/// APPLE_TOOLS_MUSIC_LIVE=1:
-///
-///     APPLE_TOOLS_MUSIC_LIVE=1 xcrun swift test --filter MusicLiveTests
+/// and delete it; they never touch playback. Run with
+/// `make test-slow TOOL=music`.
 final class MusicLiveTests: XCTestCase {
 
     private let tool = MusicTool()
@@ -13,8 +11,8 @@ final class MusicLiveTests: XCTestCase {
     private var createdByUs = false
 
     override func setUpWithError() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["APPLE_TOOLS_MUSIC_LIVE"] == "1",
-                          "set APPLE_TOOLS_MUSIC_LIVE=1 to run live Music tests")
+        try LiveTest.writes("music", "playlist-create", "playlist-delete")
+        try LiveTest.requireRunning("Music")
     }
 
     override func tearDown() {

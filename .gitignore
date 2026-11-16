@@ -3,4 +3,3 @@
 *.xcodeproj
 DerivedData/
 .DS_Store
-verify-macos.json

@@ -79,3 +79,10 @@ apple-tools voicememos transcribe --id "<RECORDING-ID>" --timestamps --inline
 - **Titles fall back to "Recording."** When a memo has no user title
   (`ZENCRYPTEDTITLE` empty) it's reported and exported as generic "Recording",
   so untitled memos aren't individually distinguishable by title.
+
+## Testing gaps
+
+What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
+
+- **Nothing can be planted.** Voice Memos can't be written to (#62), so with no recordings on this Mac the tests report "nothing to check"; look in Voice Memos to tell "none" from "broken".
+- **Transcription quality isn't judged**, only that a transcript comes back.
