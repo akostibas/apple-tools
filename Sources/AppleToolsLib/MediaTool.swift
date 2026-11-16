@@ -64,6 +64,9 @@ public struct MediaTool: ProbeTool {
         // otherwise a broken store reads as "you played nothing".
         if result.items.isEmpty && !result.unavailable.isEmpty {
             let sources = result.unavailable.joined(separator: ", ")
+            if result.busy == result.unavailable {
+                return ("could not read media source(s): \(sources) — the store is locked by its app right now (it may be syncing or updating); try again shortly. This is not the same as no recent activity", true)
+            }
             return ("could not read media source(s): \(sources) — the store is missing or its schema is unrecognized, so this is not the same as no recent activity", true)
         }
 
@@ -74,6 +77,7 @@ public struct MediaTool: ProbeTool {
         ]
         if !result.unavailable.isEmpty {
             response["unavailable_sources"] = result.unavailable
+            if !result.busy.isEmpty { response["busy_sources"] = result.busy }
         }
         return (jsonString(response) ?? "{}", false)
     }

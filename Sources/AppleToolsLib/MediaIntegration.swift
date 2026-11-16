@@ -101,6 +101,9 @@ public enum MediaIntegration {
     public struct RecentResult {
         public let items: [MediaItem]
         public let unavailable: [String]
+        /// Subset of `unavailable` whose store was locked by its app, not
+        /// unrecognized: retrying shortly works, a code fix does not.
+        public let busy: [String]
     }
 
     /// Everything engaged with in the last `hours`, newest first, capped at
@@ -114,17 +117,21 @@ public enum MediaIntegration {
         let since = now.addingTimeInterval(-Double(hours) * 3600)
         var items: [MediaItem] = []
         var unavailable: [String] = []
+        var busy: [String] = []
 
-        if let podcasts = recentPodcasts(since: since, dbPath: podcastsDBPath ?? Self.podcastsDBPath) {
+        let podcastsPath = podcastsDBPath ?? Self.podcastsDBPath
+        if let podcasts = recentPodcasts(since: since, dbPath: podcastsPath) {
             items += podcasts
         } else {
             unavailable.append("podcast")
+            if isBusy(path: podcastsPath) { busy.append("podcast") }
         }
         if let booksPath = booksDBPath ?? Self.booksDBPath {
             if let books = recentBooks(since: since, dbPath: booksPath) {
                 items += books
             } else {
                 unavailable.append("book")
+                if isBusy(path: booksPath) { busy.append("book") }
             }
         }
 
@@ -132,7 +139,7 @@ public enum MediaIntegration {
         if let limit = limit, limit > 0, items.count > limit {
             items = Array(items.prefix(limit))
         }
-        return RecentResult(items: items, unavailable: unavailable)
+        return RecentResult(items: items, unavailable: unavailable, busy: busy)
     }
 
     // MARK: - Podcasts
@@ -236,7 +243,24 @@ public enum MediaIntegration {
             if let d = db { sqlite3_close(d) }
             return nil
         }
+        // The owning app holds brief write locks; wait them out rather than fail.
+        sqlite3_busy_timeout(db, busyTimeoutMs)
         return db
+    }
+
+    static let busyTimeoutMs: Int32 = 1000
+
+    /// A locked store fails every statement exactly like a reshaped one, so
+    /// ask SQLite directly. Checked after a failed read: a lock that clears
+    /// in between just reads as "unrecognized", the old behavior.
+    static func isBusy(path: String) -> Bool {
+        guard let db = openDB(path: path) else { return false }
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        let rc = sqlite3_prepare_v2(db, "SELECT 1 FROM sqlite_master", -1, &stmt, nil)
+        defer { sqlite3_finalize(stmt) }
+        let code = (rc == SQLITE_OK ? sqlite3_step(stmt) : rc) & 0xFF
+        return code == SQLITE_BUSY || code == SQLITE_LOCKED
     }
 
     /// Confirm a table exposes the columns we read, so a future macOS schema
