@@ -5,19 +5,20 @@ import XCTest
 /// Live tests against the real Contacts store, using one throwaway contact
 /// created and deleted per test. Skipped unless APPLE_TOOLS_CONTACTS_LIVE=1:
 ///
-///     APPLE_TOOLS_CONTACTS_LIVE=1 swift test --filter ContactsLiveTests
+///     APPLE_TOOLS_CONTACTS_LIVE=1 xcrun swift test --filter ContactsLiveTests
 final class ContactsLiveTests: XCTestCase {
 
     private let tool = ContactsTool()
     // Letters only: digits in the marker would phone-match unrelated contacts in search.
     private let marker = "Appletoolslive" + String((0..<6).map { _ in "abcdefghijklmnopqrstuvwxyz".randomElement()! })
     private var fixture: CNMutableContact!
+    private static let testName = "apple-tools live test"
 
     override func setUpWithError() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["APPLE_TOOLS_CONTACTS_LIVE"] == "1",
                           "set APPLE_TOOLS_CONTACTS_LIVE=1 to run live Contacts tests")
         let c = CNMutableContact()
-        c.givenName = "Test"
+        c.givenName = Self.testName
         c.familyName = marker
         c.phoneNumbers = [CNLabeledValue(label: CNLabelPhoneNumberMobile, value: CNPhoneNumber(stringValue: "+1 415 555 0101"))]
         c.emailAddresses = [CNLabeledValue(label: CNLabelWork, value: "\(marker)@example.com" as NSString)]
@@ -28,17 +29,16 @@ final class ContactsLiveTests: XCTestCase {
     private var created: [String] = []
 
     override func tearDown() {
-        if let f = fixture { try? ContactsIntegration.remove(f) }
-        for id in created {
-            if let c = try? ContactsIntegration.contact(byIdentifier: id, keys: []).mutableCopy() as? CNMutableContact {
-                try? ContactsIntegration.remove(c)
-            }
+        for id in [fixture?.identifier].compactMap({ $0 }) + created {
+            let (out, isError) = tool.handle(params: ["action": AnyCodable("delete"), "id": AnyCodable(id)])
+            // Already gone is fine (the delete test removes its own); anything else is a leak.
+            if isError && !out.contains("no contact found") { XCTFail("left a test contact behind (\(id)): \(out)") }
         }
         super.tearDown()
     }
 
     func testCreateShowsAccountAndRefusesDuplicates() throws {
-        let c = try call(["action": "create", "given_name": "New", "family_name": marker,
+        let c = try call(["action": "create", "given_name": "\(Self.testName) new", "family_name": marker,
                           "add_phone": "+1 415 555 0177", "label": "mobile", "job_title": "Pilot"])
         let id = try XCTUnwrap(c["id"] as? String)
         created.append(id)
@@ -49,9 +49,9 @@ final class ContactsLiveTests: XCTestCase {
         XCTAssertEqual(try call(["action": "read", "id": id])["accounts"] as? [String], accounts)
 
         for dup: [String: Any] in [
-            ["given_name": "new", "family_name": marker],                // same name, any case
-            ["given_name": "Other", "add_phone": "(415) 555-0177"],     // same phone, other formatting
-            ["organization": "X", "add_email": "\(marker)@example.com"], // fixture's email
+            ["given_name": "\(Self.testName) NEW", "family_name": marker],               // same name, any case
+            ["given_name": "\(Self.testName) other", "add_phone": "(415) 555-0177"],     // same phone, other formatting
+            ["organization": "\(Self.testName) org", "add_email": "\(marker)@example.com"], // fixture's email
         ] {
             let (out, isError) = tool.handle(params: dup.merging(["action": "create"]) { $1 }.mapValues { AnyCodable($0) })
             XCTAssertTrue(isError && out.contains("already exists"), "expected duplicate refusal for \(dup), got \(out)")
@@ -63,10 +63,27 @@ final class ContactsLiveTests: XCTestCase {
     }
 
     func testCreateRefusesUnknownAccountAndEmpty() throws {
-        XCTAssertThrowsError(try call(["action": "create", "given_name": "X\(marker)", "account": "Nope-\(marker)"])) {
+        XCTAssertThrowsError(try call(["action": "create", "given_name": "\(Self.testName) \(marker)", "account": "Nope-\(marker)"])) {
             XCTAssertTrue("\($0)".contains("Available:"))
         }
         XCTAssertThrowsError(try call(["action": "create", "job_title": "only a title"]))
+    }
+
+    func testDeleteRemovesContactAndReportsMissing() throws {
+        let hits = try call(["action": "search", "query": marker])["contacts"] as? [[String: Any]] ?? []
+        let id = try XCTUnwrap(hits.first?["id"] as? String)
+
+        let deleted = try call(["action": "delete", "id": id])
+        XCTAssertEqual(deleted["deleted"] as? Bool, true)
+        XCTAssertEqual(deleted["name"] as? String, "\(Self.testName) \(marker)")
+        XCTAssertEqual(try call(["action": "search", "query": marker])["count"] as? Int, 0)
+
+        for action in ["delete", "read"] {
+            XCTAssertThrowsError(try call(["action": action, "id": id])) {
+                XCTAssertTrue($0.localizedDescription.contains("no contact found"), "\($0)")
+            }
+        }
+        XCTAssertThrowsError(try call(["action": "delete"]), "id is required")
     }
 
     private func call(_ params: [String: Any]) throws -> [String: Any] {
@@ -86,7 +103,7 @@ final class ContactsLiveTests: XCTestCase {
         XCTAssertEqual(byEmail.count, 1)
 
         let got = try call(["action": "read", "id": fixture.identifier])
-        XCTAssertEqual(got["name"] as? String, "Test \(marker)")
+        XCTAssertEqual(got["name"] as? String, "\(Self.testName) \(marker)")
         XCTAssertEqual(values(got, "phones"), ["+14155550101"])
     }
 

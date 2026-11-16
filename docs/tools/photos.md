@@ -57,6 +57,15 @@ apple-tools photos import --path ~/Downloads/receipt.jpg --path ~/Desktop/clip.m
 - **Import is the only write.** The tool cannot delete, edit, favorite, tag,
   or organize photos, and cannot create, rename, or add to albums — imports
   land in the library only, not in any album.
+- **An import can't be undone by the tool.** There is no `delete`, and a wrong
+  import stays until you remove it in Photos. macOS asks the person at the
+  screen to confirm every delete an app requests, and a photo the tool itself
+  just imported gets no exemption. Tried on macOS 27.2.1 (#97): the delete
+  request for a freshly imported test image sat unanswered for 30 seconds, the
+  photo stayed in the library, and the confirmation dialog stayed on screen
+  after the tool had exited. An unattended run would stall and leave a dialog
+  behind, so the action isn't offered. For the same reason `import` has no
+  test against the real library.
 - **Re-importing makes a duplicate.** Photos doesn't dedupe files added this
   way, so importing the same file twice gives two copies.
 - **Import picks photo vs. video by file extension.** Anything that isn't an

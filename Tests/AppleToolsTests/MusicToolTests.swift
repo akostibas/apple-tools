@@ -534,7 +534,7 @@ final class MusicToolTests: XCTestCase {
     func testCurationActionsAreReadWrite() {
         guard case .perAction(let map) = tool.accessPolicy else { return XCTFail() }
         for action in ["love", "rate", "playlist-create", "playlist-add",
-                       "playlist-remove", "airplay-select"] {
+                       "playlist-remove", "playlist-delete", "airplay-select"] {
             XCTAssertEqual(map[action], .readWrite, "\(action) must be read/write")
         }
         XCTAssertEqual(map["airplay-list"], .read, "airplay-list is read-only")
@@ -759,6 +759,73 @@ final class MusicToolTests: XCTestCase {
         ])
         XCTAssertTrue(isError)
         XCTAssertTrue(result.contains("query"))
+    }
+
+    // playlist-delete
+
+    private func deletePlaylist(_ name: String = "Road Trip") -> (String, Bool) {
+        tool.handle(params: ["action": AnyCodable("playlist-delete"), "name": AnyCodable(name)])
+    }
+
+    func testPlaylistDeleteVerifiesGoneAndGuardsInScript() {
+        var script = ""
+        MusicIntegration.runAppleScript = { [fs] s, env, _ in
+            script = s
+            XCTAssertEqual(env["APPLE_TOOLS_MUSIC_PLAYLIST"], "Road Trip")
+            return ("0\(fs)ABC123", nil)  // none left with that persistent id
+        }
+        let (result, isError) = deletePlaylist()
+        XCTAssertFalse(isError)
+        XCTAssertFalse(script.contains("Road Trip"), "name travels via env, never interpolated")
+        // Every guard must sit before the delete.
+        let deleteAt = script.range(of: "delete thePl")!.lowerBound
+        for guardText in ["REFUSED_DUPLICATE", "REFUSED_SUBSCRIBED", "REFUSED_FOLDER",
+                          "REFUSED_BUILTIN", "REFUSED_SMART", "if verdict is not \"OK\" then error"] {
+            let at = script.range(of: guardText)?.lowerBound
+            XCTAssertNotNil(at, "missing guard \(guardText)")
+            if let at = at { XCTAssertLessThan(at, deleteAt, "\(guardText) must precede the delete") }
+        }
+        let obj = json(result)
+        XCTAssertEqual(obj["verified"] as? Bool, true)
+        XCTAssertEqual(obj["playlist_id"] as? String, "ABC123")
+    }
+
+    func testPlaylistDeleteUnverifiedWhenStillPresent() {
+        MusicIntegration.runAppleScript = { [fs] _, _, _ in ("1\(fs)ABC123", nil) }
+        XCTAssertEqual(json(deletePlaylist().0)["verified"] as? Bool, false)
+    }
+
+    func testPlaylistDeleteMissingPlaylistReturnsError() {
+        MusicIntegration.runAppleScript = { _, _, _ in ("", "error \"NO_PLAYLIST\"") }
+        let (result, isError) = deletePlaylist("Nope")
+        XCTAssertTrue(isError)
+        XCTAssertEqual(result, "no playlist named: Nope")
+    }
+
+    func testPlaylistDeleteRefusalsGiveAPlainReason() {
+        let expected = [
+            "REFUSED_DUPLICATE": "more than one playlist has that name",
+            "REFUSED_SUBSCRIBED": "subscribed",
+            "REFUSED_FOLDER": "folder",
+            "REFUSED_BUILTIN": "built-in",
+            "REFUSED_SMART": "smart playlist",
+            "REFUSED_UNSURE": "could not confirm",
+        ]
+        XCTAssertEqual(Set(MusicIntegration.deleteRefusals.map { $0.0 }), Set(expected.keys))
+        for (sentinel, phrase) in expected {
+            MusicIntegration.runAppleScript = { _, _, _ in ("", "execution error: \(sentinel) (-2700)") }
+            let (result, isError) = deletePlaylist()
+            XCTAssertTrue(isError, sentinel)
+            XCTAssertTrue(result.contains(phrase), "\(sentinel): \(result)")
+            XCTAssertTrue(result.contains("Nothing was deleted"), result)
+            XCTAssertFalse(result.contains("REFUSED"), "sentinel must not leak: \(result)")
+        }
+    }
+
+    func testPlaylistDeleteRequiresName() {
+        let (result, isError) = tool.handle(params: ["action": AnyCodable("playlist-delete")])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(result.contains("name"))
     }
 
     // airplay
