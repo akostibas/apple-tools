@@ -4,11 +4,11 @@ import Foundation
 public struct ContactsTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "contacts",
-        description: "Access Apple Contacts. Actions: 'search' (find contacts by name, email, phone, or group name; returns summaries only — street addresses, birthdays, and any additional emails/phones are NOT included), 'read' (full details for a contact by ID; the only way to see addresses and other non-summary fields, including which account(s) it lives in), 'create' (new contact with the same fields as update, in the default account unless 'account' is given; refused if a contact with the same name, phone, or email exists), 'update' (edit a contact by ID: set single fields, or add/remove one phone, email, URL, or address at a time; other entries are left alone).",
+        description: "Access Apple Contacts. Actions: 'search' (find contacts by name, email, phone, or group name; returns summaries only — street addresses, birthdays, and any additional emails/phones are NOT included), 'read' (full details for a contact by ID; the only way to see addresses and other non-summary fields, including which account(s) it lives in), 'create' (new contact with the same fields as update, in the default account unless 'account' is given; refused if a contact with the same name, phone, or email exists), 'update' (edit a contact by ID: set single fields, or add/remove one phone, email, URL, or address at a time; other entries are left alone), 'delete' (permanently remove one contact by ID; errors if the ID matches nothing or the contact's account is read-only).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "search, read, create, or update"),
+                "action": PropertySchema(type_: "string", description: "search, read, create, update, or delete"),
                 "account": PropertySchema(type_: "string", description: "Account to create the contact in, e.g. iCloud (create; default is the default account)", summary: "Account for the new contact", actions: ["create"]),
                 "given_name": PropertySchema(type_: "string", description: "First name (create/update; empty string clears)", summary: "First name", actions: ["create", "update"]),
                 "middle_name": PropertySchema(type_: "string", description: "Middle name (create/update; empty string clears)", summary: "Middle name", actions: ["create", "update"]),
@@ -33,12 +33,12 @@ public struct ContactsTool: ProbeTool {
                     summary: "Search term matched across name, email, phone, group", actions: ["search"]),
                 "limit": PropertySchema(type_: "integer", description: "Max results to return (for search, default 20)",
                     summary: "Max results (default 20)", actions: ["search"]),
-                "id": PropertySchema(type_: "string", description: "Contact identifier from search results (required for read, update)",
-                    summary: "Contact ID from search results", actions: ["read", "update"]),
+                "id": PropertySchema(type_: "string", description: "Contact identifier from search results (required for read, update, delete)",
+                    summary: "Contact ID from search results", actions: ["read", "update", "delete"]),
             ],
             required: ["action"]
         ),
-        cliSummary: "Search, read, create, and edit Apple Contacts.",
+        cliSummary: "Search, read, create, edit, and delete Apple Contacts.",
         actions: [
             ActionHelp(name: "search", summary: "Find contacts by name, email, phone, or group",
                 example: "apple-tools contacts search --query <text> [--limit <n>]", required: ["query"]),
@@ -48,6 +48,8 @@ public struct ContactsTool: ProbeTool {
                 example: "apple-tools contacts create --given_name <n> [--family_name <n>] [--add_phone <n> --label mobile] [--add_email <e>] [--account <a>]"),
             ActionHelp(name: "update", summary: "Edit a contact: set fields, add or remove one phone/email/URL/address",
                 example: "apple-tools contacts update --id <id> [--job_title <t>] [--add_phone <n> --label mobile] [--remove_email <e>] [--birthday 1990-04-15]", required: ["id"]),
+            ActionHelp(name: "delete", summary: "Permanently remove one contact by ID",
+                example: "apple-tools contacts delete --id <id>", required: ["id"]),
         ]
     )
 
@@ -56,6 +58,7 @@ public struct ContactsTool: ProbeTool {
         "read":    .read,
         "create": .readWrite,
         "update": .readWrite,
+        "delete": .readWrite,
     ])
 
     public init() {}
@@ -88,8 +91,13 @@ public struct ContactsTool: ProbeTool {
             return update(id: id, params: params ?? [:])
         case "create":
             return create(params: params ?? [:])
+        case "delete":
+            guard let id = params?["id"]?.value as? String, !id.isEmpty else {
+                return ("missing required parameter: id", true)
+            }
+            return delete(id: id)
         default:
-            return ("unknown action: \(action) (use search, read, create, or update)", true)
+            return ("unknown action: \(action) (use search, read, create, update, or delete)", true)
         }
     }
 
@@ -232,6 +240,18 @@ public struct ContactsTool: ProbeTool {
             try ContactsIntegration.add(contact, toContainer: containerID)
             let saved = try ContactsIntegration.contact(byIdentifier: contact.identifier, keys: Self.allKeys)
             return (jsonEncode(contactFull(saved)), false)
+        } catch {
+            return ("\(error)", true)
+        }
+    }
+
+    // MARK: - Delete
+
+    private func delete(id: String) -> (String, Bool) {
+        do {
+            let found = try ContactsIntegration.contact(byIdentifier: id, keys: Self.allKeys)
+            try ContactsIntegration.delete(id: id)
+            return (jsonEncode(["deleted": true, "id": id, "name": ContactsIntegration.resolvedName(for: found)]), false)
         } catch {
             return ("\(error)", true)
         }

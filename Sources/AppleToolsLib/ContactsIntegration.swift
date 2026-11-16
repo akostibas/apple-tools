@@ -18,9 +18,12 @@ public enum ContactsIntegration {
         case fetchFailed(String)
         case notFound(String)
         case saveFailed(String)
+        case deleteFailed(String)
 
         public var description: String {
             switch self {
+            case .deleteFailed(let reason):
+                return "couldn't delete contact: \(reason)"
             case .saveFailed(let reason):
                 return "couldn't save contact: \(reason)"
             case .accessDenied:
@@ -417,10 +420,22 @@ public enum ContactsIntegration {
         return nil
     }
 
-    /// Live-test cleanup only; the tool deliberately can't delete contacts.
-    static func remove(_ contact: CNMutableContact) throws {
+    /// Throws notFound when the id matches nothing, deleteFailed when the account refuses.
+    public static func delete(id: String) throws {
+        guard let target = try contact(byIdentifier: id, keys: []).mutableCopy() as? CNMutableContact else {
+            throw ContactsError.deleteFailed("couldn't open contact \(id)")
+        }
+        let readOnlyHint = "If this contact comes from a read-only account (like a company directory), remove it there instead"
         let request = CNSaveRequest()
-        request.delete(contact)
-        try store.execute(request)
+        request.delete(target)
+        do {
+            try store.execute(request)
+        } catch {
+            throw ContactsError.deleteFailed("\(error.localizedDescription). \(readOnlyHint)")
+        }
+        // Some accounts accept the request and keep the card, so confirm it's gone.
+        if (try? contact(byIdentifier: id, keys: [])) != nil {
+            throw ContactsError.deleteFailed("its account kept it. \(readOnlyHint)")
+        }
     }
 }
