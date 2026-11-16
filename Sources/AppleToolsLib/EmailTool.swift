@@ -5,19 +5,19 @@ import UniformTypeIdentifiers
 public struct EmailTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "email",
-        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'headers' (a message's headers by ID — all, or only those in 'names'; never downloads the body), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message — does NOT send; supports file attachments by absolute path), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send), 'mailboxes' (list each account's mailboxes with counts), 'move' (move a message by ID to a mailbox, in the same or another account; refused for Gmail accounts; needs Mail running).",
+        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'headers' (a message's headers by ID — all, or only those in 'names'; never downloads the body), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message, saved in Drafts — does NOT send; supports file attachments by absolute path; returns the draft's 'id'), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send; returns the draft's 'id'), 'discard' (move a draft to Trash by the 'id' that draft/reply returned; only drafts are accepted, received or sent mail is refused; needs Mail running), 'mailboxes' (list each account's mailboxes with counts), 'move' (move a message by ID to a mailbox, in the same or another account; refused for Gmail accounts; needs Mail running).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "inbox, search, read, headers, fetch_attachment, draft, reply, mailboxes, or move"),
+                "action": PropertySchema(type_: "string", description: "inbox, search, read, headers, fetch_attachment, draft, reply, discard, mailboxes, or move"),
                 "mailbox": PropertySchema(type_: "string", description: "Mailbox name as listed by 'mailboxes', e.g. 'Archive' or 'Archive/2025'; case-insensitive. For search, only messages in it (Gmail: with that label). For move, the destination",
                     summary: "Mailbox name (search: filter; move: destination)", actions: ["search", "move"]),
                 "account": PropertySchema(type_: "string", description: "Account name or address as shown in results' 'account'/'account_email'. Narrows 'mailbox' when the name exists in several accounts. For move, defaults to the message's own account when it has that mailbox",
                     summary: "Account name/address for --mailbox", actions: ["search", "move", "mailboxes"]),
                 "limit": PropertySchema(type_: "integer", description: "Max messages to return (for inbox and search, default 20, max 50)",
                     summary: "Max messages (default 20, max 50)", actions: ["inbox", "search"]),
-                "id": PropertySchema(type_: "string", description: "Message ID (for read, headers, fetch_attachment, reply, move)",
-                    summary: "Message ID", actions: ["read", "headers", "fetch_attachment", "reply", "move"]),
+                "id": PropertySchema(type_: "string", description: "Message ID (for read, headers, fetch_attachment, reply, move; for discard, the id that draft or reply returned)",
+                    summary: "Message ID", actions: ["read", "headers", "fetch_attachment", "reply", "discard", "move"]),
                 "names": PropertySchema(
                     type_: "array",
                     description: "Header names to return, matched case-insensitively, e.g. ['Sender', 'X-Google-Calendar-Notification']. Omit for all headers. Absent headers are left out (for headers)",
@@ -61,7 +61,7 @@ public struct EmailTool: ProbeTool {
             ],
             required: ["action"]
         ),
-        cliSummary: "Read, search, draft, and reply to Apple Mail messages.",
+        cliSummary: "Read, search, draft, reply to, and discard drafts of Apple Mail messages.",
         actions: [
             ActionHelp(name: "inbox", summary: "List recent messages from all inboxes",
                 example: "apple-tools email inbox [--limit <n>]"),
@@ -75,6 +75,8 @@ public struct EmailTool: ProbeTool {
                 example: "apple-tools email draft --to <addr> [--subject <t>] [--body <t>] [--cc <a>] [--attachments <p>]", required: ["to"]),
             ActionHelp(name: "reply", summary: "Draft a threaded reply to a message — does not send",
                 example: "apple-tools email reply --id <id> --body <text> [--reply_all] [--cc <a>] [--attachments <p>]", required: ["id", "body"]),
+            ActionHelp(name: "discard", summary: "Move a draft to Trash (drafts only; Mail must be running)",
+                example: "apple-tools email discard --id <id>", required: ["id"]),
             ActionHelp(name: "fetch_attachment", summary: "Retrieve an attachment file from a message",
                 example: "apple-tools email fetch_attachment --id <id> [--filename <name>]", required: ["id"]),
             ActionHelp(name: "mailboxes", summary: "List each account's mailboxes with message counts",
@@ -94,6 +96,7 @@ public struct EmailTool: ProbeTool {
         "fetch_attachment": .read,
         "draft":            .readWrite,
         "reply":            .readWrite,
+        "discard":          .readWrite,
         "mailboxes":        .read,
         "move":             .readWrite,
     ])
@@ -144,6 +147,11 @@ public struct EmailTool: ProbeTool {
             let cc = params?["cc"]?.value as? String
             let attachments = (params?["attachments"]?.value as? [Any])?.compactMap { $0 as? String } ?? []
             return reply(id: id, body: body, replyAll: replyAll, cc: cc, attachments: attachments)
+        case "discard":
+            guard let id = params?["id"]?.value as? String, !id.isEmpty else {
+                return ("missing required parameter: id", true)
+            }
+            return discard(id: id)
         case "fetch_attachment":
             guard let id = params?["id"]?.value as? String, !id.isEmpty else {
                 return ("missing required parameter: id", true)
@@ -161,7 +169,7 @@ public struct EmailTool: ProbeTool {
             }
             return move(id: id, mailbox: box, account: params?["account"]?.value as? String)
         default:
-            return ("unknown action: \(action) (use inbox, search, read, headers, fetch_attachment, draft, reply, mailboxes, or move)", true)
+            return ("unknown action: \(action) (use inbox, search, read, headers, fetch_attachment, draft, reply, discard, mailboxes, or move)", true)
         }
     }
 
@@ -823,6 +831,7 @@ public struct EmailTool: ProbeTool {
         let (resolved, attachErr) = resolveAttachments(attachments)
         if let attachErr = attachErr { return (attachErr, true) }
 
+        let since = MailDraftVerifier.snapshotMaxRowID()
         do {
             try EmailIntegration.createDraft(to: to, subject: subject, body: body, cc: cc, attachments: resolved)
         } catch let e as EmailIntegration.EmailError {
@@ -836,6 +845,7 @@ public struct EmailTool: ProbeTool {
             "to": to,
             "subject": subject,
         ]
+        addDraftID(to: to, subject: subject, since: since, into: &response)
         if let cc = cc, !cc.isEmpty {
             response["cc"] = cc
         }
@@ -863,6 +873,7 @@ public struct EmailTool: ProbeTool {
         let (resolved, attachErr) = resolveAttachments(attachments)
         if let attachErr = attachErr { return (attachErr, true) }
 
+        let since = MailDraftVerifier.snapshotMaxRowID()
         let result: EmailIntegration.ReplyResult
         do {
             result = try EmailIntegration.createReply(
@@ -881,10 +892,69 @@ public struct EmailTool: ProbeTool {
         ]
         if !result.subject.isEmpty { response["subject"] = result.subject }
         if !result.to.isEmpty { response["to"] = result.to }
+        addDraftID(to: result.to, subject: result.subject, since: since, into: &response)
         if let cc = cc, !cc.isEmpty { response["cc_added"] = cc }
         if !resolved.isEmpty { response["attachments"] = resolved }
         if !warnings.isEmpty { response["warnings"] = warnings }
         return (jsonEncode(response), false)
+    }
+
+    /// Adds the saved draft's `id` (what `discard` takes), or says why there isn't one.
+    private func addDraftID(to: String, subject: String, since: Int64, into response: inout [String: Any]) {
+        if let id = MailDraftVerifier.savedDraftMessageID(recipient: to, subject: subject, sinceROWID: since) {
+            response["id"] = id
+        } else {
+            response["note"] = "Mail hasn't shown the draft in Drafts yet, so there is no id to discard it by"
+        }
+    }
+
+    // MARK: - Discard
+
+    /// Decides from the index alone whether `discard` may touch a message; nil means yes.
+    static func discardRefusal(mailboxURL: String) -> String? {
+        let name = EmailSearch.mailboxName(mailboxURL)
+        if EmailSearch.isDraftsMailbox(mailboxURL) { return nil }
+        if !mailboxURL.hasPrefix("imap:"), name.caseInsensitiveCompare("Drafts") == .orderedSame {
+            return "can't discard drafts in this kind of account (On My Mac, Exchange): it hasn't been shown to work there. Delete it in Mail instead."
+        }
+        return "not a draft: this message is in \(name.isEmpty ? "an unknown mailbox" : name). Only drafts can be discarded; received and sent mail is never deleted."
+    }
+
+    private func discard(id: String) -> (String, Bool) {
+        let loc: EmailSearch.MessageLocation
+        do {
+            guard let l = try EmailSearch.resolveMessageID(id) else {
+                return ("no draft with this id. It may have been edited (which gives it a new id), sent, or already discarded.", true)
+            }
+            loc = l
+        } catch {
+            return ("\(error)", true)
+        }
+        if let refusal = Self.discardRefusal(mailboxURL: loc.mailboxURL) { return (refusal, true) }
+
+        do {
+            try EmailIntegration.discardDraft(rowID: loc.rowID, mailboxURL: loc.mailboxURL)
+        } catch EmailIntegration.EmailError.notFound {
+            return ("draft not discarded: Mail can't find it in Drafts any more", true)
+        } catch {
+            return ("draft not discarded: \(error)", true)
+        }
+        var result: [String: Any] = ["id": id]
+        result.merge(EmailSearch.accountFields(loc.mailboxURL)) { a, _ in a }
+        // Mail applies the delete asynchronously; confirm where the draft ended up.
+        let deadline = Date().addingTimeInterval(5)
+        var landed: String?
+        while Date() < deadline, landed == nil {
+            if let now = try? EmailSearch.resolveMessageID(id), now.mailboxURL != loc.mailboxURL {
+                landed = EmailSearch.mailboxName(now.mailboxURL)
+            } else {
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+        }
+        result["discarded"] = landed != nil ? true : "pending"
+        if let landed = landed { result["moved_to"] = landed }
+        else { result["note"] = "Mail accepted the discard but hasn't shown the draft in Trash yet" }
+        return (jsonEncode(result), false)
     }
 
     /// Validate attachment paths: expand `~`, confirm each exists and is a

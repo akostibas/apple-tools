@@ -388,6 +388,27 @@ enum EmailSearch {
         return (c.path.removingPercentEncoding ?? c.path).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
+    /// Full-path match on purpose: a user folder such as "Archive/Drafts" is not a Drafts mailbox.
+    static func isDraftsMailbox(_ url: String) -> Bool {
+        url.hasPrefix("imap:") && ["Drafts", "[Gmail]/Drafts"].contains(mailboxName(url))
+    }
+
+    /// Message-ID header of an index row, in the form `search` reports ids.
+    static func messageIDHeader(rowID: Int64, dbPath: String = defaultDatabasePath) -> String? {
+        guard let db = try? openReadOnly(dbPath) else { return nil }
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        let sql = """
+        SELECT g.message_id_header FROM messages m
+        JOIN message_global_data g ON g.ROWID = m.global_message_id WHERE m.ROWID = ?
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, rowID)
+        guard sqlite3_step(stmt) == SQLITE_ROW, let id = columnString(stmt, 0), !id.isEmpty else { return nil }
+        return id
+    }
+
     /// Gmail stores each message once (All Mail); INBOX and user folders are rows in `labels`.
     private static let labelsColumn = """
         (SELECT group_concat(lmb.url, char(31)) FROM labels l

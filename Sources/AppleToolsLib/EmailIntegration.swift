@@ -30,7 +30,7 @@ public enum EmailIntegration {
             case .attachmentNotFound(let name): return "attachment '\(name)' not found on message"
             case .attachmentSaveFailed(let msg): return "failed to save attachment: \(msg)"
             case .parseFailure(let msg): return msg
-            case .mailNotRunning: return "Mail is not running, so it cannot fetch this message"
+            case .mailNotRunning: return "Mail is not running, and this tool never launches it"
             }
         }
     }
@@ -276,6 +276,23 @@ public enum EmailIntegration {
             return "OK"
             """, extraEnv: ["APPLE_TOOLS_MAIL_DEST_ACCOUNT": toAccount, "APPLE_TOOLS_MAIL_DEST_MAILBOX": toMailbox])
         guard out == "OK" else { throw EmailError.scriptFailed(out) }
+    }
+
+    /// Sends a draft to the account's Trash. The delete only runs once Mail itself
+    /// lists the message under Drafts, so it cannot reach received or sent mail.
+    public static func discardDraft(rowID: Int64, mailboxURL: String) throws {
+        do {
+            _ = try runOnRow(rowID: rowID, mailboxURL: mailboxURL, verb: """
+                if (every message of drafts mailbox whose id is \(rowID)) is {} then return "NOT_DRAFT"
+                if not (move deleted messages to trash of (item 1 of accts)) then return "NO_TRASH"
+                delete theMsg
+                return "OK"
+                """)
+        } catch EmailError.scriptFailed("NOT_DRAFT") {
+            throw EmailError.scriptFailed("Mail doesn't list this message as a draft")
+        } catch EmailError.scriptFailed("NO_TRASH") {
+            throw EmailError.scriptFailed("this account erases deleted messages instead of moving them to Trash")
+        }
     }
 
     /// Runs `verb` against `theMsg`; the verb must return a string starting "OK".
@@ -555,8 +572,9 @@ public enum EmailIntegration {
         try createOutgoingMessage(to: to, subject: subject, body: body, cc: ccList, attachments: attachments)
     }
 
-    /// Create a visible outgoing message (draft) via `make new outgoing message`
-    /// — the reliable path that sets the body at creation time. Shared by
+    /// Create a draft via `make new outgoing message` — the reliable path that
+    /// sets the body at creation time — and save it to Drafts. Never visible:
+    /// a compose window would land on the user's screen mid-work. Shared by
     /// `createDraft` and `createReply`. `cc` is a list so reply-all can pass
     /// many. When `htmlBody` is non-nil the message is created with `html
     /// content` (rich — used by replies for a real `<blockquote>` quote);
@@ -571,21 +589,20 @@ public enum EmailIntegration {
         ]
 
         // Body: HTML (rich) or plain, routed through env either way. `html
-        // content` at creation time renders as rich text in the compose window
-        // (verified on macOS 26); the plain `content` path is unchanged.
+        // content` at creation time is kept as rich text in the saved draft.
         let createClause: String
         if let htmlBody = htmlBody {
             env["APPLE_TOOLS_EMAIL_HTML"] = htmlBody
             createClause = """
             set theHTML to do shell script "printenv APPLE_TOOLS_EMAIL_HTML"
-            set newMsg to make new outgoing message with properties {subject:theSubject, visible:true}
+            set newMsg to make new outgoing message with properties {subject:theSubject, visible:false}
             set html content of newMsg to theHTML
             """
         } else {
             env["APPLE_TOOLS_EMAIL_BODY"] = body
             createClause = """
             set theBody to do shell script "printenv APPLE_TOOLS_EMAIL_BODY"
-            set newMsg to make new outgoing message with properties {subject:theSubject, content:theBody, visible:true}
+            set newMsg to make new outgoing message with properties {subject:theSubject, content:theBody, visible:false}
             """
         }
 
@@ -631,6 +648,8 @@ public enum EmailIntegration {
                 \(ccClauses)
             end tell
             \(attachmentClauses)
+            -- Not `save`: that leaves Mail autosaving the message, which brings a discarded draft back.
+            close newMsg saving yes
             set draftID to id of newMsg as string
             log "PHASE: committed id=" & draftID
             return draftID
