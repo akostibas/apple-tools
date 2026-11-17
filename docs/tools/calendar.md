@@ -105,5 +105,9 @@ apple-tools calendar delete --id <id> --span all
 
 What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
-- **Create, update and delete have no live test yet** (#79). The read-only group covers `calendars`, `list` and `search`.
 - **Invites from other people** are never touched, so the refusals for them are only unit-tested.
+- **Changing or deleting an event on a read-only calendar** is not tried, because the only such events are real ones.
+  The slow group does prove that creating in, or moving an event to, a read-only calendar is refused.
+- **Moving an event to another calendar** is not tried: it needs a second calendar that is shared with nobody.
+- **The slow group needs a writable calendar shared with nobody**, since a shared one would notify other people.
+  With none, it fails and says so.

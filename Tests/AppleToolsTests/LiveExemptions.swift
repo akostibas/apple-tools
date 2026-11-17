@@ -8,9 +8,6 @@ enum LiveExemptions {
 
     /// Not written yet. This list should only shrink.
     static let owed: [String: String] = [
-        "calendar.create": "#79",
-        "calendar.update": "#79",
-        "calendar.delete": "#79",
         "email.reply": "#79: would mean replying to one of the user's real messages; needs a safe target",
         "email.move": "#79",
         "email.fetch_attachment": "#79: needs a message with an attachment to be discovered",
