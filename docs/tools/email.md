@@ -71,6 +71,11 @@ apple-tools email discard --id "<ID-RETURNED-BY-DRAFT>"
   back on the next sync. Removing a label via a round-trip through Trash held
   once and reverted the next time. Moving a Gmail message is refused. Use Mail
   or Gmail directly; a real fix would need the Gmail API and a Google sign-in.
+- **A message with copies in several mailboxes can't be moved.** Mail you sent
+  yourself sits in both Sent and the inbox under one id, so `move` can't tell
+  which copy is meant and refuses, naming the mailboxes. Move it in Mail. Copies
+  that share a mailbox (a draft Mail saved twice, then discarded) move together,
+  and the result says how many under `copies`.
 - **Replies aren't header-threaded.** `reply` composes a *new* message — it
   carries no `In-Reply-To`/`References` headers (AppleScript can't set them), so
   the recipient's client threads it by "Re:" subject only. Outlook/Exchange,

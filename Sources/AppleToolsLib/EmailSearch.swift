@@ -315,6 +315,12 @@ enum EmailSearch {
     /// and mailbox URL, which together let us derive the on-disk .emlx path.
     /// Returns nil if the Message-ID isn't known to Mail.
     static func resolveMessageID(_ messageID: String, dbPath: String = defaultDatabasePath) throws -> MessageLocation? {
+        try copies(messageID: messageID, dbPath: dbPath).first
+    }
+
+    /// Every live row carrying this Message-ID, oldest first. One id can name several copies:
+    /// mail you sent yourself (Sent and INBOX), or a draft Mail saved twice.
+    static func copies(messageID: String, dbPath: String = defaultDatabasePath) throws -> [MessageLocation] {
         let db = try openReadOnly(dbPath)
         defer { sqlite3_close(db) }
 
@@ -330,7 +336,7 @@ enum EmailSearch {
         JOIN mailboxes mb ON mb.ROWID = m.mailbox
         WHERE m.deleted = 0
           AND trim(g.message_id_header, '<>') = ?
-        LIMIT 1
+        ORDER BY m.ROWID
         """
 
         var stmt: OpaquePointer?
@@ -342,10 +348,12 @@ enum EmailSearch {
         let bareID = messageID.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
         sqlite3_bind_text(stmt, 1, bareID, -1, SQLITE_TRANSIENT)
 
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        let rowid = sqlite3_column_int64(stmt, 0)
-        let url = columnString(stmt, 1) ?? ""
-        return MessageLocation(rowID: rowid, mailboxURL: url, labelURLs: splitLabels(columnString(stmt, 2)))
+        var out: [MessageLocation] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            out.append(MessageLocation(rowID: sqlite3_column_int64(stmt, 0), mailboxURL: columnString(stmt, 1) ?? "",
+                                       labelURLs: splitLabels(columnString(stmt, 2))))
+        }
+        return out
     }
 
     // MARK: - Mailboxes

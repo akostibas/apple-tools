@@ -71,11 +71,7 @@ final class EmailActionsLiveTests: XCTestCase {
 
         let (discardResult, discardFailed) = discard()
         XCTAssertFalse(discardFailed, discardResult)
-        // Discard can trash two copies under one Message-ID, and move takes a Message-ID, so pick a copy with its own.
-        let inTrash = copies(tool, token).filter { !isDrafts($0) }
-        let ids = inTrash.compactMap { $0["id"] as? String }
-        let trashed = try XCTUnwrap(inTrash.first { copy in ids.filter { $0 == copy["id"] as? String }.count == 1 },
-                                    "no trashed copy of the test draft has a Message-ID of its own: \(inTrash)")
+        let trashed = try XCTUnwrap(copies(tool, token).first { !isDrafts($0) }, "the discarded test draft is not in Trash")
         XCTAssertEqual(trashed["account"] as? String, account, "Mail did not save the draft in the sender's account")
         let messageID = try XCTUnwrap(trashed["id"] as? String)
         let trash = try XCTUnwrap(trashed["mailbox"] as? String)
@@ -83,8 +79,9 @@ final class EmailActionsLiveTests: XCTestCase {
             tool.handle(params: ["action": AnyCodable("move"), "id": AnyCodable(messageID),
                                  "mailbox": AnyCodable(mailbox), "account": AnyCodable(account)])
         }
-        func mailboxesNow() -> [String] {
-            copies(tool, token).filter { $0["id"] as? String == messageID }.compactMap { $0["mailbox"] as? String }
+        // A set: discard can trash two copies under one Message-ID, and move takes them together.
+        func mailboxesNow() -> Set<String> {
+            Set(copies(tool, token).filter { $0["id"] as? String == messageID }.compactMap { $0["mailbox"] as? String })
         }
         // Not Drafts as the destination: Mail brings a message moved out of Drafts back into it.
         defer {

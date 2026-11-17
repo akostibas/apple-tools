@@ -194,16 +194,27 @@ public struct EmailTool: ProbeTool {
         return (jsonEncode(["accounts": accounts]), false)
     }
 
+    /// Copies sharing an id are one message only while they share a mailbox; nil means `move` may take them all.
+    static func moveRefusal(copies: [EmailSearch.MessageLocation]) -> String? {
+        let urls = Set(copies.map(\.mailboxURL))
+        guard urls.count > 1 else { return nil }
+        let places = urls.sorted().map { url in
+            EmailSearch.mailboxName(url) + ((EmailSearch.accountFields(url)["account"] as? String).map { " (\($0))" } ?? "")
+        }
+        return "this id is ambiguous: copies of the message are in \(places.joined(separator: ", ")), and move can't tell which one you mean. Move it in Mail instead."
+    }
+
     private func move(id: String, mailbox: String, account: String?) -> (String, Bool) {
-        let loc: EmailSearch.MessageLocation
+        let copies: [EmailSearch.MessageLocation]
         let boxes: [EmailSearch.Mailbox]
         do {
-            guard let l = try EmailSearch.resolveMessageID(id) else { return ("message not found: \(id)", true) }
-            loc = l
+            copies = try EmailSearch.copies(messageID: id)
             boxes = try EmailSearch.mailboxes()
         } catch {
             return ("\(error)", true)
         }
+        guard let loc = copies.first else { return ("message not found: \(id)", true) }
+        if let refusal = Self.moveRefusal(copies: copies) { return (refusal, true) }
         guard let source = boxes.first(where: { $0.url == loc.mailboxURL }) else {
             return ("can't tell which mailbox this message is in", true)
         }
@@ -218,22 +229,27 @@ public struct EmailTool: ProbeTool {
         }
         if target.url == source.url { return ("message is already in \(target.name)", true) }
 
-        do {
-            try EmailIntegration.moveMessage(rowID: loc.rowID, mailboxURL: loc.mailboxURL,
-                                             toAccount: target.accountID, toMailbox: target.name)
-        } catch {
-            return ("move failed, message left in \(source.name): \(error)", true)
+        for (done, copy) in copies.enumerated() {
+            do {
+                try EmailIntegration.moveMessage(rowID: copy.rowID, mailboxURL: copy.mailboxURL,
+                                                 toAccount: target.accountID, toMailbox: target.name)
+            } catch {
+                let left = done == 0 ? "message" : "\(done) of \(copies.count) copies moved to \(target.name), the rest"
+                return ("move failed, \(left) left in \(source.name): \(error)", true)
+            }
         }
         var result: [String: Any] = [
             "id": id,
             "from": accountFields(source.accountID).merging(["mailbox": source.name]) { a, _ in a },
             "to": accountFields(target.accountID).merging(["mailbox": target.name]) { a, _ in a },
         ]
-        // Mail applies the move asynchronously; confirm it reached the index.
+        if copies.count > 1 { result["copies"] = copies.count }
+        // Mail applies the move asynchronously; confirm every copy reached the index.
         let deadline = Date().addingTimeInterval(5)
         var confirmed = false
         while Date() < deadline {
-            if let now = try? EmailSearch.resolveMessageID(id), now.mailboxURL == target.url { confirmed = true; break }
+            if let now = try? EmailSearch.copies(messageID: id), !now.isEmpty,
+               now.allSatisfy({ $0.mailboxURL == target.url }) { confirmed = true; break }
             Thread.sleep(forTimeInterval: 0.25)
         }
         result["moved"] = confirmed ? true : "pending"
