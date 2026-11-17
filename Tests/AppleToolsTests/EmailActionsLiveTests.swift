@@ -83,7 +83,6 @@ final class EmailActionsLiveTests: XCTestCase {
         func mailboxesNow() -> Set<String> {
             Set(copies(tool, token).filter { $0["id"] as? String == messageID }.compactMap { $0["mailbox"] as? String })
         }
-        // Not Drafts as the destination: Mail brings a message moved out of Drafts back into it.
         defer {
             if mailboxesNow().contains(destination) {
                 _ = move(to: trash)
@@ -92,6 +91,10 @@ final class EmailActionsLiveTests: XCTestCase {
                 }
             }
         }
+
+        let (intoDrafts, draftsRefused) = move(to: home.name)
+        XCTAssertTrue(draftsRefused && intoDrafts.contains("into Drafts"), intoDrafts)
+        XCTAssertEqual(mailboxesNow(), [trash], "a refused move must leave the message where it was")
 
         let (there, thereFailed) = move(to: destination)
         XCTAssertFalse(thereFailed, there)

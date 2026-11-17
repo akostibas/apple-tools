@@ -39,7 +39,8 @@ Envelope Index; also used by the AppleScript fallback).
   the account allows `move` (Gmail doesn't). Names are what `--mailbox` takes.
 - **move** — move a message by `id` to `mailbox`, in its own account or another
   one (`account` picks which when the name is ambiguous). Needs Mail running; it
-  never launches Mail. Refused for Gmail accounts (see Shortcomings).
+  never launches Mail. Refused for Gmail accounts and for Drafts (see
+  Shortcomings).
 
 `search --mailbox <name>` keeps only messages in that mailbox. Gmail stores every
 message in All Mail, so for Gmail it matches on labels, and results carry a
@@ -71,6 +72,10 @@ apple-tools email discard --id "<ID-RETURNED-BY-DRAFT>"
   back on the next sync. Removing a label via a round-trip through Trash held
   once and reverted the next time. Moving a Gmail message is refused. Use Mail
   or Gmail directly; a real fix would need the Gmail API and a Google sign-in.
+- **Nothing can be moved into or out of Drafts.** Mail keeps saving whatever
+  sits in Drafts, so a message moved out showed up there again about a minute
+  later. `move` refuses Drafts as a source or a destination. Use `discard` to
+  trash a draft, or move it in Mail.
 - **A message with copies in several mailboxes can't be moved.** Mail you sent
   yourself sits in both Sent and the inbox under one id, so `move` can't tell
   which copy is meant and refuses, naming the mailboxes. Move it in Mail. Copies

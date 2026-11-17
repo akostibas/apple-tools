@@ -42,6 +42,16 @@ final class EmailSearchSubjectTests: XCTestCase {
         XCTAssertEqual(subjects, ["Re: Invitation: EFKaylaire", "Invitation: EFKaylaire"])
     }
 
+    func testMoveRefusesDraftsAsSourceAndDestination() {
+        for drafts in ["imap://A/Drafts", "imap://A/%5BGmail%5D/Drafts", "local://Local/Drafts", "ews://A/drafts"] {
+            XCTAssertEqual(EmailTool.draftsMoveRefusal(from: drafts, to: "imap://A/Archive")?.contains("out of Drafts"), true, drafts)
+            XCTAssertEqual(EmailTool.draftsMoveRefusal(from: "imap://A/Trash", to: drafts)?.contains("into Drafts"), true, drafts)
+        }
+        for box in ["Archive/Drafts", "Drafts%20Backup", "Trash"] {
+            XCTAssertNil(EmailTool.draftsMoveRefusal(from: "imap://A/INBOX", to: "imap://A/\(box)"), box)
+        }
+    }
+
     func testMoveTakesCopiesSharingAMailboxAndRefusesCopiesSpreadOverSeveral() throws {
         var db: OpaquePointer?
         XCTAssertEqual(sqlite3_open(dbPath, &db), SQLITE_OK)
