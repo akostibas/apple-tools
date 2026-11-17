@@ -118,5 +118,7 @@ What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/RE
 
 - **Received mail can't be planted.** If a read comes back empty, only the remembered messages or a look in Mail can tell "none" from "broken".
 - **Reads are skipped while Mail is closed**, because reading the inbox would open it (#84).
-- **Reply, move and attachment fetch have no live test yet** (#79). A reply test would have to reply to one of your real messages.
-- **The draft test leaves its draft in Trash**, labeled `apple-tools live test`, and takes about a minute because a fresh draft can't be discarded quickly.
+- **Attachment fetch is only proven on a draft**, the test's own. Fetching from received mail, where Mail may not have downloaded the attachment yet, is not.
+- **Move is only proven within one account**, on the test's own trashed draft: Trash to Archive and back. It needs an account that isn't Gmail, has an Archive mailbox and an address no other account shares; without one the test skips. Moves between accounts are not proven.
+- **The reply test drafts a reply to one of your real messages**, since a reply needs one: an inbox message you sent yourself, otherwise one from a no-reply address, otherwise it skips. The original is only read. The draft quotes it, is never sent, and is discarded; if the discard fails the test fails and names the draft.
+- **Each test leaves its draft in Trash** and takes about a minute, because a fresh draft can't be discarded quickly. The drafts are labeled `apple-tools live test` in the subject, except the reply, whose subject is `Re:` plus the original's and which carries the label in its body. The reply lands in the Trash of whichever account Mail drafts from, which may not be the account the original is in.

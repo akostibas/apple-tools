@@ -147,7 +147,8 @@ public enum MailDraftVerifier {
           -- store the draft subject with the caller's leading/trailing
           -- whitespace intact. Comparing trimmed==untrimmed meant a draft whose
           -- subject had surrounding whitespace could never confirm (issue #36).
-          AND TRIM(s.subject) = ? COLLATE NOCASE
+          -- Mail stores "Re: "/"Fwd: " apart from the subject, so a reply only matches with it put back.
+          AND TRIM(COALESCE(m.subject_prefix, '') || s.subject) = ? COLLATE NOCASE
           AND EXISTS (
             SELECT 1 FROM recipients r
             JOIN addresses a ON a.ROWID = r.address
