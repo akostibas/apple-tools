@@ -47,7 +47,7 @@ final class NotesLiveTests: XCTestCase {
         let lines = note.content.components(separatedBy: "\n")
         XCTAssertTrue(lines.contains("# Section One"), "heading; got:\n\(note.content)")
         XCTAssertTrue(lines.contains("## Part Two"), "heading 2; got:\n\(note.content)")
-        XCTAssertTrue(lines.contains("### Detail Three"), "heading 3; got:\n\(note.content)")
+        XCTAssertTrue(lines.contains("## Detail Three"), "heading 3 is stored as 2; got:\n\(note.content)")
         XCTAssertFalse(note.content.contains(title), "title repeated in body; got:\n\(note.content)")
         XCTAssertTrue(note.content.contains("**bold**"), "bold; got:\n\(note.content)")
         XCTAssertTrue(note.content.contains("*italic*"), "italic; got:\n\(note.content)")
