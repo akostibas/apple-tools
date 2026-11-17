@@ -251,19 +251,21 @@ public enum MusicIntegration {
     /// verbs (`play`, `pause`, `next`, `set sound volume …`) report the
     /// resulting state; `prelude` runs before the tell (e.g. reading an env
     /// var into `theQuery`). An empty command is just a read (now-playing).
-    static func controlAndReport(prelude: String = "", command: String, env: [String: String]) throws -> NowPlaying {
+    static func controlAndReport(prelude: String = "", command: String, until: String? = nil, env: [String: String]) throws -> NowPlaying {
         // Transport verbs (`pause`, `play`, `next`, `set player position …`)
         // return control before Music applies them, so an immediate `player
         // state` read races the change and reports the OLD state. A short
         // settle delay makes the read-back reflect reality. `now-playing`
         // passes no command, so it stays instant.
-        let settle = command.isEmpty ? "" : "delay 0.3"
+        // The delay alone is not enough: a play from stopped or a skip can take longer, so `until` waits for the end state.
+        let settle = command.isEmpty ? "" : "delay 0.3\n" + (until.map(waitUntil) ?? "")
         let script = """
         \(prelude)
         \(handlers)
         set fieldSep to (character id 31)
         set sectionSep to (character id 30)
         tell application "Music"
+            set wasState to player state
             \(command)
             \(settle)
             set theState to (player state as text)
@@ -317,7 +319,27 @@ public enum MusicIntegration {
 
     /// Resume / pause / toggle / skip / stop. `command` is a Music verb.
     public static func transport(_ command: String) throws -> NowPlaying {
-        return try controlAndReport(command: command, env: [:])
+        return try controlAndReport(command: command, until: settledWhen[command], env: [:])
+    }
+
+    /// What the player looks like once each verb has taken effect. Stop reads as paused on its way to stopped.
+    static let settledWhen = [
+        "play": "player state is playing",
+        "pause": "player state is not playing",
+        "stop": "player state is stopped",
+        "playpause": "player state is not wasState",
+        "next track": "wasState is not playing or player state is playing",
+        "previous track": "wasState is not playing or player state is playing",
+    ]
+
+    /// Music applies a change after the command returns, and how long it takes varies. Gives up after 2s.
+    static func waitUntil(_ condition: String) -> String {
+        return """
+        repeat 20 times
+                if \(condition) then exit repeat
+                delay 0.1
+            end repeat
+        """
     }
 
     /// Play the first library track matching `query`. Throws if nothing matches.
@@ -329,7 +351,7 @@ public enum MusicIntegration {
                 play (item 1 of matches)
         """
         do {
-            return try controlAndReport(prelude: prelude, command: command,
+            return try controlAndReport(prelude: prelude, command: command, until: settledWhen["play"],
                                         env: ["APPLE_TOOLS_MUSIC_QUERY": query])
         } catch let MusicError.scriptFailed(detail) where detail.contains("NO_MATCH") {
             throw MusicError.notFound("no library track matches: \(query)")
@@ -346,7 +368,7 @@ public enum MusicIntegration {
                 play (item 1 of matches)
         """
         do {
-            return try controlAndReport(prelude: prelude, command: command,
+            return try controlAndReport(prelude: prelude, command: command, until: settledWhen["play"],
                                         env: ["APPLE_TOOLS_MUSIC_PLAYLIST": name])
         } catch let MusicError.scriptFailed(detail) where detail.contains("NO_MATCH") {
             throw MusicError.notFound("no playlist matches: \(name)")
@@ -371,7 +393,7 @@ public enum MusicIntegration {
         let (out, err) = runAppleScript("""
         tell application "Music"
             set shuffle enabled to \(on ? "true" : "false")
-            delay 0.2
+            \(waitUntil("shuffle enabled is \(on ? "true" : "false")"))
             return (shuffle enabled as text)
         end tell
         """, [:], nil)
@@ -384,7 +406,7 @@ public enum MusicIntegration {
         let (out, err) = runAppleScript("""
         tell application "Music"
             set song repeat to \(mode)
-            delay 0.2
+            \(waitUntil("song repeat is \(mode)"))
             return (song repeat as text)
         end tell
         """, [:], nil)

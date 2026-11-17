@@ -11,21 +11,5 @@ enum LiveExemptions {
         "email.reply": "#79: would mean replying to one of the user's real messages; needs a safe target",
         "email.move": "#79",
         "email.fetch_attachment": "#79: needs a message with an attachment to be discovered",
-        "music.love": "#79: restore the track's previous state",
-        "music.rate": "#79: restore the track's previous state",
-        "music.playlist-add": "#79",
-        "music.playlist-remove": "#79",
-        // Everything below changes what the user hears or sees, so it belongs in the attended group.
-        "music.play": "#79 (attended)",
-        "music.pause": "#79 (attended)",
-        "music.playpause": "#79 (attended)",
-        "music.next": "#79 (attended)",
-        "music.previous": "#79 (attended)",
-        "music.stop": "#79 (attended)",
-        "music.seek": "#79 (attended)",
-        "music.volume": "#79 (attended)",
-        "music.shuffle": "#79 (attended)",
-        "music.repeat": "#79 (attended)",
-        "music.airplay-select": "#79 (attended)",
     ]
 }
