@@ -7,9 +7,9 @@ import Foundation
 /// the AppleScript `body` API actually round-trips (validated empirically on
 /// macOS 15 — see docs/reference/macos-internals/apple-notes-applescript.md):
 ///
-///  - Headings: Notes stores a scripted `<h1>`/`<h2>`/`<h3>` as bold text at
-///    24px / 18px / body size, never as its own Title/Heading styles. We emit
-///    the tags and read back both that bold form and real headings (which
+///  - Headings: Notes stores a scripted `<h1>`/`<h2>` as bold text at 24px /
+///    18px, never as its own Title/Heading styles. We emit the tags (`###` as
+///    `<h2>`) and read back both that bold form and real headings (which
 ///    Notes reports as `<h1>`/`<h2>`/`<h3>`).
 ///  - Bold / italic / strikethrough / monospaced: round-trip via
 ///    `<b>`/`<i>`/`<strike>`/`<tt>`.
@@ -66,7 +66,8 @@ public enum NotesMarkdown {
 
             // Headings
             if trimmed.hasPrefix("### ") {
-                html += "<div><h3>\(inlineToHTML(String(trimmed.dropFirst(4))))</h3></div>"
+                // h2 on purpose: Notes keeps no size for an h3, so after an append it reads as plain bold.
+                html += "<div><h2>\(inlineToHTML(String(trimmed.dropFirst(4))))</h2></div>"
             } else if trimmed.hasPrefix("## ") {
                 html += "<div><h2>\(inlineToHTML(String(trimmed.dropFirst(3))))</h2></div>"
             } else if trimmed.hasPrefix("# ") {
@@ -424,12 +425,11 @@ public enum NotesMarkdown {
         return lines
     }
 
-    /// How Notes reports a scripted heading. macOS 27 puts a bold system font
-    /// tag inside the `<b>`; with no size span, that font alone marks an `<h3>`.
+    /// How Notes reports a scripted heading. macOS 27 puts a bold system font tag inside the `<b>`.
     private static let headingOpeners: [(html: String, prefix: String)] = {
         let font = #"<b><font face=".AppleSystemUIFontBold">"#
         let h1 = #"<span style="font-size: 24px">"#, h2 = #"<span style="font-size: 18px">"#
-        return [("<b>" + h1, "# "), ("<b>" + h2, "## "), (font + h1, "# "), (font + h2, "## "), (font, "### ")]
+        return [("<b>" + h1, "# "), ("<b>" + h2, "## "), (font + h1, "# "), (font + h2, "## ")]
     }()
 
     private static func matchesAhead(_ chars: [Character], _ i: Int, _ s: String) -> Bool {

@@ -8,7 +8,7 @@ final class NotesMarkdownTests: XCTestCase {
     func testWriteHeadings() {
         XCTAssertEqual(NotesMarkdown.markdownToNotesHTML("# Big"), "<div><h1>Big</h1></div>")
         XCTAssertEqual(NotesMarkdown.markdownToNotesHTML("## Med"), "<div><h2>Med</h2></div>")
-        XCTAssertEqual(NotesMarkdown.markdownToNotesHTML("### Small"), "<div><h3>Small</h3></div>")
+        XCTAssertEqual(NotesMarkdown.markdownToNotesHTML("### Small"), "<div><h2>Small</h2></div>")
     }
 
     func testWriteInlineEmphasis() {
@@ -103,7 +103,7 @@ final class NotesMarkdownTests: XCTestCase {
     }
 
     func testReadHeadingSystemFontForm() {
-        // macOS 27 shape, captured from a note created with #, ## and ### (issue #100).
+        // macOS 27 shape, captured from a note created with #, ## and an <h3> (issue #100).
         let html = """
         <div><b><font face=".AppleSystemUIFontBold"><span style="font-size: 24px">My Note</span></font></b></div>
         <div><b><font face=".AppleSystemUIFontBold"><span style="font-size: 24px">One</span></font></b></div>
@@ -112,7 +112,7 @@ final class NotesMarkdownTests: XCTestCase {
         <div><b><font face=".AppleSystemUIFontBold">Three</font></b></div>
         """
         XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html, title: "My Note"),
-                       "# One\npara **bold**\n## Two\n### Three")
+                       "# One\npara **bold**\n## Two\n**Three**")
     }
 
     func testReadRealHeadingLevels() {
