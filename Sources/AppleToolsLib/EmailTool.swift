@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 public struct EmailTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "email",
-        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'headers' (a message's headers by ID — all, or only those in 'names'; never downloads the body), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message, saved in Drafts — does NOT send; supports file attachments by absolute path; returns the draft's 'id'), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send; returns the draft's 'id'), 'discard' (move a draft to Trash by the 'id' that draft/reply returned; only drafts are accepted, received or sent mail is refused; needs Mail running), 'mailboxes' (list each account's mailboxes with counts), 'move' (move a message by ID to a mailbox, in the same or another account; refused for Gmail accounts and for the Drafts mailbox; needs Mail running).",
+        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes; works with Mail closed, but then carries a 'warning' that the list is only as fresh as Mail's last run), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'headers' (a message's headers by ID — all, or only those in 'names'; never downloads the body), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message, saved in Drafts — does NOT send; supports file attachments by absolute path; returns the draft's 'id'), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send; returns the draft's 'id'), 'discard' (move a draft to Trash by the 'id' that draft/reply returned; only drafts are accepted, received or sent mail is refused; needs Mail running), 'mailboxes' (list each account's mailboxes with counts), 'move' (move a message by ID to a mailbox, in the same or another account; refused for Gmail accounts and for the Drafts mailbox; needs Mail running).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
@@ -317,34 +317,30 @@ public struct EmailTool: ProbeTool {
     // MARK: - Inbox
 
     private func inbox(limit: Int) -> (String, Bool) {
-        let entries: [EmailIntegration.InboxEntry]
-        do {
-            entries = try EmailIntegration.recentInboxMessages(limit: limit)
-        } catch let e as EmailIntegration.EmailError {
-            return (e.description, true)
-        } catch {
-            return (error.localizedDescription, true)
-        }
+        let hits: [EmailSearch.Hit]
+        do { hits = try EmailSearch.inbox(limit: limit) } catch { return ("\(error)", true) }
 
-        let messages: [[String: Any]] = entries.map { entry in
+        let messages: [[String: Any]] = hits.map { h in
             var dict: [String: Any] = [
-                "id": entry.id,
-                "subject": entry.subject,
-                "from": entry.from,
-                "date": entry.date,
-                "read": entry.read,
+                "id": EmailIntegration.bareMessageID(h.messageID),
+                "subject": h.subject,
+                "from": h.senderName.map { "\($0) <\(h.senderAddress)>" } ?? h.senderAddress,
+                "date": DateFormatting.iso(h.date),
+                "read": h.read,
             ]
-            if entry.attachmentCount > 0 {
-                dict["attachment_count"] = entry.attachmentCount
-            }
-            if let acct = entry.accountID { dict.merge(EmailSearch.accountFields(acct)) { a, _ in a } }
+            if h.attachmentCount > 0 { dict["attachment_count"] = h.attachmentCount }
+            dict.merge(EmailSearch.accountFields(h.mailboxURL)) { a, _ in a }
             return dict
         }
 
-        let response: [String: Any] = [
+        var response: [String: Any] = [
             "count": messages.count,
             "messages": messages,
         ]
+        // The index only moves while Mail is running to sync it.
+        if !EmailIntegration.isMailRunning() {
+            response["warning"] = "Mail is not running, so this is the inbox as of when it last ran and newer mail is missing. Open Mail to bring it up to date."
+        }
         return (jsonEncode(response), false)
     }
 
