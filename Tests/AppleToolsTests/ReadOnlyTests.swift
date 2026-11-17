@@ -157,8 +157,6 @@ final class EmailReadOnlyTests: ReadOnlyCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         try LiveTest.reads("email", "inbox", "search", "read", "headers", "mailboxes")
-        // #84: reading the inbox opens Mail when it is closed.
-        try requireRunning("Mail")
     }
 
     func testAccountsAreStillListed() throws {

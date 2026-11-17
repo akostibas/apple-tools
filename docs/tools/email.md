@@ -11,6 +11,8 @@ Envelope Index; also used by the AppleScript fallback).
 ## Actions
 
 - **inbox** — recent messages across all accounts' inboxes (previews only).
+  Never opens Mail. With Mail closed the result carries a `warning`: the list
+  is as of Mail's last run, and it's the caller's call whether to open Mail.
 - **search** — find messages by query / sender / recipient / date across all
   mail (previews only). Matches subject, sender, and body *preview* — not the
   full body.
@@ -127,7 +129,6 @@ path, at the cost of the threading headers above.
 What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
 - **Received mail can't be planted.** If a read comes back empty, only the remembered messages or a look in Mail can tell "none" from "broken".
-- **Reads are skipped while Mail is closed**, because reading the inbox would open it (#84).
 - **Attachment fetch is only proven on a draft**, the test's own. Fetching from received mail, where Mail may not have downloaded the attachment yet, is not.
 - **Move is only proven within one account**, on the test's own trashed draft: Trash to Archive and back. It needs an account that isn't Gmail, has an Archive mailbox and an address no other account shares; without one the test skips. Moves between accounts are not proven.
 - **The reply test drafts a reply to one of your real messages**, since a reply needs one: an inbox message you sent yourself, otherwise one from a no-reply address, otherwise it skips. The original is only read. The draft quotes it, is never sent, and is discarded; if the discard fails the test fails and names the draft.

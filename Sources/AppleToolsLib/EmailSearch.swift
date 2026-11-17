@@ -26,6 +26,8 @@ enum EmailSearch {
         let subject: String
         let mailboxURL: String
         var labelURLs: [String] = []  // Gmail labels (INBOX, user folders); empty elsewhere
+        var read = false
+        var attachmentCount = 0
         let snippet: String?
         let aiSummary: String?
     }
@@ -168,7 +170,9 @@ enum EmailSearch {
             g.message_id_header         AS msgid,
             sm.summary                  AS snippet,
             g.generated_summary         AS gen_summary_rowid,
-            \(labelsColumn)            AS label_urls
+            \(labelsColumn)            AS label_urls,
+            m.read                      AS read,
+            (SELECT count(*) FROM attachments at WHERE at.message = m.ROWID) AS attachment_count
         FROM messages m
         JOIN addresses a  ON a.ROWID  = m.sender
         JOIN subjects s   ON s.ROWID  = m.subject
@@ -257,6 +261,8 @@ enum EmailSearch {
                 subject: subject,
                 mailboxURL: mailboxURL,
                 labelURLs: splitLabels(columnString(stmt, 9)),
+                read: sqlite3_column_int64(stmt, 10) != 0,
+                attachmentCount: Int(sqlite3_column_int64(stmt, 11)),
                 snippet: snippet?.isEmpty == false ? snippet : nil,
                 aiSummary: ai
             ))
@@ -265,6 +271,16 @@ enum EmailSearch {
         }
 
         return hits
+    }
+
+    /// Newest messages across every account's INBOX, read from the index so Mail is never launched.
+    static func inbox(limit: Int, dbPath: String = defaultDatabasePath) throws -> [Hit] {
+        var criteria = Criteria()
+        criteria.limit = limit
+        criteria.excludeSelf = false
+        criteria.mailboxIDs = try mailboxes(dbPath: dbPath)
+            .filter { $0.name.caseInsensitiveCompare("INBOX") == .orderedSame }.map { $0.rowID }
+        return try run(criteria, dbPath: dbPath)
     }
 
     // MARK: - Distinct-sender rollup

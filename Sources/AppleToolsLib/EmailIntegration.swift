@@ -35,16 +35,6 @@ public enum EmailIntegration {
         }
     }
 
-    public struct InboxEntry {
-        public let id: String
-        public let subject: String
-        public let from: String
-        public let date: String
-        public let read: Bool
-        public let attachmentCount: Int
-        public var accountID: String? = nil
-    }
-
     public struct AttachmentMeta {
         public let filename: String
         public let mimeType: String
@@ -121,93 +111,6 @@ public enum EmailIntegration {
             return (false, "mail access denied: \(err)")
         }
         return (true, "mail access granted")
-    }
-
-    // MARK: - Inbox
-
-    /// Fetch recent messages from each account's INBOX (newest-first per
-    /// account), then merge-sort across accounts by date (newest first) and
-    /// trim to `limit`. Fetching up to `limit` per account guarantees the
-    /// global newest `limit` are contained in the union before trimming.
-    public static func recentInboxMessages(limit: Int) throws -> [InboxEntry] {
-        let script = """
-        \(DateFormatting.appleScriptComponentsHandler)
-        set fieldSep to (character id 31)
-        tell application "Mail"
-            set output to ""
-            set allAccounts to every account
-            repeat with acct in allAccounts
-                try
-                    set acctID to id of acct
-                    set inboxBox to mailbox "INBOX" of acct
-                    set msgs to messages of inboxBox
-                    set msgCount to count of msgs
-                    set fetchCount to \(limit)
-                    if fetchCount > msgCount then set fetchCount to msgCount
-                    -- Messages are newest-first in Mail.app
-                    repeat with i from 1 to fetchCount
-                        set m to item i of msgs
-                        set mID to message id of m
-                        set mSubject to subject of m
-                        set mFrom to sender of m
-                        set mDate to my atDateComponents(date received of m)
-                        set mRead to read status of m
-                        set mAttCount to count of mail attachments of m
-                        set output to output & mID & fieldSep & mSubject & fieldSep & mFrom & fieldSep & mDate & fieldSep & mRead & fieldSep & mAttCount & fieldSep & acctID & linefeed
-                    end repeat
-                end try
-            end repeat
-            return output
-        end tell
-        """
-
-        let (out, err) = runAppleScript(script, [:], nil)
-        if let err = err { throw EmailError.scriptFailed(err) }
-
-        return mergeInboxRows(out, limit: limit)
-    }
-
-    /// Parse the tab-delimited inbox rows the AppleScript emits (grouped by
-    /// account, newest-first within each account), merge-sort the union
-    /// newest-first by date, and trim to `limit`.
-    ///
-    /// Extracted for testability: the AppleScript can't run under XCTest, but
-    /// the merge/sort/trim — where the "only the first account's mail is
-    /// visible" bug lived — is pure and does have coverage.
-    static func mergeInboxRows(_ out: String, limit: Int) -> [InboxEntry] {
-        var messages: [InboxEntry] = []
-        for line in out.components(separatedBy: "\n") where !line.isEmpty {
-            let parts = line.components(separatedBy: fieldSep)
-            guard parts.count >= 5 else { continue }
-            let attCount = (parts.count >= 6) ? (Int(parts[5]) ?? 0) : 0
-            messages.append(InboxEntry(
-                id: parts[0],
-                subject: parts[1],
-                from: parts[2],
-                date: DateFormatting.isoFromAppleScriptComponents(parts[3]),
-                read: parts[4] == "true",
-                attachmentCount: attCount,
-                accountID: parts.count >= 7 && !parts[6].isEmpty ? parts[6] : nil
-            ))
-        }
-
-        // Merge across accounts: the AppleScript emits messages grouped by
-        // account, so sort the union newest-first by parsed date before
-        // trimming — otherwise account 2's mail is invisible whenever account
-        // 1 already fills `limit`. Entries whose date failed to parse sort
-        // last rather than jumping to the top.
-        let isoParser = ISO8601DateFormatter()
-        isoParser.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone]
-        messages.sort { a, b in
-            let da = isoParser.date(from: a.date) ?? .distantPast
-            let db = isoParser.date(from: b.date) ?? .distantPast
-            return da > db
-        }
-
-        if messages.count > limit {
-            messages = Array(messages.prefix(limit))
-        }
-        return messages
     }
 
     // MARK: - Read
