@@ -234,8 +234,9 @@ final class MusicPlaybackLiveTests: XCTestCase {
                 now.volume = 0
                 _ = withCuedTrack("""
                     play t
-                    delay 0.5
+                    \(MusicIntegration.waitUntil("player state is playing"))
                     set player position to \(before.position)
+                    \(MusicIntegration.waitUntil("player position > \(before.position - 1)"))
                     \(before.state == "playing" ? "" : "pause")
                     delay 0.3
                     """)
@@ -264,8 +265,9 @@ final class MusicPlaybackLiveTests: XCTestCase {
             Music has \(MusicLive.describe(before.track)) cued from Apple Music, not from your library, and a streamed \
             track cannot be put back afterwards. Play any song from your library (paused is fine) and re-run.
             """)
-        let tracks = MusicLive.pickTracks(2) { $0["duration"] as? Double ?? 0 >= 60 }
-        try XCTSkipIf(tracks.count < 2, "needs two library tracks of a minute or more to play")
+        // Downloaded only: a cloud track can take seconds to buffer, and then play reads back as paused.
+        let tracks = MusicLive.pickTracks(2) { $0["kind"] as? String == "file track" && $0["duration"] as? Double ?? 0 >= 60 }
+        try XCTSkipIf(tracks.count < 2, "needs two downloaded library tracks of a minute or more to play")
         let made = MusicLive.call("playlist-create", ["name": playlistName])
         XCTAssertEqual(made.obj["verified"] as? Bool, true, made.text)
         madePlaylist = made.obj["already_existed"] as? Bool != true
@@ -280,6 +282,22 @@ final class MusicPlaybackLiveTests: XCTestCase {
         let volume = MusicLive.call("volume", ["level": quiet])
         XCTAssertEqual(volume.obj["volume"] as? Int, quiet, volume.text)
 
+        func expect(_ reply: Reply, _ state: String, on trackID: String?, _ step: String) {
+            XCTAssertFalse(reply.isError, "\(step): \(reply.text)")
+            XCTAssertEqual(reply.obj["state"] as? String, state, "\(step): \(reply.text)")
+            if let trackID { XCTAssertEqual(MusicLive.id(reply.obj["track"] as? TrackInfo), trackID, "\(step): \(reply.text)") }
+        }
+        // Which track comes first depends on the user's shuffle setting.
+        expect(MusicLive.call("play", ["playlist": playlistName]), "playing", on: nil, "play a playlist")
+
+        // With nothing cued, Music reports shuffle off and repeat off whatever they are, and ignores changes.
+        // The real settings only show once something plays, so that is when they are recorded.
+        if before.track == nil {
+            let real = snapshot()
+            before.shuffle = real.shuffle
+            before.repeatMode = real.repeatMode
+        }
+
         // Ends with shuffle off, so the playlist plays in order below.
         for (state, expected) in [("on", true), ("off", false)] {
             let shuffle = MusicLive.call("shuffle", ["state": state])
@@ -290,12 +308,7 @@ final class MusicPlaybackLiveTests: XCTestCase {
             XCTAssertEqual(repeated.obj["repeat"] as? String, mode, repeated.text)
         }
 
-        func expect(_ reply: Reply, _ state: String, on trackID: String?, _ step: String) {
-            XCTAssertFalse(reply.isError, "\(step): \(reply.text)")
-            XCTAssertEqual(reply.obj["state"] as? String, state, "\(step): \(reply.text)")
-            if let trackID { XCTAssertEqual(MusicLive.id(reply.obj["track"] as? TrackInfo), trackID, "\(step): \(reply.text)") }
-        }
-        expect(MusicLive.call("play", ["playlist": playlistName]), "playing", on: first, "play a playlist")
+        expect(MusicLive.call("play", ["playlist": playlistName]), "playing", on: first, "play a playlist in order")
         expect(MusicLive.call("pause"), "paused", on: first, "pause")
         expect(MusicLive.call("play"), "playing", on: first, "play resumes")
         expect(MusicLive.call("playpause"), "paused", on: first, "playpause while playing")

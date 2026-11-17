@@ -192,7 +192,12 @@ apple-tools music airplay-select --device "Living Room"
 - **Transport commands settle asynchronously.** Music applies `pause`/`play`/
   `next`/`seek` just after returning control, so the tool waits a brief moment
   before reading back the resulting `state`/`position`. Expect a ~0.3s pause on
-  those actions; it's what makes the confirmation accurate.
+  those actions; it's what makes the confirmation accurate. If the player has
+  not reached the expected state by then (a cloud track still buffering), it
+  waits up to 2s more and then reports what it sees, which can be `paused`.
+- **Shuffle and repeat need something cued.** With nothing cued, Music reports
+  shuffle off and repeat off whatever they are set to, and ignores changes; the
+  reply then shows the unchanged value. Play something first.
 - **iCloud sync volatility.** A track added from Apple Music becomes visible here
   once it syncs to the local library (as a `shared`/`file track`), but that add
   can also silently revert on a later sync — so a track present one moment may be
@@ -241,9 +246,11 @@ What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/RE
 - **Play history and the library can't be planted.** `stats`, `mix` and `search` are checked against remembered tracks only.
 - **Reads are skipped while Music is closed**, because scripting it would open it.
 - **Playback controls need you there.** `make test-attended` plays a few seconds of two library tracks at low volume, then puts the player back: what was cued, where it was, playing or paused, volume, shuffle and repeat.
-  - Music cannot be asked what is in Up Next, so songs you queued by hand and the shuffle order are lost. Your track comes back in the playlist it was playing from, at the same position.
+  - **Your queue is lost.** Your song comes back at the same position, but nothing follows it: Music's scripting can cue one song again, not the playlist or Up Next around it, so playback stops when that song ends.
   - A track streamed from Apple Music that is not in your library cannot be cued again, so the playback test skips instead of losing it. Play a library song first.
   - If your track was paused, it is restarted silently and paused again at the same spot.
+  - One of the two test tracks may gain a skip in its skip count.
+  - It needs two downloaded tracks; cloud tracks buffer too unpredictably to check.
 - **AirPlay is only re-selected, never moved.** The test selects the output already in use, which proves the command and its read-back but not that sound moves to another speaker. It skips when several outputs are selected.
 - **Favorite and rating are tested on one of your tracks**: an unrated, unfavorited one that is not cued, set back afterwards. The change may briefly sync to your other devices. If the restore fails, the test names the track.
 - **Playlist add and remove run only on a playlist the test made**, named `apple-tools live test …`, which it deletes.
