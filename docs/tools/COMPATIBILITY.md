@@ -63,7 +63,7 @@ One line per tool; each tool's page has the detail under *Testing gaps*.
 - **media**: nothing can be planted, so an empty list is undecidable on a new Mac.
 - **music**: play history can't be planted; playback controls need the attended group; skipped while Music is closed.
 - **notes**: test folders are left behind; locked-note refusals are untested.
-- **open_uri**: no live test; attended only.
+- **open_uri**: attended only, and only a folder URI is opened.
 - **photos**: keyword search can't be planted; import is untested because the photo can't be removed.
 - **reminders**: no known gap.
 - **screenshot**: skipped unless Screen Recording is already granted.

@@ -69,6 +69,44 @@ final class LiveCoverageTests: XCTestCase {
         XCTAssertTrue(found.isEmpty, "\n" + found.joined(separator: "\n"))
     }
 
+    /// Tools named under "What a run leaves behind" in Tests/README.md.
+    static func toolsWithLeftoversDocumented(in readme: String) -> Set<String> {
+        guard let start = readme.range(of: "## What a run leaves behind") else { return [] }
+        let rest = readme[start.upperBound...]
+        let section = rest.range(of: "\n## ").map { rest[..<$0.lowerBound] } ?? rest
+        let regex = try! NSRegularExpression(pattern: #"(?m)^- \*\*([a-z_]+):\*\* \S"#)
+        let ns = String(section) as NSString
+        return Set(regex.matches(in: ns as String, range: NSRange(location: 0, length: ns.length))
+            .map { ns.substring(with: $0.range(at: 1)) })
+    }
+
+    func testEveryToolWithAWriteTestSaysWhatItLeavesBehind() throws {
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let sources = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "swift" && $0.lastPathComponent != "LiveCoverageTests.swift" }
+            .map { try String(contentsOf: $0, encoding: .utf8) }
+            .joined(separator: "\n")
+        let writers = Set(Self.claims(in: sources).writes.map { $0.components(separatedBy: ".")[0] })
+        let readme = try String(contentsOf: dir.deletingLastPathComponent().appendingPathComponent("README.md"), encoding: .utf8)
+        let missing = writers.subtracting(Self.toolsWithLeftoversDocumented(in: readme)).sorted()
+        XCTAssertTrue(missing.isEmpty, """
+            These tools have a write or attended test but no line under "What a run leaves behind" \
+            in Tests/README.md: \(missing.joined(separator: ", ")). Add "- **tool:** ..." (say "nothing" if so).
+            """)
+    }
+
+    func testLeftoverListIsReadFromTheReadme() {
+        let found = Self.toolsWithLeftoversDocumented(in: """
+            ## What a run leaves behind
+            - **notes:** folders.
+            - **open_uri:** a window.
+            - **blank:**
+            ## Adding an action
+            - **later:** not in the section.
+            """)
+        XCTAssertEqual(found, ["notes", "open_uri"])
+    }
+
     func testClaimsAreReadFromSource() {
         let (reads, writes) = Self.claims(in: """
             try LiveTest.reads("notes", "list", "search")
