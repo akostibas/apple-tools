@@ -54,12 +54,12 @@ and stop being read.
 
 One line per tool; each tool's page has the detail under *Testing gaps*.
 
-- **calendar**: create, update and delete have no live test yet.
+- **calendar**: invites from other people and events on read-only calendars are never touched; needs a calendar shared with nobody.
 - **clipboard**: no known gap.
 - **contacts**: refusals for read-only accounts and cards spanning two accounts can't be tested without such contacts.
 - **documents**: an unindexed file looks the same as a broken Spotlight search.
 - **email**: received mail can't be planted; reply and move are untested; skipped while Mail is closed.
-- **imessage**: history can't be planted; send is untested and would leave a message behind.
+- **imessage**: only a send to yourself over iMessage is proven; each slow run leaves that message behind.
 - **media**: nothing can be planted, so an empty list is undecidable on a new Mac.
 - **music**: play history can't be planted; playback controls need the attended group; skipped while Music is closed.
 - **notes**: test folders are left behind; locked-note refusals are untested.

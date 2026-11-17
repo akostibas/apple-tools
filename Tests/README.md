@@ -46,9 +46,11 @@ want to run them. `make test-slow` prints this list before it starts. The unit
 and read-only groups leave nothing.
 
 <!-- One line per tool, as "- **tool:** ...". A unit test requires a line for every tool with a write test. -->
+- **calendar:** nothing. Test events are dated 2028 and 2029 and go only in a calendar that is shared with nobody; they do sync to that calendar's account for the few seconds they exist.
 - **clipboard:** nothing. Whatever was on the clipboard is put back, including images and files.
 - **contacts:** nothing.
 - **email:** one draft labeled `apple-tools live test` in the Trash of your default mail account.
+- **imessage:** one message labeled `apple-tools live test`, with a small text file, in your conversation with yourself (it shows as sent and received). A copy of the file also stays under `~/Library/Messages/Attachments/apple-tools/`. Sent messages can't be deleted.
 - **music:** nothing.
 - **notes:** four empty folders, `AppleToolsLive A`, `AppleToolsLive B`, `AppleToolsLive C` and `AppleToolsFmtLive`. A scripted folder delete comes back through iCloud, so they are reused on every run.
 - **open_uri:** attended only. A Finder window showing a temporary folder may stay open.
