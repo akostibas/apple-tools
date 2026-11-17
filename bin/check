@@ -68,7 +68,15 @@ run_group() {
   echo "== $name"
   "$@" >"$log" 2>&1
   local rc=$?
-  local totals; totals="$(grep -E 'Executed [0-9]+ tests?' "$log" | tail -1 | sed 's/^[[:space:]]*//')"
+  local line; line="$(grep -E 'Executed [0-9]+ tests?' "$log" | tail -1)"
+  # "ran" excludes skips: a group where every test skipped has proven nothing.
+  local executed skipped ran totals=""
+  executed="$(printf '%s' "$line" | sed -nE 's/.*Executed ([0-9]+) tests?.*/\1/p')"
+  skipped="$(printf '%s' "$line" | sed -nE 's/.*with ([0-9]+) tests? skipped.*/\1/p')"
+  if [ -n "$executed" ]; then
+    ran=$(( executed - ${skipped:-0} ))
+    totals="ran $ran test(s)$(printf '%s' "$line" | sed -nE 's/.*( in [0-9.]+) \(.*/\1s/p')"
+  fi
   if [ "$name" != "unit" ]; then
     # A skip in a live group is information: nothing to check, or an app is closed.
     # Skips that only say "this test belongs to another group" are left out.
@@ -82,6 +90,13 @@ run_group() {
     failed=$((failed + 1))
     summary="$summary\n  ✗ $name: ${totals:-did not run}"
   else
+    if [ "${ran:-0}" -eq 0 ]; then
+      echo "  nothing ran — no test in this group matches the selection"
+      rm -f "$log"
+      summary="$summary\n  · $name: nothing ran"
+      echo ""
+      return
+    fi
     echo "  ok — $totals"
     rm -f "$log"
     summary="$summary\n  ✓ $name: $totals"
@@ -99,6 +114,13 @@ if [ "$read_only" -eq 1 ]; then
     APPLE_TOOLS_LIVE_REFRESH="$refresh" xcrun swift test --filter "$live_filter"
 fi
 if [ "$slow" -eq 1 ]; then
+  echo "What this leaves behind on your Mac (Tests/README.md):"
+  awk '/^## What a run leaves behind/{on=1; next} /^## /{on=0} on && /^- \*\*/' Tests/README.md |
+    while IFS= read -r line; do
+      name="${line#- \*\*}"; name="${name%%:*}"
+      case ",$tools," in *",$name,"*|",,") echo "  $line" ;; esac
+    done
+  echo ""
   run_group "slow" env APPLE_TOOLS_LIVE_WRITE=1 APPLE_TOOLS_LIVE_TOOLS="$tools" \
     xcrun swift test --filter "$live_filter"
 fi

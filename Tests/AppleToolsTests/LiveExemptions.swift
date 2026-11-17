@@ -32,6 +32,5 @@ enum LiveExemptions {
         "music.shuffle": "#79 (attended)",
         "music.repeat": "#79 (attended)",
         "music.airplay-select": "#79 (attended)",
-        "open_uri": "#79 (attended): opens a real URI in front of the user",
     ]
 }

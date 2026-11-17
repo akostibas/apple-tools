@@ -38,13 +38,21 @@ for a tool is the alarm.
 - Mail and Music reads are skipped while that app is closed, because reading
   would open it in front of you.
 
-## What the slow group leaves behind
+## What a run leaves behind
 
-It removes what it creates, even when a test fails. The exceptions:
+The slow and attended groups remove what they create, even when a test fails.
+This is everything that still remains afterwards, so you can decide whether you
+want to run them. `make test-slow` prints this list before it starts. The unit
+and read-only groups leave nothing.
 
-- **Notes:** three folders named `AppleToolsLive A/B/C` and `AppleToolsFmtLive`
-  stay, empty. A scripted folder delete comes back through iCloud.
-- **Email:** the test draft ends up in the account's Trash, not erased.
+<!-- One line per tool, as "- **tool:** ...". A unit test requires a line for every tool with a write test. -->
+- **clipboard:** nothing. Whatever was on the clipboard is put back, including images and files.
+- **contacts:** nothing.
+- **email:** one draft labeled `apple-tools live test` in the Trash of your default mail account.
+- **music:** nothing.
+- **notes:** four empty folders, `AppleToolsLive A`, `AppleToolsLive B`, `AppleToolsLive C` and `AppleToolsFmtLive`. A scripted folder delete comes back through iCloud, so they are reused on every run.
+- **open_uri:** attended only. A Finder window showing a temporary folder may stay open.
+- **reminders:** nothing.
 
 ## Adding an action
 
@@ -54,6 +62,8 @@ Every action a tool declares needs a live test, or a written reason why not.
 - Start the test with `try LiveTest.reads("tool", "action")`,
   `LiveTest.writes(...)` or `LiveTest.attended(...)`. The names must be string
   literals; the rule reads them from the source.
+- A tool with a `writes` or `attended` test needs a line under *What a run
+  leaves behind* above, even if that line says "nothing".
 - An action that changes data may not be claimed by a `reads` test.
 - If it truly can't be tested, add it to `LiveExemptions.exempt` with the reason.
   `LiveExemptions.owed` is the list of tests not written yet, and should only

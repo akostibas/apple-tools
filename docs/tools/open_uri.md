@@ -52,4 +52,4 @@ apple-tools open_uri --uri "tel:+15551234567"
 
 What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
-- **No live test.** Opening a URI puts something in front of the user, so it can only be an attended test, which isn't written yet (#79).
+- **Attended only.** Opening a URI puts something in front of the user, so its test runs only with `make test-attended`. It opens a temporary folder in Finder; web, `mailto:` and deep-link schemes are not exercised.
