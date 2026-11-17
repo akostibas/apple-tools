@@ -240,5 +240,10 @@ What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/RE
 
 - **Play history and the library can't be planted.** `stats`, `mix` and `search` are checked against remembered tracks only.
 - **Reads are skipped while Music is closed**, because scripting it would open it.
-- **Playback controls** (play, pause, skip, seek, volume, shuffle, repeat, AirPlay) change what you hear, so they belong in the attended group and have no test yet (#79).
-- **Favorite, rating, and adding or removing playlist tracks have no live test yet** (#79). Creating and deleting a playlist is covered.
+- **Playback controls need you there.** `make test-attended` plays a few seconds of two library tracks at low volume, then puts the player back: what was cued, where it was, playing or paused, volume, shuffle and repeat.
+  - Music cannot be asked what is in Up Next, so songs you queued by hand and the shuffle order are lost. Your track comes back in the playlist it was playing from, at the same position.
+  - A track streamed from Apple Music that is not in your library cannot be cued again, so the playback test skips instead of losing it. Play a library song first.
+  - If your track was paused, it is restarted silently and paused again at the same spot.
+- **AirPlay is only re-selected, never moved.** The test selects the output already in use, which proves the command and its read-back but not that sound moves to another speaker. It skips when several outputs are selected.
+- **Favorite and rating are tested on one of your tracks**: an unrated, unfavorited one that is not cued, set back afterwards. The change may briefly sync to your other devices. If the restore fails, the test names the track.
+- **Playlist add and remove run only on a playlist the test made**, named `apple-tools live test …`, which it deletes.
