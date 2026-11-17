@@ -69,6 +69,14 @@ apple-tools notes rename-folder --folder "Misc" --name "Archive"
   styles survive only approximately: the Title style and Menlo text change.
   A true in-place append isn't possible: Notes' scripting has no insert, and
   the other routes (store writes, UI scripting, a Shortcut) are off-limits.
+- **Headings are bold text, not Notes headings.** `#`, `##` and `###` are
+  written as bold text at three sizes and read back at the same levels, but
+  Notes' own Title / Heading / Subheading styles can't be set by script: Notes
+  stores those lines as body text. A `###` line looks like a bold body line,
+  and a later `append` to the note turns earlier `###` lines into plain bold
+  (Notes keeps no size for them). Headings styled in the Notes app itself read
+  back correctly. The only routes to real styles (store writes, UI scripting,
+  a Shortcut) are off-limits.
 - **Links and checkboxes can't be stored.** On write, `[text](url)` is flattened
   to `text (url)` and `- [ ]` becomes a plain bullet (per the tool description);
   Apple Notes can't persist link hrefs or checkbox state via this API. On `read`,

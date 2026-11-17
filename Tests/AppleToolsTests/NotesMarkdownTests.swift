@@ -8,6 +8,7 @@ final class NotesMarkdownTests: XCTestCase {
     func testWriteHeadings() {
         XCTAssertEqual(NotesMarkdown.markdownToNotesHTML("# Big"), "<div><h1>Big</h1></div>")
         XCTAssertEqual(NotesMarkdown.markdownToNotesHTML("## Med"), "<div><h2>Med</h2></div>")
+        XCTAssertEqual(NotesMarkdown.markdownToNotesHTML("### Small"), "<div><h3>Small</h3></div>")
     }
 
     func testWriteInlineEmphasis() {
@@ -99,6 +100,25 @@ final class NotesMarkdownTests: XCTestCase {
         // Notes normalizes <h1> to bold + a 24px span; we must read it back.
         let html = #"<div><b><span style="font-size: 24px">Big</span></b></div><div>body</div>"#
         XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html), "# Big\nbody")
+    }
+
+    func testReadHeadingSystemFontForm() {
+        // macOS 27 shape, captured from a note created with #, ## and ### (issue #100).
+        let html = """
+        <div><b><font face=".AppleSystemUIFontBold"><span style="font-size: 24px">My Note</span></font></b></div>
+        <div><b><font face=".AppleSystemUIFontBold"><span style="font-size: 24px">One</span></font></b></div>
+        <div>para <b>bold</b><br></div>
+        <div><b><font face=".AppleSystemUIFontBold"><span style="font-size: 18px">Two</span></font></b></div>
+        <div><b><font face=".AppleSystemUIFontBold">Three</font></b></div>
+        """
+        XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html, title: "My Note"),
+                       "# One\npara **bold**\n## Two\n### Three")
+    }
+
+    func testReadRealHeadingLevels() {
+        // Headings styled in the Notes app come back as plain h1/h2/h3.
+        let html = "<h1>T</h1>\n<h2>H</h2>\n<h3>S</h3>\n<div>body</div>"
+        XCTAssertEqual(NotesMarkdown.notesHTMLToMarkdown(html), "# T\n## H\n### S\nbody")
     }
 
     func testReadHeadingTagForm() {
