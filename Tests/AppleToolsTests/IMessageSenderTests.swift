@@ -128,8 +128,8 @@ final class IMessageSenderTests: XCTestCase {
         }
         _ = IMessageSender.send(to: "+15551234567", text: "line one\nline two")
         guard let s = capturedScript else { return XCTFail("no script captured") }
-        XCTAssertTrue(s.contains(#"do shell script "printenv APPLE_TOOLS_IMSG_TEXT" without altering line endings"#),
-            "payload read must preserve LFs: \(s)")
+        XCTAssertTrue(s.contains(#"do shell script "printf %s \"$APPLE_TOOLS_IMSG_TEXT\"" without altering line endings"#),
+            "payload read must preserve LFs and add no trailing newline: \(s)")
     }
 
     /// When sending to a group chat ID, the AppleScript should use `chat id`
@@ -466,8 +466,8 @@ final class IMessageSenderTests: XCTestCase {
         }
 
         // The script *does* reference the env key.
-        XCTAssertTrue(capturedScript!.contains("printenv APPLE_TOOLS_IMSG_TEXT"),
-            "script must fetch payload via `do shell script \"printenv ...\"`")
+        XCTAssertTrue(capturedScript!.contains("$APPLE_TOOLS_IMSG_TEXT"),
+            "script must fetch payload from the environment via `do shell script`")
 
         // The env dict carries the payload verbatim.
         XCTAssertEqual(capturedEnv?["APPLE_TOOLS_IMSG_TEXT"], payload)
