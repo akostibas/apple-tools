@@ -34,21 +34,21 @@ and stop being read.
 
 | Tool | apple-tools | Commit | macOS | Verified | Notes |
 |------|-------------|--------|-------|----------|-------|
-| calendar | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: `calendars`, `list` and `search` find remembered calendars and events. Create, update and delete NOT exercised. |
+| calendar | 0.34.0 | 6cecaa1 | 27.2.1 (26B131) | 2026-11-16 | Read-only and slow groups green: `calendars`, `list`, `search`, and create, update and delete of timed, all-day, time-zoned and repeating events (one occurrence and this-and-future), in a calendar shared with nobody. |
 | clipboard | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only and slow groups green: `read`, and `write` read back with the previous contents restored. |
 | contacts | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only and slow groups green: `search`, `read`, `create`, `update`, `delete` against the real address book (iCloud account only). |
 | documents | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: `list`, `info`, `fetch` and Spotlight `search` over `~/Documents`. |
-| email | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green with Mail open: `inbox`, `read`, `headers`, `mailboxes`, `search` by sender. Slow group green: `draft` (no window) then `discard`. Reply, move and attachment fetch NOT exercised. |
-| imessage | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: `list`, `read`, `stats`, `search` over the real `chat.db`. `send` and attachment fetch NOT exercised. |
+| email | 0.34.0 | 6cecaa1 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green with Mail open: `inbox`, `read`, `headers`, `mailboxes`, `search` by sender. Slow group green: `draft` (no window), `discard`, `reply` to a no-reply sender, `move` within one non-Gmail account, and `fetch_attachment`, the last two on the test's own draft. |
+| imessage | 0.34.0 | 6cecaa1 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: `list`, `read`, `stats`, `search` over the real `chat.db`. Slow group green: one `send` to the user's own number with a file, read back and its attachment fetched. SMS and group chats NOT exercised. |
 | media | 0.34.0 | 1e22516 | 27.2.1 (26B131) | 2026-11-16 | `list` over the real Podcasts store returned recent episodes with duration and progress; not cross-checked against the Podcasts app. The 27.0 duration probe still holds. #94 ("schema unrecognized" on 27.2 26B123) did not reproduce here and is treated as a locked store: locks are now waited out and reported as busy. Books also read (98 items over a long window). |
-| music | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green with Music open: `now-playing`, `search`, `stats`, `mix`, `airplay-list`. Slow group green: playlist create and delete. Playback control, favorite, rating and playlist tracks NOT exercised. |
+| music | 0.34.0 | 6cecaa1 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green with Music open: `now-playing`, `search`, `stats`, `mix`, `airplay-list`. Slow group green: favorite, rating, playlist create, add, remove and delete. Attended group green: play, pause, skip, seek, stop, volume, shuffle, repeat; AirPlay re-selected only. |
 | notes | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: `folders`, `list`, `search`, `read`. Slow group: create, append, move, delete and rename-folder pass, but **a Markdown heading reads back as bold** (#100). |
 | photos | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: keyword search over common subjects, people search, `fetch`. The 27.0 `leo.sqlite` reading still holds. Import NOT exercised (#97). |
 | reminders | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only and slow groups green: every action, including subtasks, repeat rules and a test list that is removed afterwards. |
 | screenshot | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: a capture produced an image. |
 | voicememos | 0.34.0 | e61f1f5 | 27.2.1 (26B131) | 2026-11-16 | Read-only group green: `folders`, `list`, `search`, `export`, `transcribe` over the real store. |
 | echo | n/a | n/a | n/a | n/a | Diagnostic tool; no OS interaction. |
-| open_uri | — | — | not recorded | — | Not exercised on 27 (side-effecting: opens a real URI). |
+| open_uri | 0.34.0 | 6cecaa1 | 27.2.1 (26B131) | 2026-11-16 | Attended group green: a folder URI opened in Finder. Web, `mailto:` and deep links NOT exercised. |
 
 ## What a verified row can't prove
 
@@ -58,10 +58,10 @@ One line per tool; each tool's page has the detail under *Testing gaps*.
 - **clipboard**: no known gap.
 - **contacts**: refusals for read-only accounts and cards spanning two accounts can't be tested without such contacts.
 - **documents**: an unindexed file looks the same as a broken Spotlight search.
-- **email**: received mail can't be planted; reply and move are untested; skipped while Mail is closed.
+- **email**: received mail can't be planted; move and attachment fetch are proven only on the test's own draft; skipped while Mail is closed.
 - **imessage**: only a send to yourself over iMessage is proven; each slow run leaves that message behind.
 - **media**: nothing can be planted, so an empty list is undecidable on a new Mac.
-- **music**: play history can't be planted; playback controls need the attended group; skipped while Music is closed.
+- **music**: play history can't be planted; playback is proven only by the attended group; AirPlay is re-selected, never moved; skipped while Music is closed.
 - **notes**: test folders are left behind; locked-note refusals are untested.
 - **open_uri**: attended only, and only a folder URI is opened.
 - **photos**: keyword search can't be planted; import is untested because the photo can't be removed.
