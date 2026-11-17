@@ -60,6 +60,16 @@ final class MailDraftVerifierTests: XCTestCase {
         XCTAssertEqual(id, "100")
     }
 
+    /// Mail files a reply's "Re: " apart from its subject; without it replies never got an id.
+    func testVerifyFindsAReplyDraft() {
+        insertDraft(rowid: 200, subject: "hello", prefix: "Re: ", recipient: "alice@example.com",
+                    mailboxURL: "imap://acct@imap/Drafts")
+        let result = MailDraftVerifier.verify(recipient: "alice@example.com", subject: "Re: hello",
+                                              sinceROWID: 0, deadline: 1.0)
+        guard case .confirmed(let id) = result else { return XCTFail("expected .confirmed, got \(result)") }
+        XCTAssertEqual(id, "200")
+    }
+
     /// Match candidate exists but its ROWID is at-or-below the snapshot →
     /// excluded by the `m.ROWID > ?` filter → .inconclusive.
     func testVerifySkipsRowsAtOrBelowSnapshot() {
@@ -181,7 +191,7 @@ final class MailDraftVerifierTests: XCTestCase {
         defer { sqlite3_close(db) }
 
         let ddl = [
-            "CREATE TABLE messages (ROWID INTEGER PRIMARY KEY, subject INTEGER, mailbox INTEGER, sender INTEGER, deleted INTEGER DEFAULT 0, date_received INTEGER)",
+            "CREATE TABLE messages (ROWID INTEGER PRIMARY KEY, subject INTEGER, subject_prefix TEXT, mailbox INTEGER, sender INTEGER, deleted INTEGER DEFAULT 0, date_received INTEGER)",
             "CREATE TABLE subjects (ROWID INTEGER PRIMARY KEY, subject TEXT)",
             "CREATE TABLE mailboxes (ROWID INTEGER PRIMARY KEY, url TEXT)",
             "CREATE TABLE addresses (ROWID INTEGER PRIMARY KEY, address TEXT, comment TEXT)",
@@ -195,7 +205,7 @@ final class MailDraftVerifierTests: XCTestCase {
     /// Insert a draft-shaped row spread across messages/subjects/mailboxes/
     /// addresses/recipients. ROWIDs are deterministic per call so tests can
     /// assert on the returned id.
-    private func insertDraft(rowid: Int64, subject: String, recipient: String, mailboxURL: String) {
+    private func insertDraft(rowid: Int64, subject: String, prefix: String = "", recipient: String, mailboxURL: String) {
         var db: OpaquePointer?
         XCTAssertEqual(sqlite3_open(fixtureDB, &db), SQLITE_OK)
         defer { sqlite3_close(db) }
@@ -208,7 +218,7 @@ final class MailDraftVerifierTests: XCTestCase {
         exec(db: db, "INSERT INTO subjects (ROWID, subject) VALUES (\(subjID), '\(subject)')")
         exec(db: db, "INSERT INTO mailboxes (ROWID, url) VALUES (\(mboxID), '\(mailboxURL)')")
         exec(db: db, "INSERT INTO addresses (ROWID, address, comment) VALUES (\(addrID), '\(recipient)', '')")
-        exec(db: db, "INSERT INTO messages (ROWID, subject, mailbox, sender, deleted) VALUES (\(rowid), \(subjID), \(mboxID), \(addrID), 0)")
+        exec(db: db, "INSERT INTO messages (ROWID, subject, subject_prefix, mailbox, sender, deleted) VALUES (\(rowid), \(subjID), '\(prefix)', \(mboxID), \(addrID), 0)")
         exec(db: db, "INSERT INTO recipients (ROWID, message, address, type, position) VALUES (\(recipID), \(rowid), \(addrID), 1, 0)")
     }
 

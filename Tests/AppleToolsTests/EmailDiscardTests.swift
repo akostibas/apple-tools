@@ -163,9 +163,11 @@ final class EmailDiscardTests: XCTestCase {
 ///     make test-slow TOOL=email
 final class EmailDiscardLiveTests: XCTestCase {
     func testDraftThenDiscard() throws {
-        try LiveTest.writes("email", "draft", "discard")
+        try LiveTest.writes("email", "draft", "discard", "fetch_attachment")
         guard EmailIntegration.isMailRunning() else { throw XCTSkip("Mail is not running; this test never launches it") }
-        let tool = EmailTool(host: .test())
+        let fetchedDir = NSTemporaryDirectory() + "apple-tools-live-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: fetchedDir) }
+        let tool = EmailTool(host: .test(fileSink: LocalFileSink(outputDir: fetchedDir)))
         let subject = "apple-tools live test \(UUID().uuidString)"
 
         let attachment = NSTemporaryDirectory() + "apple-tools-live-\(UUID().uuidString).txt"
@@ -190,6 +192,22 @@ final class EmailDiscardLiveTests: XCTestCase {
         XCTAssertFalse(windows.contains(subject), "drafting must not open a window")
         let documentID = try XCTUnwrap(UUID(uuidString: id), "draft id should be Mail's document id: \(id)")
         XCTAssertNotNil(EmailTool.draftRow(try EmailSearch.rows(documentID: documentID)), "draft should be in Drafts")
+
+        // The attachment on the test's own draft, so no real message is needed to prove the fetch.
+        let (found, _) = tool.handle(params: [
+            "action": AnyCodable("search"), "query": AnyCodable(subject), "exclude_self": AnyCodable(false),
+        ])
+        let draftCopy = try XCTUnwrap((json(found)["messages"] as? [[String: Any]])?
+            .first { ($0["mailbox"] as? String)?.hasSuffix("Drafts") == true }, "search can't see the new draft: \(found)")
+        let (fetched, fetchFailed) = tool.handle(params: [
+            "action": AnyCodable("fetch_attachment"), "id": AnyCodable(try XCTUnwrap(draftCopy["id"] as? String)),
+        ])
+        XCTAssertFalse(fetchFailed, fetched)
+        if let path = json(fetched)["path"] as? String {
+            XCTAssertEqual(try String(contentsOfFile: path, encoding: .utf8), "attached by a test")
+        } else {
+            XCTFail("fetch_attachment returned no path: \(fetched)")
+        }
 
         // Slow on purpose: discard stays until Mail can no longer save the new draft again.
         let (result, failed) = tool.handle(params: ["action": AnyCodable("discard"), "id": AnyCodable(id)])
