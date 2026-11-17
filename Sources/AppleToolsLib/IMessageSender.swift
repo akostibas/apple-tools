@@ -142,6 +142,10 @@ public enum IMessageSender {
         }
     }
 
+    // printf, not printenv: with line endings unaltered, printenv's trailing newline would be sent as part of the message.
+    static let readTextPrelude =
+        #"set theText to do shell script "printf %s \"$APPLE_TOOLS_IMSG_TEXT\"" without altering line endings"#
+
     // MARK: - Private
 
     /// Returns true when `recipient` looks like a Messages.app chat identifier
@@ -177,7 +181,7 @@ public enum IMessageSender {
         let escapedRecipient = escapeForAppleScript(recipient)
 
         // Payload text flows through the environment, not the AppleScript
-        // source. `do shell script "printenv X"` returns the value as UTF-8
+        // source. `do shell script` reading $X returns the value as UTF-8
         // — unlike `system attribute` which decodes env bytes as MacRoman
         // and mangles em-dash / emoji / non-Latin chars. The var name is a
         // compile-time literal, so there's no shell-injection surface.
@@ -210,7 +214,7 @@ public enum IMessageSender {
             : ""
         let sendTarget = useFirstContact ? "targetChat" : "targetBuddy"
         let imessageScript = """
-        set theText to do shell script "printenv APPLE_TOOLS_IMSG_TEXT" without altering line endings
+        \(readTextPrelude)
         log "PHASE: prepare"
         tell application "Messages"
             set iMessageService to first service whose service type = iMessage
@@ -370,7 +374,7 @@ public enum IMessageSender {
         // keys on. No viable post-verify for groups until a chat-keyed lookup
         // exists. Same scope decision as the post-send poll skip below.
         let script = """
-        set theText to do shell script "printenv APPLE_TOOLS_IMSG_TEXT" without altering line endings
+        \(readTextPrelude)
         log "PHASE: prepare"
         tell application "Messages"
             set targetChat to chat id "\(escapedGUID)"
@@ -414,7 +418,7 @@ public enum IMessageSender {
     private static func sendViaSMS(recipient: String, escapedRecipient: String, text: String, iMessageError: Int) -> SendResult {
         let env = ["APPLE_TOOLS_IMSG_TEXT": text]
         let smsScript = """
-        set theText to do shell script "printenv APPLE_TOOLS_IMSG_TEXT" without altering line endings
+        \(readTextPrelude)
         log "PHASE: prepare"
         tell application "Messages"
             set smsService to first service whose service type = SMS

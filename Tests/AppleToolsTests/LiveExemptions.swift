@@ -14,8 +14,6 @@ enum LiveExemptions {
         "email.reply": "#79: would mean replying to one of the user's real messages; needs a safe target",
         "email.move": "#79",
         "email.fetch_attachment": "#79: needs a message with an attachment to be discovered",
-        "imessage.fetch_attachment": "#79: needs a message with an attachment to be discovered",
-        "imessage.send": "#79: to the user's own number only; the message cannot be removed afterwards",
         "music.love": "#79: restore the track's previous state",
         "music.rate": "#79: restore the track's previous state",
         "music.playlist-add": "#79",

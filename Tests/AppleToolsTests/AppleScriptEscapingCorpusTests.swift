@@ -94,8 +94,8 @@ final class AppleScriptEscapingCorpusTests: XCTestCase {
                     "\(label): env[\(integration.envKey)] should equal payload verbatim")
 
                 // The script must reference the env key, not the payload.
-                XCTAssertTrue(script.contains("printenv \(integration.envKey)"),
-                    "\(label): script must fetch payload via `do shell script \"printenv \(integration.envKey)\"`")
+                XCTAssertTrue(script.contains(integration.envKey),
+                    "\(label): script must fetch payload from the environment variable \(integration.envKey)")
 
                 // The payload chars must not appear in the script source.
                 // Use a substring sampling strategy: pick a 24-char window

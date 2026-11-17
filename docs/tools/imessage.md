@@ -91,6 +91,7 @@ apple-tools imessage send --to "+16502530000" --text "On my way" --attachments ~
 
 What `make test` can't prove for this tool (see [Tests/README.md](../../Tests/README.md)).
 
-- **Message history can't be planted** except by sending, and a sent message can't be removed. The send test is not written yet (#79); it will go to your own number only and leave that message behind.
-- **Search is checked with a handful of common words**, so a Mac whose messages contain none of them reports "nothing to check".
-- **Attachment fetch has no live test yet** (#79).
+- **Each slow run leaves one message behind.** History can only be planted by sending, and a sent message can't be removed, so the test sends one `apple-tools live test` message with a small text file to your own number or address (taken from your card in Contacts) and leaves it in your conversation with yourself. The copy of the file that Messages keeps stays too.
+- **The send test is skipped** when Contacts has no "My Card" with a phone number or email, and while Messages is closed, because sending would open it.
+- **Only a send to yourself over iMessage is proven.** SMS fallback, group chats, a first message to a new recipient, and image attachments (which are resized on fetch) have no live test.
+- **Search is checked with a handful of common words** in the read-only group, so a Mac whose messages contain none of them reports "nothing to check".
