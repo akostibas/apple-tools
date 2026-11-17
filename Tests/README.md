@@ -17,7 +17,7 @@ make test-refresh          # re-discover the read-only group's remembered items
 | **unit** | Fixtures only. Passes on any machine. | Our code is wrong. |
 | **read-only** | Reads this Mac's real data. Changes nothing. | Items this Mac had before can't be found: Apple moved a store, or you removed them. Look in the app to tell which. |
 | **slow** | Creates data labeled `apple-tools live test`, reads it back, changes it, removes it. Nothing appears on screen. | A real action misbehaves against the real app. |
-| **attended** | Tests that put a window or dialog in front of you, or change what you hear. | Same as slow. None are written yet. |
+| **attended** | Tests that put a window or dialog in front of you, or change what you hear: music playback and opening a URI. | Same as slow. |
 
 ## How the read-only group knows what to look for
 
@@ -49,9 +49,9 @@ and read-only groups leave nothing.
 - **calendar:** nothing. Test events are dated 2028 and 2029 and go only in a calendar that is shared with nobody; they do sync to that calendar's account for the few seconds they exist.
 - **clipboard:** nothing. Whatever was on the clipboard is put back, including images and files.
 - **contacts:** nothing.
-- **email:** one draft labeled `apple-tools live test` in the Trash of your default mail account.
+- **email:** several drafts in Trash, never sent: test drafts labeled `apple-tools live test` in the Trash of your default mail account and of one non-Gmail account, and one reply draft whose subject is `Re: <a real message>`. The reply quotes that message (one you sent yourself, otherwise one from a no-reply sender) and lands in your default account's Trash, which may be a different account from the one that received it.
 - **imessage:** one message labeled `apple-tools live test`, with a small text file, in your conversation with yourself (it shows as sent and received). A copy of the file also stays under `~/Library/Messages/Attachments/apple-tools/`. Sent messages can't be deleted.
-- **music:** nothing.
+- **music:** slow group: nothing; one unrated track is favorited and rated, then set back. Attended group: your Up Next queue is lost and playback stops after the song that was cued, a streamed track can't be re-cued so the test skips instead, and one test track may gain a skip in its skip count.
 - **notes:** four empty folders, `AppleToolsLive A`, `AppleToolsLive B`, `AppleToolsLive C` and `AppleToolsFmtLive`. A scripted folder delete comes back through iCloud, so they are reused on every run.
 - **open_uri:** attended only. A Finder window showing a temporary folder may stay open.
 - **reminders:** nothing.
