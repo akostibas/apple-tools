@@ -26,6 +26,10 @@ final class NotesLiveTests: XCTestCase {
         let body = """
         # Section One
 
+        ## Part Two
+
+        ### Detail Three
+
         Some **bold** and *italic* and ~~struck~~ and `mono`.
 
         - apple
@@ -42,6 +46,9 @@ final class NotesLiveTests: XCTestCase {
         // Assert each construct survived the round-trip.
         let lines = note.content.components(separatedBy: "\n")
         XCTAssertTrue(lines.contains("# Section One"), "heading; got:\n\(note.content)")
+        XCTAssertTrue(lines.contains("## Part Two"), "heading 2; got:\n\(note.content)")
+        XCTAssertTrue(lines.contains("### Detail Three"), "heading 3; got:\n\(note.content)")
+        XCTAssertFalse(note.content.contains(title), "title repeated in body; got:\n\(note.content)")
         XCTAssertTrue(note.content.contains("**bold**"), "bold; got:\n\(note.content)")
         XCTAssertTrue(note.content.contains("*italic*"), "italic; got:\n\(note.content)")
         XCTAssertTrue(note.content.contains("~~struck~~"), "strike; got:\n\(note.content)")

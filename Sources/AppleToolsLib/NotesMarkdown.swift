@@ -7,9 +7,10 @@ import Foundation
 /// the AppleScript `body` API actually round-trips (validated empirically on
 /// macOS 15 — see docs/reference/macos-internals/apple-notes-applescript.md):
 ///
-///  - Headings: Notes has no heading tags; H1/H2 are bold + a font-size span
-///    (24px / 18px). We emit `<h1>`/`<h2>` (Notes normalizes them to the span
-///    form) and read both shapes back.
+///  - Headings: Notes stores a scripted `<h1>`/`<h2>`/`<h3>` as bold text at
+///    24px / 18px / body size, never as its own Title/Heading styles. We emit
+///    the tags and read back both that bold form and real headings (which
+///    Notes reports as `<h1>`/`<h2>`/`<h3>`).
 ///  - Bold / italic / strikethrough / monospaced: round-trip via
 ///    `<b>`/`<i>`/`<strike>`/`<tt>`.
 ///  - Bulleted and numbered lists: round-trip via `<ul>`/`<ol>`.
@@ -65,7 +66,7 @@ public enum NotesMarkdown {
 
             // Headings
             if trimmed.hasPrefix("### ") {
-                html += "<div><h2>\(inlineToHTML(String(trimmed.dropFirst(4))))</h2></div>"
+                html += "<div><h3>\(inlineToHTML(String(trimmed.dropFirst(4))))</h3></div>"
             } else if trimmed.hasPrefix("## ") {
                 html += "<div><h2>\(inlineToHTML(String(trimmed.dropFirst(3))))</h2></div>"
             } else if trimmed.hasPrefix("# ") {
@@ -328,17 +329,11 @@ public enum NotesMarkdown {
         while i < chars.count {
             let c = chars[i]
             if c == "<" {
-                // Heading detection: <b><span style="font-size: 24px"> ...
-                if matchesAhead(chars, i, "<b><span style=\"font-size: 24px\">") {
-                    prefix = "# "
+                // Only at line start: mid-line it is ordinary bold text.
+                if line.isEmpty, let h = headingOpeners.first(where: { matchesAhead(chars, i, $0.html) }) {
+                    prefix = h.prefix
                     pendingHeadingClose = true
-                    i += "<b><span style=\"font-size: 24px\">".count
-                    continue
-                }
-                if matchesAhead(chars, i, "<b><span style=\"font-size: 18px\">") {
-                    prefix = "## "
-                    pendingHeadingClose = true
-                    i += "<b><span style=\"font-size: 18px\">".count
+                    i += h.html.count
                     continue
                 }
                 let raw = readTag()          // original case (URLs are case-sensitive)
@@ -356,8 +351,10 @@ public enum NotesMarkdown {
                     flush()
                 case tag == "h1":
                     prefix = "# "
-                case tag == "h2", tag == "h3":
-                    prefix = (tag == "h3") ? "## " : "## "
+                case tag == "h2":
+                    prefix = "## "
+                case tag == "h3":
+                    prefix = "### "
                 case tag == "/h1", tag == "/h2", tag == "/h3":
                     flushBlock()
                 case tag == "b", tag == "strong", tag == "/b", tag == "/strong":
@@ -426,6 +423,14 @@ public enum NotesMarkdown {
         if !line.isEmpty || !prefix.isEmpty { flush() }
         return lines
     }
+
+    /// How Notes reports a scripted heading. macOS 27 puts a bold system font
+    /// tag inside the `<b>`; with no size span, that font alone marks an `<h3>`.
+    private static let headingOpeners: [(html: String, prefix: String)] = {
+        let font = #"<b><font face=".AppleSystemUIFontBold">"#
+        let h1 = #"<span style="font-size: 24px">"#, h2 = #"<span style="font-size: 18px">"#
+        return [("<b>" + h1, "# "), ("<b>" + h2, "## "), (font + h1, "# "), (font + h2, "## "), (font, "### ")]
+    }()
 
     private static func matchesAhead(_ chars: [Character], _ i: Int, _ s: String) -> Bool {
         let needle = Array(s)
