@@ -41,4 +41,37 @@ final class EmailSearchSubjectTests: XCTestCase {
         let subjects = try EmailSearch.run(c, dbPath: dbPath).map(\.subject)
         XCTAssertEqual(subjects, ["Re: Invitation: EFKaylaire", "Invitation: EFKaylaire"])
     }
+
+    func testMoveRefusesDraftsAsSourceAndDestination() {
+        for drafts in ["imap://A/Drafts", "imap://A/%5BGmail%5D/Drafts", "local://Local/Drafts", "ews://A/drafts"] {
+            XCTAssertEqual(EmailTool.draftsMoveRefusal(from: drafts, to: "imap://A/Archive")?.contains("out of Drafts"), true, drafts)
+            XCTAssertEqual(EmailTool.draftsMoveRefusal(from: "imap://A/Trash", to: drafts)?.contains("into Drafts"), true, drafts)
+        }
+        for box in ["Archive/Drafts", "Drafts%20Backup", "Trash"] {
+            XCTAssertNil(EmailTool.draftsMoveRefusal(from: "imap://A/INBOX", to: "imap://A/\(box)"), box)
+        }
+    }
+
+    func testMoveTakesCopiesSharingAMailboxAndRefusesCopiesSpreadOverSeveral() throws {
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbPath, &db), SQLITE_OK)
+        let sql = """
+        INSERT INTO mailboxes VALUES (2, 'imap://A/Trash'), (3, 'imap://A/Sent%20Messages');
+        INSERT INTO message_global_data VALUES (3, '<twice@x>', NULL), (4, '<self@x>', NULL);
+        INSERT INTO messages VALUES (3, 1, NULL, 2, 1, 0, 300, 3, NULL), (4, 1, NULL, 2, 1, 0, 300, 3, NULL),
+            (5, 1, NULL, 2, 1, 1, 300, 3, NULL), (6, 1, NULL, 1, 1, 0, 400, 4, NULL), (7, 1, NULL, 3, 1, 0, 400, 4, NULL);
+        """
+        XCTAssertEqual(sqlite3_exec(db, sql, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
+
+        let twice = try EmailSearch.copies(messageID: "twice@x", dbPath: dbPath)
+        XCTAssertEqual(twice.map(\.rowID), [3, 4], "both live copies, the deleted row left out")
+        XCTAssertNil(EmailTool.moveRefusal(copies: twice), "copies in one mailbox are one message")
+        XCTAssertNil(EmailTool.moveRefusal(copies: try EmailSearch.copies(messageID: "<invite@x>", dbPath: dbPath)))
+
+        let selfSent = try EmailSearch.copies(messageID: "<self@x>", dbPath: dbPath)
+        let refusal = try XCTUnwrap(EmailTool.moveRefusal(copies: selfSent))
+        XCTAssertTrue(refusal.contains("ambiguous"), refusal)
+        XCTAssertTrue(refusal.contains("INBOX") && refusal.contains("Sent Messages"), refusal)
+    }
 }

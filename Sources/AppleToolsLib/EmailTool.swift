@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 public struct EmailTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "email",
-        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'headers' (a message's headers by ID — all, or only those in 'names'; never downloads the body), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message, saved in Drafts — does NOT send; supports file attachments by absolute path; returns the draft's 'id'), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send; returns the draft's 'id'), 'discard' (move a draft to Trash by the 'id' that draft/reply returned; only drafts are accepted, received or sent mail is refused; needs Mail running), 'mailboxes' (list each account's mailboxes with counts), 'move' (move a message by ID to a mailbox, in the same or another account; refused for Gmail accounts; needs Mail running).",
+        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'headers' (a message's headers by ID — all, or only those in 'names'; never downloads the body), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message, saved in Drafts — does NOT send; supports file attachments by absolute path; returns the draft's 'id'), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send; returns the draft's 'id'), 'discard' (move a draft to Trash by the 'id' that draft/reply returned; only drafts are accepted, received or sent mail is refused; needs Mail running), 'mailboxes' (list each account's mailboxes with counts), 'move' (move a message by ID to a mailbox, in the same or another account; refused for Gmail accounts and for the Drafts mailbox; needs Mail running).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
@@ -194,16 +194,41 @@ public struct EmailTool: ProbeTool {
         return (jsonEncode(["accounts": accounts]), false)
     }
 
+    /// Copies sharing an id are one message only while they share a mailbox; nil means `move` may take them all.
+    static func moveRefusal(copies: [EmailSearch.MessageLocation]) -> String? {
+        let urls = Set(copies.map(\.mailboxURL))
+        guard urls.count > 1 else { return nil }
+        let places = urls.sorted().map { url in
+            EmailSearch.mailboxName(url) + ((EmailSearch.accountFields(url)["account"] as? String).map { " (\($0))" } ?? "")
+        }
+        return "this id is ambiguous: copies of the message are in \(places.joined(separator: ", ")), and move can't tell which one you mean. Move it in Mail instead."
+    }
+
+    /// Mail saves whatever sits in Drafts again by itself, so a message moved out comes back a minute later.
+    static func draftsMoveRefusal(from: String, to: String) -> String? {
+        func isDrafts(_ url: String) -> Bool {
+            ["drafts", "[gmail]/drafts"].contains(EmailSearch.mailboxName(url).lowercased())
+        }
+        if isDrafts(from) {
+            return "can't move a message out of Drafts: Mail keeps saving drafts by itself, so it would come back. Use discard to trash a draft, or move it in Mail."
+        }
+        if isDrafts(to) {
+            return "can't move a message into Drafts: Mail would treat it as a draft and keep bringing it back there. Use draft or reply to make a draft."
+        }
+        return nil
+    }
+
     private func move(id: String, mailbox: String, account: String?) -> (String, Bool) {
-        let loc: EmailSearch.MessageLocation
+        let copies: [EmailSearch.MessageLocation]
         let boxes: [EmailSearch.Mailbox]
         do {
-            guard let l = try EmailSearch.resolveMessageID(id) else { return ("message not found: \(id)", true) }
-            loc = l
+            copies = try EmailSearch.copies(messageID: id)
             boxes = try EmailSearch.mailboxes()
         } catch {
             return ("\(error)", true)
         }
+        guard let loc = copies.first else { return ("message not found: \(id)", true) }
+        if let refusal = Self.moveRefusal(copies: copies) { return (refusal, true) }
         guard let source = boxes.first(where: { $0.url == loc.mailboxURL }) else {
             return ("can't tell which mailbox this message is in", true)
         }
@@ -216,24 +241,30 @@ public struct EmailTool: ProbeTool {
             let name = accountFields(acct)["account"] as? String ?? acct
             return ("can't move messages in Gmail accounts (\(name)): Gmail reverts label removals made through Mail. Move it in Mail or Gmail instead.", true)
         }
+        if let refusal = Self.draftsMoveRefusal(from: source.url, to: target.url) { return (refusal, true) }
         if target.url == source.url { return ("message is already in \(target.name)", true) }
 
-        do {
-            try EmailIntegration.moveMessage(rowID: loc.rowID, mailboxURL: loc.mailboxURL,
-                                             toAccount: target.accountID, toMailbox: target.name)
-        } catch {
-            return ("move failed, message left in \(source.name): \(error)", true)
+        for (done, copy) in copies.enumerated() {
+            do {
+                try EmailIntegration.moveMessage(rowID: copy.rowID, mailboxURL: copy.mailboxURL,
+                                                 toAccount: target.accountID, toMailbox: target.name)
+            } catch {
+                let left = done == 0 ? "message" : "\(done) of \(copies.count) copies moved to \(target.name), the rest"
+                return ("move failed, \(left) left in \(source.name): \(error)", true)
+            }
         }
         var result: [String: Any] = [
             "id": id,
             "from": accountFields(source.accountID).merging(["mailbox": source.name]) { a, _ in a },
             "to": accountFields(target.accountID).merging(["mailbox": target.name]) { a, _ in a },
         ]
-        // Mail applies the move asynchronously; confirm it reached the index.
+        if copies.count > 1 { result["copies"] = copies.count }
+        // Mail applies the move asynchronously; confirm every copy reached the index.
         let deadline = Date().addingTimeInterval(5)
         var confirmed = false
         while Date() < deadline {
-            if let now = try? EmailSearch.resolveMessageID(id), now.mailboxURL == target.url { confirmed = true; break }
+            if let now = try? EmailSearch.copies(messageID: id), !now.isEmpty,
+               now.allSatisfy({ $0.mailboxURL == target.url }) { confirmed = true; break }
             Thread.sleep(forTimeInterval: 0.25)
         }
         result["moved"] = confirmed ? true : "pending"
