@@ -15,6 +15,7 @@ enum EmailSearch {
         var excludeSelf: Bool = true
         var excludeBulk: Bool = false  // drop likely-automated/bulk senders
         var mailboxIDs: [Int64]?  // stored in, or (Gmail) labelled with, one of these
+        var hasAttachments = false  // only messages with at least one attachment
     }
 
     struct Hit {
@@ -50,7 +51,7 @@ enum EmailSearch {
             case .sqlFailed(let msg):
                 return "sql error: \(msg)"
             case .noCriteria:
-                return "search requires at least one of: query, from, to, start, end, mailbox"
+                return "search requires at least one of: query, from, to, start, end, mailbox, has_attachments"
             }
         }
     }
@@ -85,7 +86,7 @@ enum EmailSearch {
         let hasFromEmail = (criteria.fromEmail?.isEmpty == false)
         let hasTo = (criteria.to?.isEmpty == false)
         if !hasQuery && !hasFrom && !hasFromEmail && !hasTo && criteria.after == nil && criteria.before == nil
-            && criteria.mailboxIDs == nil {
+            && criteria.mailboxIDs == nil && !criteria.hasAttachments {
             throw SearchError.noCriteria
         }
 
@@ -148,6 +149,11 @@ enum EmailSearch {
             (m.mailbox IN (\(list))
              OR EXISTS (SELECT 1 FROM labels l WHERE l.message_id = m.ROWID AND l.mailbox_id IN (\(list))))
             """)
+        }
+
+        // In SQL, not a post-filter, so it applies before the limit.
+        if criteria.hasAttachments {
+            wheres.append("EXISTS (SELECT 1 FROM attachments at WHERE at.message = m.ROWID)")
         }
 
         // Oversample when we're going to post-filter; else ask only for what we need.

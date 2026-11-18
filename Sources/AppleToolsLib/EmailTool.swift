@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 public struct EmailTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "email",
-        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes; works with Mail closed, but then carries a 'warning' that the list is only as fresh as Mail's last run), 'search' (search across all mail by query/sender/recipient/date; inbox and search return previews only — use 'read' for the full body), 'read' (get full message by ID), 'headers' (a message's headers by ID — all, or only those in 'names'; never downloads the body), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message, saved in Drafts — does NOT send; supports file attachments by absolute path; returns the draft's 'id'), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send; returns the draft's 'id'), 'discard' (move a draft to Trash by the 'id' that draft/reply returned; only drafts are accepted, received or sent mail is refused; needs Mail running), 'mailboxes' (list each account's mailboxes with counts), 'move' (move a message by ID to a mailbox, in the same or another account; refused for Gmail accounts and for the Drafts mailbox; needs Mail running).",
+        description: "Access Apple Mail. Actions: 'inbox' (list recent messages from all inboxes; works with Mail closed, but then carries a 'warning' that the list is only as fresh as Mail's last run), 'search' (search across all mail by query/sender/recipient/date, optionally only messages with attachments; inbox and search return previews only, with 'attachment_count' on messages that have attachments — use 'read' for the full body), 'read' (get full message by ID), 'headers' (a message's headers by ID — all, or only those in 'names'; never downloads the body), 'fetch_attachment' (retrieve an attachment file from a message), 'draft' (create a NEW draft message, saved in Drafts — does NOT send; supports file attachments by absolute path; returns the draft's 'id'), 'reply' (draft a threaded reply to an existing message by ID — the original is quoted and the recipient/subject are filled in automatically; put ONLY your new reply text in 'body', does NOT send; returns the draft's 'id'), 'discard' (move a draft to Trash by the 'id' that draft/reply returned; only drafts are accepted, received or sent mail is refused; needs Mail running), 'mailboxes' (list each account's mailboxes with counts), 'move' (move a message by ID to a mailbox, in the same or another account; refused for Gmail accounts and for the Drafts mailbox; needs Mail running).",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
@@ -44,6 +44,8 @@ public struct EmailTool: ProbeTool {
                     summary: "ISO 8601 upper bound", actions: ["search"]),
                 "exclude_self": PropertySchema(type_: "boolean", description: "Drop results where the viewer is the sender; default true (for search)",
                     summary: "Drop messages you sent (default true)", actions: ["search"]),
+                "has_attachments": PropertySchema(type_: "boolean", description: "Only messages with at least one attachment; counts as a filter on its own. Results carry 'attachment_count' (for search)",
+                    summary: "Only messages with attachments", actions: ["search"]),
                 "cc": PropertySchema(type_: "string", description: "CC email address (for draft; for reply, an EXTRA cc added on top of the reply's existing recipients)",
                     summary: "CC address (reply: extra cc on top of existing)", actions: ["draft", "reply"]),
                 "subject": PropertySchema(type_: "string", description: "Email subject (for draft; ignored for reply — the 'Re:' subject is taken from the original)",
@@ -66,7 +68,7 @@ public struct EmailTool: ProbeTool {
             ActionHelp(name: "inbox", summary: "List recent messages from all inboxes",
                 example: "apple-tools email inbox [--limit <n>]"),
             ActionHelp(name: "search", summary: "Search all mail by query, sender, recipient, or date",
-                example: "apple-tools email search [--query <text>] [--from <name>] [--start <date>] ..."),
+                example: "apple-tools email search [--query <text>] [--from <name>] [--start <date>] [--has_attachments] ..."),
             ActionHelp(name: "read", summary: "Get a full message by ID",
                 example: "apple-tools email read --id <id>", required: ["id"]),
             ActionHelp(name: "headers", summary: "Get a message's headers by ID, without the body",
@@ -361,6 +363,7 @@ public struct EmailTool: ProbeTool {
             || (params?["humans_only"]?.value as? Bool) == true {
             criteria.excludeBulk = true
         }
+        criteria.hasAttachments = (params?["has_attachments"]?.value as? Bool) == true
 
         if let s = params?["start"]?.value as? String, !s.isEmpty {
             guard let d = parseISODate(s) else {
@@ -410,6 +413,7 @@ public struct EmailTool: ProbeTool {
                     address: h.senderAddress, name: h.senderName),
             ]
             entry.merge(EmailSearch.accountFields(h.mailboxURL)) { a, _ in a }
+            if h.attachmentCount > 0 { entry["attachment_count"] = h.attachmentCount }
             if !h.labelURLs.isEmpty { entry["labels"] = h.labelURLs.map(EmailSearch.mailboxName) }
             if let snip = h.snippet, !snip.isEmpty { entry["snippet"] = snip }
             if let ai = h.aiSummary, !ai.isEmpty { entry["ai_summary"] = ai }

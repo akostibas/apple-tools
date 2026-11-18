@@ -15,7 +15,8 @@ Envelope Index; also used by the AppleScript fallback).
   is as of Mail's last run, and it's the caller's call whether to open Mail.
 - **search** — find messages by query / sender / recipient / date across all
   mail (previews only). Matches subject, sender, and body *preview* — not the
-  full body.
+  full body. `--has_attachments` keeps only messages with at least one
+  attachment, and works as the only filter.
 - **read** — full message by `id`: body, recipients, attachment metadata.
 - **headers** — a message's headers by `id`, all or only the `names` asked for
   (case-insensitive). Keys come back lowercased, each with every value (repeats
@@ -48,6 +49,10 @@ Envelope Index; also used by the AppleScript fallback).
 message in All Mail, so for Gmail it matches on labels, and results carry a
 `labels` list (e.g. `INBOX`, `Mint`) alongside `mailbox`.
 
+`inbox` and `search` rows carry `attachment_count` when a message has
+attachments (omitted when it has none), so there's no need to `read` each one
+to find the message with the file.
+
 `inbox`, `search` and `read` results name the Mail account each message is in:
 `account` (as shown in Mail, e.g. "iCloud") and `account_email` when known.
 It comes from the account the message is filed in, not from headers, so it
@@ -60,6 +65,7 @@ Run `apple-tools email --help` for the exact parameters of each action.
 
 ```bash
 apple-tools email search --from "sam" --start 2026-07-01
+apple-tools email search --has_attachments --start 2026-07-01
 apple-tools email read --id "<MESSAGE-ID>"
 apple-tools email headers --id "<MESSAGE-ID>" --names Sender,X-Google-Calendar-Notification
 apple-tools email reply --id "<MESSAGE-ID>" --body "Sounds great, thanks!"

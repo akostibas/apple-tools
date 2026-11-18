@@ -67,6 +67,27 @@ final class EmailSearchSubjectTests: XCTestCase {
         XCTAssertEqual(try EmailSearch.inbox(limit: 1, dbPath: dbPath).map(\.messageID), ["<reply@x>"])
     }
 
+    func testHasAttachmentsFiltersBeforeTheLimitAndStandsAlone() throws {
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbPath, &db), SQLITE_OK)
+        // Row 1 is the OLDER message; a filter applied after the limit would return nothing.
+        XCTAssertEqual(sqlite3_exec(db, "INSERT INTO attachments VALUES (1), (1)", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
+
+        var c = EmailSearch.Criteria()
+        c.excludeSelf = false
+        c.limit = 1
+        c.hasAttachments = true
+        let hits = try EmailSearch.run(c, dbPath: dbPath)
+        XCTAssertEqual(hits.map(\.messageID), ["<invite@x>"])
+        XCTAssertEqual(hits.map(\.attachmentCount), [2])
+
+        c.hasAttachments = false
+        c.query = "EFKaylaire"
+        c.limit = 10
+        XCTAssertEqual(try EmailSearch.run(c, dbPath: dbPath).map(\.attachmentCount), [0, 2])
+    }
+
     func testMoveRefusesDraftsAsSourceAndDestination() {
         for drafts in ["imap://A/Drafts", "imap://A/%5BGmail%5D/Drafts", "local://Local/Drafts", "ews://A/drafts"] {
             XCTAssertEqual(EmailTool.draftsMoveRefusal(from: drafts, to: "imap://A/Archive")?.contains("out of Drafts"), true, drafts)
