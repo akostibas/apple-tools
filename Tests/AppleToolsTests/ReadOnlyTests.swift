@@ -77,8 +77,46 @@ final class CalendarReadOnlyTests: ReadOnlyCase {
         ISO8601DateFormatter().string(from: Date().addingTimeInterval(days * 86_400))
     }
 
+    /// Calendars and events say which calendar and account they belong to, and `read` agrees with `list`.
+    private func checkIdentityFields() throws {
+        let calendars = try XCTUnwrap(raw(tool, ["action": "calendars"]) as? [[String: Any]])
+        for cal in calendars {
+            XCTAssertNotNil(cal["account"] as? String, "a calendar has no account")
+            XCTAssertNotNil(cal["writable"] as? Bool, "a calendar does not say whether it is writable")
+        }
+        let ids = Set(strings(calendars, "id"))
+        XCTAssertEqual(ids.count, calendars.count, "calendar ids must be unique")
+
+        let window: [String: Any] = ["action": "list", "start": iso(-7), "end": iso(7)]
+        let events = rows(try call(tool, window), "events")
+        for event in events {
+            XCTAssertTrue(ids.contains(event["calendar_id"] as? String ?? ""), "an event's calendar_id is not a listed calendar")
+            XCTAssertNotNil(event["account"] as? String, "an event has no account")
+        }
+        if let first = events.first, let id = first["id"] as? String, let start = first["start"] as? String {
+            let read = try call(tool, ["action": "read", "id": id, "occurrence": start])
+            for field in ["id", "start", "end", "calendar_id", "external_id", "status", "event_timezone"] {
+                XCTAssertEqual(read[field] as? String, first[field] as? String, "read and list disagree on \(field)")
+            }
+        }
+
+        // A calendar's id reaches exactly that calendar; a name two calendars share is refused.
+        if let id = events.first?["calendar_id"] as? String {
+            let scoped = rows(try call(tool, window.merging(["calendar": id]) { $1 }), "events")
+            XCTAssertFalse(scoped.isEmpty)
+            XCTAssertEqual(Set(strings(scoped, "calendar_id")), [id])
+        }
+        let names = strings(calendars, "name").map { $0.lowercased() }
+        if let shared = names.first(where: { name in names.filter { $0 == name }.count > 1 }) {
+            XCTAssertThrowsError(try raw(tool, window.merging(["calendar": shared]) { $1 })) {
+                XCTAssertTrue($0.localizedDescription.contains("Pass the id"), $0.localizedDescription)
+            }
+        }
+    }
+
     func testCalendarsAndEventsAreStillFound() throws {
-        try LiveTest.reads("calendar", "calendars", "list", "search")
+        try LiveTest.reads("calendar", "calendars", "list", "search", "read")
+        try checkIdentityFields()
         let calendars = once { self.strings(try XCTUnwrap(self.raw(self.tool, ["action": "calendars"]) as? [[String: Any]]), "name") }
         try LiveTargets.check("calendar.calendars", settle: .slowTest(tool: "calendar"),
             discover: calendars, find: { try calendars().contains($0) })

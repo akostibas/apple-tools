@@ -11,12 +11,16 @@ system dialog).
 
 ## Actions
 
-- **calendars** — list all event calendars: `name`, `id`, `type`
-  (local/caldav/exchange/subscription/birthday), color, and which is the
-  default for new events.
+- **calendars** — list all event calendars: `name`, `id`, `account`, `type`
+  (local/caldav/exchange/subscription/birthday), `writable`, color, and which
+  is the default for new events.
 - **list** — events in a date range. `start`/`end` are ISO 8601 (defaults to
-  today only); optional `calendar` to scope; `dedupe_by_id=true` collapses
-  the same shared event across calendars into one row.
+  today only); optional `calendar` to scope (an id or name, or several
+  separated by commas); `dedupe_by_id=true` collapses the same shared event
+  across calendars into one row.
+- **read** — one event in full by `id`, in the same shape as a `list` row.
+  For a repeating event pass `occurrence`; without it you get the series'
+  first occurrence.
 - **search** — events matching a `query` keyword (matches title, notes,
   location, and attendee names) within `start`/`end` (defaults to −30…+30 days);
   same `calendar` and `dedupe_by_id` options as `list`.
@@ -46,7 +50,15 @@ it can send the organizer a decline. They also refuse read-only calendars
 
 Each returned event carries `is_organizer`, `my_status` (the current user's
 RSVP), an `attendees` array plus `organizer`, and `recurrence` (the series'
-RRULE) when it repeats.
+RRULE) when it repeats. It also says where it lives and what it is:
+`calendar` (name), `calendar_id`, `account`, `external_id` (shared by every
+copy of the same event, including the one in Google Calendar or Exchange),
+`status` (confirmed/tentative/cancelled, when the event has one) and
+`event_timezone` (timed events).
+
+**Naming a calendar.** `calendar` takes the `id` from `calendars` or a name.
+Two calendars in different accounts can share a name; such a name is refused
+with the candidates and their accounts listed, so use the id.
 
 Run `apple-tools calendar --help` for the exact parameters of each action.
 
@@ -80,11 +92,10 @@ apple-tools calendar delete --id <id> --span all
 - **No alarms, URL, or availability on create/update.** `createEvent` sets no alarms,
   `url`, or availability, so a created event carries none of these — even though
   read events surface `url` and RSVP fields.
-- **Calendar names must match exactly (case-insensitively).** `resolveCalendars`
-  filters on `title.lowercased() == name.lowercased()`, not a substring match, so
-  a partial or misspelled `calendar` yields "no calendar found" rather than
-  a fuzzy hit. When several calendars share a name, `create` silently picks the
-  first match.
+- **Calendar names must match exactly (case-insensitively).** A partial or
+  misspelled `calendar` yields "no calendar found" rather than a fuzzy hit.
+- **Several calendars at once is list/search only**, and from the command line
+  a calendar whose name contains a comma can only be combined with others by id.
 - **`list` defaults to a single day.** With no `end`, `listEvents` sets `end` to
   23:59:59 of the `start` day (and `start` defaults to today), so a bare
   `list` shows only today — a longer horizon needs an explicit `end`.
@@ -97,8 +108,9 @@ apple-tools calendar delete --id <id> --span all
   `parseDate` accepts `yyyy-MM-dd[THH:mm:ss]` without a `Z` and interprets it in
   the machine's zone, so omitting both can shift an event's real time.
 - **`dedupe_by_id` changes the output schema.** Only in de-duped output is the
-  singular `calendar` field replaced by a `calendars` array (per the tool
-  description), so consumers must handle both shapes depending on the flag.
+  singular `calendar` field replaced by a `calendars` array of names (and
+  `calendar_id`/`account` dropped), so consumers must handle both shapes
+  depending on the flag.
 ```
 
 ## Testing gaps

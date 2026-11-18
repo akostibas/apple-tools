@@ -33,6 +33,14 @@ public struct CalendarEventRecord {
     public let externalID: String?
     public let title: String
     public let calendar: String
+    /// `calendarIdentifier` of the calendar this copy lives on.
+    public let calendarID: String
+    /// Title of the calendar's account (EKSource), e.g. "iCloud".
+    public let account: String?
+    /// confirmed/tentative/cancelled; nil when the event has no status.
+    public let status: String?
+    /// IANA zone of a timed event; nil for all-day and floating events.
+    public let eventTimezone: String?
     public let start: String
     public let end: String
     public let allDay: Bool
@@ -61,7 +69,11 @@ public struct CalendarEventRecord {
         organizer: CalendarAttendee? = nil,
         isOrganizer: Bool = false,
         myStatus: String? = nil,
-        recurrence: String? = nil
+        recurrence: String? = nil,
+        calendarID: String = "",
+        account: String? = nil,
+        status: String? = nil,
+        eventTimezone: String? = nil
     ) {
         self.id = id
         self.externalID = externalID
@@ -78,6 +90,10 @@ public struct CalendarEventRecord {
         self.isOrganizer = isOrganizer
         self.myStatus = myStatus
         self.recurrence = recurrence
+        self.calendarID = calendarID
+        self.account = account
+        self.status = status
+        self.eventTimezone = eventTimezone
     }
 }
 
@@ -111,6 +127,11 @@ public enum CalendarEventFormatter {
         if let organizer = r.organizer { entry["organizer"] = attendeeDict(organizer) }
         if let status = r.myStatus { entry["my_status"] = status }
         if let rule = r.recurrence { entry["recurrence"] = rule }
+        if let ext = r.externalID, !ext.isEmpty { entry["external_id"] = ext }
+        if !r.calendarID.isEmpty { entry["calendar_id"] = r.calendarID }
+        if let account = r.account, !account.isEmpty { entry["account"] = account }
+        if let status = r.status { entry["status"] = status }
+        if let tz = r.eventTimezone { entry["event_timezone"] = tz }
         return entry
     }
 
@@ -152,9 +173,48 @@ public enum CalendarEventFormatter {
 
         return order.map { key in
             var entry = eventDict(firstRecord[key]!)
-            entry.removeValue(forKey: "calendar")
+            // calendar_id and account describe one copy only, so they go with the singular name.
+            for field in ["calendar", "calendar_id", "account"] { entry.removeValue(forKey: field) }
             entry["calendars"] = calendars[key] ?? []
             return entry
+        }
+    }
+
+    /// Pick the calendar `spec` means: an exact id, else a case-insensitive name.
+    /// A name shared by several calendars is refused rather than guessed at.
+    public static func resolveCalendar(_ spec: String, among calendars: [CalendarRef]) throws -> CalendarRef {
+        if let byID = calendars.first(where: { $0.id == spec }) { return byID }
+        let named = calendars.filter { $0.name.lowercased() == spec.lowercased() }
+        guard let first = named.first else { throw CalendarLookupError.notFound(spec) }
+        guard named.count == 1 else { throw CalendarLookupError.ambiguous(spec, named) }
+        return first
+    }
+}
+
+/// A calendar's identity, decoupled from EventKit.
+public struct CalendarRef: Equatable {
+    public let id: String
+    public let name: String
+    public let account: String
+
+    public init(id: String, name: String, account: String) {
+        self.id = id
+        self.name = name
+        self.account = account
+    }
+}
+
+public enum CalendarLookupError: Error, CustomStringConvertible, Equatable {
+    case notFound(String)
+    case ambiguous(String, [CalendarRef])
+
+    public var description: String {
+        switch self {
+        case .notFound(let spec):
+            return "no calendar found with name or id: \(spec)"
+        case .ambiguous(let spec, let candidates):
+            let list = candidates.map { "\"\($0.name)\" in \($0.account.isEmpty ? "no account" : $0.account) (id \($0.id))" }
+            return "\(candidates.count) calendars are named \"\(spec)\": \(list.joined(separator: "; ")). Pass the id of the one you mean."
         }
     }
 }

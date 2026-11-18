@@ -1,3 +1,4 @@
+import EventKit
 import XCTest
 
 @testable import AppleToolsLib
@@ -184,5 +185,70 @@ final class CalendarEventFormatterTests: XCTestCase {
         ]
         let rows = CalendarEventFormatter.dedupeByID(records)
         XCTAssertEqual(rows[0]["calendars"] as? [String], ["Alexi"])
+    }
+
+    // MARK: - Identity fields and calendar lookup (#103)
+
+    func testEventDictCarriesIdentityStatusAndZone() {
+        // External ids come in several shapes; each must pass through untouched.
+        for ext in ["6F1B2C3D-0000-4A5B-8C9D-112233445566", "abc123def456@google.com",
+                    "040000008200E00074C5B7101A82E00800000000A0B1C2D3E4F5060708090A0B0C0D0E0F"] {
+            let dict = CalendarEventFormatter.eventDict(CalendarEventRecord(
+                id: "evt", externalID: ext, title: "Planning", calendar: "Family",
+                start: "2026-06-10T17:00:00Z", end: "2026-06-10T18:00:00Z", allDay: false,
+                calendarID: "CAL-1", account: "iCloud", status: "tentative", eventTimezone: "America/New_York"))
+            XCTAssertEqual(dict["external_id"] as? String, ext)
+            XCTAssertEqual(dict["calendar"] as? String, "Family")
+            XCTAssertEqual(dict["calendar_id"] as? String, "CAL-1")
+            XCTAssertEqual(dict["account"] as? String, "iCloud")
+            XCTAssertEqual(dict["status"] as? String, "tentative")
+            XCTAssertEqual(dict["event_timezone"] as? String, "America/New_York")
+        }
+    }
+
+    func testEventDictOmitsStatusAndZoneWhenUnset() {
+        let dict = CalendarEventFormatter.eventDict(record(id: "x", externalID: nil, calendar: "Home"))
+        for field in ["external_id", "status", "event_timezone", "account", "calendar_id"] {
+            XCTAssertNil(dict[field], field)
+        }
+    }
+
+    func testDedupedRowDropsTheSingleCalendarFields() {
+        let rows = CalendarEventFormatter.dedupeByID([CalendarEventRecord(
+            id: "a", externalID: "g-1", title: "Planning", calendar: "Family",
+            start: "2026-06-10T17:00:00Z", end: "2026-06-10T18:00:00Z", allDay: false, calendarID: "CAL-1", account: "iCloud")])
+        XCTAssertNil(rows[0]["calendar_id"])
+        XCTAssertNil(rows[0]["account"])
+        XCTAssertEqual(rows[0]["external_id"] as? String, "g-1")
+        XCTAssertEqual(rows[0]["calendars"] as? [String], ["Family"])
+    }
+
+    private let refs = [
+        CalendarRef(id: "CAL-1", name: "Family", account: "iCloud"),
+        CalendarRef(id: "CAL-2", name: "Family", account: "pat@example.com"),
+        CalendarRef(id: "CAL-3", name: "Work", account: "pat@example.com"),
+    ]
+
+    func testCalendarResolvesByIDOrUniqueName() throws {
+        XCTAssertEqual(try CalendarEventFormatter.resolveCalendar("CAL-2", among: refs).account, "pat@example.com")
+        XCTAssertEqual(try CalendarEventFormatter.resolveCalendar("work", among: refs).id, "CAL-3")
+        XCTAssertThrowsError(try CalendarEventFormatter.resolveCalendar("Holidays", among: refs)) {
+            XCTAssertEqual(String(describing: $0), "no calendar found with name or id: Holidays")
+        }
+    }
+
+    func testSharedCalendarNameIsRefusedWithCandidates() {
+        XCTAssertThrowsError(try CalendarEventFormatter.resolveCalendar("family", among: refs)) {
+            XCTAssertEqual($0 as? CalendarLookupError, .ambiguous("family", Array(refs.prefix(2))))
+            XCTAssertEqual(String(describing: $0),
+                "2 calendars are named \"family\": \"Family\" in iCloud (id CAL-1); \"Family\" in pat@example.com (id CAL-2). Pass the id of the one you mean.")
+        }
+    }
+
+    func testEventStatusLabels() {
+        XCTAssertEqual(CalendarTool.statusLabel(.confirmed), "confirmed")
+        XCTAssertEqual(CalendarTool.statusLabel(.tentative), "tentative")
+        XCTAssertEqual(CalendarTool.statusLabel(.canceled), "cancelled")
+        XCTAssertNil(CalendarTool.statusLabel(.none))
     }
 }

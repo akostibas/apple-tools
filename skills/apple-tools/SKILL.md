@@ -57,8 +57,9 @@ Allow/Deny dialog; off by default.)
 
 ## Tools
 
-- **calendar** — `calendars` (list calendars), `list` (events in a range),
-  `search` (by keyword), `create` (add event; does not send invites — bare
+- **calendar** — `calendars` (list calendars with id and account), `list` (events in a range),
+  `search` (by keyword), `read` (one event by `--id`; `--calendar` takes a
+  calendar's id or name, and a name two calendars share is refused), `create` (add event; does not send invites — bare
   `YYYY-MM-DD` start/end make it all-day, `end` being the inclusive last day;
   `--recurrence` takes an RRULE, `--event_timezone` an IANA zone), `update`/`delete`
   (by `--id`; for a repeating event also `--occurrence <date>` and `--span

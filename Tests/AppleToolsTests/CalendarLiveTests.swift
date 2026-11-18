@@ -16,7 +16,7 @@ final class CalendarLiveTests: XCTestCase {
     private static let windowStart = "2028-09-01T00:00:00Z", windowEnd = "2029-03-01T00:00:00Z"
 
     override func setUpWithError() throws {
-        try LiveTest.writes("calendar", "create", "update", "delete", "calendars", "list", "search")
+        try LiveTest.writes("calendar", "create", "update", "delete", "calendars", "list", "search", "read")
         try XCTSkipUnless(CalendarIntegration.requestAccess(), "no Calendar access")
         let own = CalendarIntegration.allCalendars().filter(Self.isPrivateAndWritable)
         let pick = own.first { $0 == CalendarIntegration.defaultCalendarForNewEvents() }
@@ -42,8 +42,8 @@ final class CalendarLiveTests: XCTestCase {
         guard cal.allowsContentModifications, cal.type == .local || cal.type == .calDAV,
               cal.responds(to: Selector(("sharingStatus"))),
               (cal.value(forKey: "sharingStatus") as? Int) == 0 else { return false }
-        // The tool takes a calendar by name and uses the first match, so the name must lead to this one.
-        return CalendarIntegration.resolveCalendars(name: cal.title)?.first == cal
+        // These tests name the calendar, and a name shared by two calendars is refused.
+        return (try? CalendarIntegration.resolveCalendar(cal.title)) == cal
     }
 
     private func mine() -> [EKEvent] {
@@ -109,6 +109,20 @@ final class CalendarLiveTests: XCTestCase {
         XCTAssertEqual(got["location"] as? String, "Room 1")
         XCTAssertEqual(got["notes"] as? String, "first notes")
         XCTAssertNil(got["attendees"], "a created event must invite nobody")
+
+        // The calendar's id works wherever its name does, and write results, list rows and read agree on identity.
+        let calendarID = try XCTUnwrap(r["calendar_id"] as? String)
+        XCTAssertEqual(try CalendarIntegration.resolveCalendar(calendarID).title, calendar)
+        let byID = try call(["action": "list", "start": Self.windowStart, "end": Self.windowEnd, "calendar": [calendarID]])
+        XCTAssertEqual((byID["events"] as? [[String: Any]])?.contains { $0["id"] as? String == id }, true)
+        let read = try call(["action": "read", "id": id])
+        for field in ["id", "title", "calendar", "calendar_id", "account", "external_id", "start", "end", "event_timezone"] {
+            XCTAssertEqual(read[field] as? String, got[field] as? String, field)
+        }
+        for field in ["calendar_id", "account", "external_id"] {
+            XCTAssertNotNil(got[field], "list row has no \(field)")
+            XCTAssertEqual(r[field] as? String, got[field] as? String, field)
+        }
 
         let token = String(prefix.suffix(8))
         let found = try call(["action": "search", "query": "\(token) first notes",
@@ -235,6 +249,15 @@ final class CalendarLiveTests: XCTestCase {
         XCTAssertTrue(refusal(["action": "update", "id": id, "occurrence": "2028-12-25", "title": "\(prefix) x"])
             .contains("no occurrence"))
 
+        // Every occurrence shares one id and one external id; read picks one by its start or date.
+        let rows = try listed()
+        XCTAssertEqual(Set(rows.map { $0["id"] as? String }), [id])
+        XCTAssertEqual(Set(rows.map { $0["external_id"] as? String }).count, 1)
+        XCTAssertEqual(try call(["action": "read", "id": id, "occurrence": "2028-11-15"])["start"] as? String,
+                       local("2028-11-15T10:00:00"))
+        XCTAssertEqual(try call(["action": "read", "id": id])["start"] as? String, local("2028-11-13T10:00:00"))
+        XCTAssertTrue(refusal(["action": "read", "id": id, "occurrence": "2028-12-25"]).contains("no occurrence"))
+
         // Change one: span defaults to this occurrence only.
         let u = try call(["action": "update", "id": id, "occurrence": local("2028-11-14T10:00:00"),
                           "start": "2028-11-14T13:00:00", "title": "\(prefix) moved"])
@@ -344,7 +367,7 @@ final class CalendarLiveTests: XCTestCase {
     func testReadOnlyCalendarIsRefused() throws {
         let readOnly = try XCTUnwrap(
             CalendarIntegration.allCalendars().first {
-                !$0.allowsContentModifications && CalendarIntegration.resolveCalendars(name: $0.title)?.first == $0
+                !$0.allowsContentModifications && (try? CalendarIntegration.resolveCalendar($0.title)) == $0
             }?.title,
             "this Mac has no read-only calendar (a subscription or Birthdays) to be refused by")
         XCTAssertTrue(refusal(["action": "create", "title": prefix, "calendar": readOnly,
