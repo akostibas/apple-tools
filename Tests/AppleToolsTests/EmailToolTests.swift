@@ -33,6 +33,7 @@ final class EmailToolTests: XCTestCase {
         XCTAssertNotNil(props?["end"])
         XCTAssertNotNil(props?["limit"])
         XCTAssertNotNil(props?["exclude_self"])
+        XCTAssertEqual(props?["has_attachments"]?.type_, "boolean")
     }
 
     // MARK: - Parameter validation
