@@ -4,12 +4,12 @@ import Foundation
 public struct CalendarTool: ProbeTool {
     public let definition = ToolDefinition(
         name: "calendar",
-        description: "Access Apple Calendar events. Use 'calendars' to list calendars, 'list' to view events in a date range, 'create' to add an event, 'search' to find events by keyword. Each returned event includes 'is_organizer', 'my_status' (accepted/declined/tentative/pending — the current user's RSVP), and an 'attendees' array of {name, email, status} (plus 'organizer') — use these to answer questions about invites, RSVPs, and meetings the user is running. For 'list'/'search', pass dedupe_by_id=true to collapse the same shared event that appears on multiple calendars into one row carrying a 'calendars' array (the singular 'calendar' field is replaced by 'calendars' only in de-duped output). Note: 'create' does not send invites. 'update' and 'delete' take the event 'id' from list/search; every occurrence of a repeating event shares that id, so also pass 'occurrence' (the occurrence's start, or just its date) and 'span' (this = only that occurrence, the default; future = it and all later ones; all = the whole series). They refuse events the user didn't organize (invites) and read-only calendars.",
+        description: "Access Apple Calendar events. Use 'calendars' to list calendars (each with its 'id', 'account' and whether it is 'writable'), 'list' to view events in a date range, 'read' to fetch one event by 'id' (plus 'occurrence' for a repeating event; without it the series' first occurrence is returned), 'create' to add an event, 'search' to find events by keyword. Two calendars in different accounts can share a name: a 'calendar' name that matches several is refused with the candidates listed, so pass the calendar's id instead. Each returned event includes 'external_id' (the same for every copy of one event, including the copy in Google Calendar), 'calendar_id', 'account', 'status' (confirmed/tentative/cancelled, when set), 'event_timezone' (timed events), 'is_organizer', 'my_status' (accepted/declined/tentative/pending — the current user's RSVP), and an 'attendees' array of {name, email, status} (plus 'organizer') — use these to answer questions about invites, RSVPs, and meetings the user is running. For 'list'/'search', pass dedupe_by_id=true to collapse the same shared event that appears on multiple calendars into one row carrying a 'calendars' array (the singular 'calendar', 'calendar_id' and 'account' fields are replaced by 'calendars' only in de-duped output). Note: 'create' does not send invites. 'update' and 'delete' take the event 'id' from list/search; every occurrence of a repeating event shares that id, so also pass 'occurrence' (the occurrence's start, or just its date) and 'span' (this = only that occurrence, the default; future = it and all later ones; all = the whole series). They refuse events the user didn't organize (invites) and read-only calendars.",
         parameters: ParameterSchema(
             type_: "object",
             properties: [
-                "action": PropertySchema(type_: "string", description: "calendars, list, search, create, update, or delete"),
-                "calendar": PropertySchema(type_: "string", description: "Calendar name to filter by (for list, search), create in (for create), or move the event to (for update)",
+                "action": PropertySchema(type_: "string", description: "calendars, list, search, read, create, update, or delete"),
+                "calendar": PropertySchema(type_: "string", description: "Calendar id (from 'calendars') or name to filter by (for list, search), create in (for create), or move the event to (for update). For list/search several may be given, separated by commas.",
                     summary: "Calendar to filter by (list/search), create in (create), or move to (update)", actions: ["list", "search", "create", "update"]),
                 "start": PropertySchema(type_: "string", description: "Start date/time, ISO 8601 e.g. 2026-04-15T09:00:00Z (required for create; for list defaults to start of today; for search defaults to 30 days ago; for update the new start of the chosen occurrence — with span=all the whole series shifts by the same amount). For an all-day event pass a bare date, 2026-04-15. A time without an offset is read in 'event_timezone' (or the Mac's zone).",
                     summary: "Start date/time, ISO 8601 (e.g. 2026-04-15T09:00:00Z)", actions: ["list", "search", "create", "update"]),
@@ -27,10 +27,10 @@ public struct CalendarTool: ProbeTool {
                     summary: "Repeat rule (RRULE, e.g. FREQ=WEEKLY;BYDAY=MO,WE or 'daily'); 'none' removes", actions: ["create", "update"]),
                 "event_timezone": PropertySchema(type_: "string", description: "IANA timezone for a timed event, e.g. America/New_York. The event keeps that wall-clock time across daylight-saving changes, and start/end without an offset are read in it. Defaults to the Mac's zone.",
                     summary: "Event timezone, IANA (e.g. America/New_York)", actions: ["create", "update"]),
-                "id": PropertySchema(type_: "string", description: "Event id from list/search (required for update, delete)",
-                    summary: "Event id from list/search", actions: ["update", "delete"]),
-                "occurrence": PropertySchema(type_: "string", description: "For a repeating event: which occurrence to update/delete — its start as listed (2026-10-13T07:00:00Z) or just its date (2026-10-13). Required unless span=all.",
-                    summary: "Which occurrence of a repeating event (its start or date)", actions: ["update", "delete"]),
+                "id": PropertySchema(type_: "string", description: "Event id from list/search (required for read, update, delete)",
+                    summary: "Event id from list/search", actions: ["read", "update", "delete"]),
+                "occurrence": PropertySchema(type_: "string", description: "For a repeating event: which occurrence to read/update/delete — its start as listed (2026-10-13T07:00:00Z) or just its date (2026-10-13). Required for update/delete unless span=all; read without it returns the first occurrence.",
+                    summary: "Which occurrence of a repeating event (its start or date)", actions: ["read", "update", "delete"]),
                 "span": PropertySchema(type_: "string", description: "For a repeating event: this (only the chosen occurrence, default), future (it and every later one), or all (the whole series)",
                     summary: "this (default), future, or all", actions: ["update", "delete"]),
                 "query": PropertySchema(type_: "string", description: "Search keywords, matched across title/notes/location/attendees (required for search). Multi-word queries are AND-of-terms: every word must appear in some field, in any order.",
@@ -40,14 +40,16 @@ public struct CalendarTool: ProbeTool {
             ],
             required: ["action"]
         ),
-        cliSummary: "List, search, create, update, and delete Apple Calendar events.",
+        cliSummary: "List, search, read, create, update, and delete Apple Calendar events.",
         actions: [
-            ActionHelp(name: "calendars", summary: "List available calendars",
+            ActionHelp(name: "calendars", summary: "List available calendars with their ids and accounts",
                 example: "apple-tools calendar calendars"),
             ActionHelp(name: "list", summary: "View events in a date range",
-                example: "apple-tools calendar list [--start <d>] [--end <d>] [--calendar <n>] [--dedupe_by_id]"),
+                example: "apple-tools calendar list [--start <d>] [--end <d>] [--calendar <id|name>[,...]] [--dedupe_by_id]"),
             ActionHelp(name: "search", summary: "Find events by keyword",
-                example: "apple-tools calendar search --query <text> [--start <d>] [--end <d>] [--calendar <n>] [--dedupe_by_id]", required: ["query"]),
+                example: "apple-tools calendar search --query <text> [--start <d>] [--end <d>] [--calendar <id|name>[,...]] [--dedupe_by_id]", required: ["query"]),
+            ActionHelp(name: "read", summary: "Fetch one event in full",
+                example: "apple-tools calendar read --id <id> [--occurrence <d>]", required: ["id"]),
             ActionHelp(name: "create", summary: "Add an event (does not send invites)",
                 example: "apple-tools calendar create --title <t> --start <d> --end <d> [--all_day] [--location <l>] [--notes <n>] [--calendar <n>] [--recurrence <rrule>] [--event_timezone <tz>]", required: ["title", "start", "end"]),
             ActionHelp(name: "update", summary: "Change an event you organize",
@@ -61,6 +63,7 @@ public struct CalendarTool: ProbeTool {
         "calendars": .read,
         "list":      .read,
         "search":    .read,
+        "read":      .read,
         "create":    .readWrite,
         "update":    .readWrite,
         "delete":    .readWrite,
@@ -81,11 +84,10 @@ public struct CalendarTool: ProbeTool {
         case "calendars":
             return listCalendars()
         case "list":
-            let calendarName = params?["calendar"]?.value as? String
             let start = params?["start"]?.value as? String
             let end = params?["end"]?.value as? String
             let dedupe = (params?["dedupe_by_id"]?.value as? Bool) ?? false
-            return listEvents(calendarName: calendarName, start: start, end: end, dedupe: dedupe)
+            return listEvents(calendar: params?["calendar"]?.value, start: start, end: end, dedupe: dedupe)
         case "create":
             guard let title = params?["title"]?.value as? String, !title.isEmpty else {
                 return ("missing required parameter: title", true)
@@ -102,6 +104,16 @@ public struct CalendarTool: ProbeTool {
             let allDay = params?["all_day"]?.value as? Bool
             return createEvent(title: title, start: startStr, end: endStr, allDay: allDay, calendarName: calendarName, location: location, notes: notes,
                                recurrence: params?["recurrence"]?.value as? String, timeZone: params?["event_timezone"]?.value as? String)
+        case "read":
+            guard let id = params?["id"]?.value as? String, !id.isEmpty else {
+                return ("missing required parameter: id", true)
+            }
+            do {
+                let event = try CalendarIntegration.findEvent(id: id, occurrence: params?["occurrence"]?.value as? String)
+                return (jsonString(CalendarEventFormatter.eventDict(record(from: event))) ?? "{}", false)
+            } catch {
+                return (String(describing: error), true)
+            }
         case "update", "delete":
             guard let id = params?["id"]?.value as? String, !id.isEmpty else {
                 return ("missing required parameter: id", true)
@@ -118,13 +130,12 @@ public struct CalendarTool: ProbeTool {
             guard let query = params?["query"]?.value as? String, !query.isEmpty else {
                 return ("missing required parameter: query", true)
             }
-            let calendarName = params?["calendar"]?.value as? String
             let start = params?["start"]?.value as? String
             let end = params?["end"]?.value as? String
             let dedupe = (params?["dedupe_by_id"]?.value as? Bool) ?? false
-            return searchEvents(query: query, calendarName: calendarName, start: start, end: end, dedupe: dedupe)
+            return searchEvents(query: query, calendar: params?["calendar"]?.value, start: start, end: end, dedupe: dedupe)
         default:
-            return ("unknown action: \(action) (use calendars, list, search, create, update, or delete)", true)
+            return ("unknown action: \(action) (use calendars, list, search, read, create, update, or delete)", true)
         }
     }
 
@@ -142,6 +153,8 @@ public struct CalendarTool: ProbeTool {
                 "name": cal.title,
                 "id": cal.calendarIdentifier,
                 "type": calendarTypeLabel(cal.type),
+                "account": CalendarIntegration.account(of: cal),
+                "writable": cal.allowsContentModifications,
             ]
             if let color = cal.cgColor {
                 entry["color"] = colorHex(color)
@@ -154,9 +167,30 @@ public struct CalendarTool: ProbeTool {
         return (jsonString(results) ?? "[]", false)
     }
 
+    /// The list/search filter: one id or name, several separated by commas, or a JSON array of them.
+    private func calendarFilter(_ value: Any?) throws -> [EKCalendar]? {
+        let specs: [String]
+        switch value {
+        case let one as String:
+            // Whole string first, so a calendar whose name contains a comma still resolves.
+            if let whole = try? CalendarIntegration.resolveCalendar(one) { return [whole] }
+            specs = one.split(separator: ",", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+        case let many as [Any]:
+            specs = many.compactMap { $0 as? String }
+        default:
+            return nil
+        }
+        var found: [EKCalendar] = []
+        for spec in specs {
+            let cal = try CalendarIntegration.resolveCalendar(spec)
+            if !found.contains(cal) { found.append(cal) }
+        }
+        return found.isEmpty ? nil : found
+    }
+
     // MARK: - List events
 
-    private func listEvents(calendarName: String?, start: String?, end: String?, dedupe: Bool = false) -> (String, Bool) {
+    private func listEvents(calendar: Any?, start: String?, end: String?, dedupe: Bool = false) -> (String, Bool) {
         let startDate: Date
         if let startStr = start {
             guard let d = CalendarIntegration.parseDate(startStr) else {
@@ -178,13 +212,8 @@ public struct CalendarTool: ProbeTool {
                 ?? startDate.addingTimeInterval(86400)
         }
 
-        var calendars: [EKCalendar]? = nil
-        if let name = calendarName {
-            guard let resolved = CalendarIntegration.resolveCalendars(name: name) else {
-                return ("no calendar found with name: \(name)", true)
-            }
-            calendars = resolved
-        }
+        let calendars: [EKCalendar]?
+        do { calendars = try calendarFilter(calendar) } catch { return (String(describing: error), true) }
 
         let events = CalendarIntegration.events(from: startDate, to: endDate, in: calendars)
         let results = formatEvents(events, dedupe: dedupe)
@@ -209,13 +238,7 @@ public struct CalendarTool: ProbeTool {
             let startDate = try parseTime(start, field: "start", allDay: isAllDay, timeZone: tz)
             let endDate = try parseTime(end, field: "end", allDay: isAllDay, timeZone: tz)
 
-            var calendar: EKCalendar? = nil
-            if let calendarName = calendarName {
-                guard let cals = CalendarIntegration.resolveCalendars(name: calendarName), let cal = cals.first else {
-                    return ("no calendar found with name: \(calendarName)", true)
-                }
-                calendar = cal
-            }
+            let calendar = try calendarName.map(CalendarIntegration.resolveCalendar)
 
             let rule = try recurrence.map { try CalendarRecurrence.parse($0, timeZone: tz ?? .current) }
             let event = try CalendarIntegration.createEvent(
@@ -301,9 +324,7 @@ public struct CalendarTool: ProbeTool {
 
             if let name = str("calendar") {
                 if recurring && span == .this { throw ToolError("moving one occurrence to another calendar isn't supported; use span=all") }
-                guard let cal = CalendarIntegration.resolveCalendars(name: name)?.first else {
-                    throw ToolError("no calendar found with name: \(name)")
-                }
+                let cal = try CalendarIntegration.resolveCalendar(name)
                 guard cal.allowsContentModifications else { throw CalendarIntegration.CalendarError.readOnlyCalendar(cal.title) }
                 event.calendar = cal; changed = true
             }
@@ -392,10 +413,14 @@ public struct CalendarTool: ProbeTool {
             "id": event.eventIdentifier ?? "",
             "title": event.title ?? "",
             "calendar": event.calendar.title,
+            "calendar_id": event.calendar.calendarIdentifier,
+            "account": CalendarIntegration.account(of: event.calendar),
             "start": DateFormatting.calendarTime(event.startDate, allDay: event.isAllDay),
             "end": DateFormatting.calendarTime(event.endDate, allDay: event.isAllDay),
             "all_day": event.isAllDay,
         ]
+        if let ext = event.calendarItemExternalIdentifier, !ext.isEmpty { result["external_id"] = ext }
+        if let status = Self.statusLabel(event.status) { result["status"] = status }
         if let rule = event.recurrenceRules?.first { result["recurrence"] = CalendarRecurrence.format(rule) }
         if !event.isAllDay, let tz = event.timeZone { result["event_timezone"] = tz.identifier }
         return result
@@ -403,7 +428,7 @@ public struct CalendarTool: ProbeTool {
 
     // MARK: - Search
 
-    private func searchEvents(query: String, calendarName: String?, start: String?, end: String?, dedupe: Bool = false) -> (String, Bool) {
+    private func searchEvents(query: String, calendar: Any?,start: String?, end: String?, dedupe: Bool = false) -> (String, Bool) {
         let startDate: Date
         if let startStr = start {
             guard let d = CalendarIntegration.parseDate(startStr) else {
@@ -424,13 +449,8 @@ public struct CalendarTool: ProbeTool {
             endDate = Calendar.current.date(byAdding: .day, value: 30, to: Date()) ?? Date()
         }
 
-        var calendars: [EKCalendar]? = nil
-        if let name = calendarName {
-            guard let resolved = CalendarIntegration.resolveCalendars(name: name) else {
-                return ("no calendar found with name: \(name)", true)
-            }
-            calendars = resolved
-        }
+        let calendars: [EKCalendar]?
+        do { calendars = try calendarFilter(calendar) } catch { return (String(describing: error), true) }
 
         let matching = CalendarIntegration.searchEvents(query: query, from: startDate, to: endDate, in: calendars)
         let results = formatEvents(matching, dedupe: dedupe)
@@ -479,8 +499,21 @@ public struct CalendarTool: ProbeTool {
             organizer: event.organizer.map { attendee(from: $0) },
             isOrganizer: isOrganizer,
             myStatus: myStatus,
-            recurrence: event.recurrenceRules?.first.map(CalendarRecurrence.format)
+            recurrence: event.recurrenceRules?.first.map(CalendarRecurrence.format),
+            calendarID: event.calendar.calendarIdentifier,
+            account: CalendarIntegration.account(of: event.calendar),
+            status: Self.statusLabel(event.status),
+            eventTimezone: event.isAllDay ? nil : event.timeZone?.identifier
         )
+    }
+
+    static func statusLabel(_ status: EKEventStatus) -> String? {
+        switch status {
+        case .confirmed: return "confirmed"
+        case .tentative: return "tentative"
+        case .canceled: return "cancelled"
+        default: return nil
+        }
     }
 
     private func attendee(from participant: EKParticipant) -> CalendarAttendee {

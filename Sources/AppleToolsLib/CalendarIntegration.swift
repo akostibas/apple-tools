@@ -83,10 +83,18 @@ public enum CalendarIntegration {
         store.defaultCalendarForNewEvents
     }
 
-    /// Resolve calendars by case-insensitive name match. Returns nil if no match.
-    public static func resolveCalendars(name: String) -> [EKCalendar]? {
-        let matching = store.calendars(for: .event).filter { $0.title.lowercased() == name.lowercased() }
-        return matching.isEmpty ? nil : matching
+    /// Title of the account a calendar belongs to ("iCloud", a Google address, ...).
+    public static func account(of calendar: EKCalendar) -> String {
+        calendar.source?.title ?? ""
+    }
+
+    /// Resolve one calendar by id or case-insensitive name. Throws
+    /// `CalendarLookupError` when nothing matches or a name is shared.
+    public static func resolveCalendar(_ spec: String) throws -> EKCalendar {
+        let all = store.calendars(for: .event)
+        let refs = all.map { CalendarRef(id: $0.calendarIdentifier, name: $0.title, account: account(of: $0)) }
+        let picked = try CalendarEventFormatter.resolveCalendar(spec, among: refs)
+        return all.first { $0.calendarIdentifier == picked.id }!
     }
 
     // MARK: - Events
