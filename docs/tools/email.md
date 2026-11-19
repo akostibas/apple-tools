@@ -40,6 +40,9 @@ Envelope Index; also used by the AppleScript fallback).
   never launches Mail.
 - **mailboxes** — each account's mailboxes with total/unread counts, and whether
   the account allows `move` (Gmail doesn't). Names are what `--mailbox` takes.
+  Accounts whose Mail is switched off in System Settings are left out; pass
+  `include_disabled` to list them too (marked `disabled`), or name one with
+  `account`.
 - **move** — move a message by `id` to `mailbox`, in its own account or another
   one (`account` picks which when the name is ambiguous). Needs Mail running; it
   never launches Mail. Refused for Gmail accounts and for Drafts (see
