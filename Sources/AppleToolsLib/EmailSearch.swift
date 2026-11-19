@@ -552,12 +552,13 @@ enum EmailSearch {
 
     // MARK: - Account names
 
-    struct Account { let name: String; let email: String? }
+    struct Account { let name: String; let email: String?; var mailEnabled = true }
+
+    static let accounts = loadAccounts(path: NSHomeDirectory() + "/Library/Accounts/Accounts4.sqlite")
 
     /// Mailbox URLs carry an account UUID; name and address live in the system
     /// Accounts store. Mail child rows are often blank, so fall back to the parent.
-    static let accounts: [String: Account] = {
-        let path = NSHomeDirectory() + "/Library/Accounts/Accounts4.sqlite"
+    static func loadAccounts(path: String) -> [String: Account] {
         var db: OpaquePointer?
         let uri = "file://\(path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path)?mode=ro"
         guard sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK, let db = db else {
@@ -569,19 +570,48 @@ enum EmailSearch {
         let sql = """
         SELECT a.ZIDENTIFIER,
                COALESCE(NULLIF(a.ZACCOUNTDESCRIPTION, ''), p.ZACCOUNTDESCRIPTION),
-               COALESCE(NULLIF(a.ZUSERNAME, ''), p.ZUSERNAME)
+               COALESCE(NULLIF(a.ZUSERNAME, ''), p.ZUSERNAME),
+               a.Z_PK, a.ZPARENTACCOUNT
         FROM ZACCOUNT a LEFT JOIN ZACCOUNT p ON a.ZPARENTACCOUNT = p.Z_PK
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return [:] }
         defer { sqlite3_finalize(stmt) }
+        let mailOn = mailEnabledAccountPKs(db)
         var out: [String: Account] = [:]
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let id = columnString(stmt, 0), let name = columnString(stmt, 1) else { continue }
-            out[id] = Account(name: name, email: columnString(stmt, 2).flatMap { $0.contains("@") ? $0 : nil })
+            // Mail is switched on for the account itself or, for iCloud/Google children, on its parent.
+            let enabled = mailOn.map { $0.contains(sqlite3_column_int64(stmt, 3)) || $0.contains(sqlite3_column_int64(stmt, 4)) } ?? true
+            out[id] = Account(name: name, email: columnString(stmt, 2).flatMap { $0.contains("@") ? $0 : nil },
+                              mailEnabled: enabled)
         }
         return out
-    }()
+    }
+
+    /// Z_PKs of accounts with Mail switched on. Nil when the store's shape isn't recognised, so nothing gets hidden.
+    private static func mailEnabledAccountPKs(_ db: OpaquePointer) -> Set<Int64>? {
+        func rows(_ sql: String) -> [String]? {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            var out: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW { if let s = columnString(stmt, 0) { out.append(s) } }
+            return out
+        }
+        // Core Data numbers the join table and its columns by entity, and the numbers shift between macOS versions.
+        guard let table = rows("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'Z\\_%ENABLEDDATACLASSES' ESCAPE '\\'")?.first,
+              let cols = rows("SELECT name FROM pragma_table_info('\(table)')"),
+              let acct = cols.first(where: { $0.hasSuffix("ENABLEDACCOUNTS") }),
+              let cls = cols.first(where: { $0.hasSuffix("ENABLEDDATACLASSES") }),
+              // ZNAME is an archived string (a blob), so match the bytes inside it.
+              let pks = rows("""
+              SELECT e.\(acct) FROM \(table) e JOIN ZDATACLASS d ON d.Z_PK = e.\(cls)
+              WHERE instr(d.ZNAME, CAST('com.apple.Dataclass.Mail' AS BLOB)) > 0
+              """)
+        else { return nil }
+        return Set(pks.compactMap { Int64($0) })
+    }
 
     /// `account` / `account_email` result fields for a mailbox URL or bare account UUID.
     static func accountFields(_ urlOrID: String) -> [String: Any] {

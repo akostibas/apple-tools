@@ -14,6 +14,8 @@ public struct EmailTool: ProbeTool {
                     summary: "Mailbox name (search: filter; move: destination)", actions: ["search", "move"]),
                 "account": PropertySchema(type_: "string", description: "Account name or address as shown in results' 'account'/'account_email'. Narrows 'mailbox' when the name exists in several accounts. For move, defaults to the message's own account when it has that mailbox",
                     summary: "Account name/address for --mailbox", actions: ["search", "move", "mailboxes"]),
+                "include_disabled": PropertySchema(type_: "boolean", description: "Also list accounts whose Mail is switched off in System Settings, marked 'disabled': true. Default false (for mailboxes)",
+                    summary: "Also list accounts with Mail switched off", actions: ["mailboxes"]),
                 "limit": PropertySchema(type_: "integer", description: "Max messages to return (for inbox and search, default 20, max 50)",
                     summary: "Max messages (default 20, max 50)", actions: ["inbox", "search"]),
                 "id": PropertySchema(type_: "string", description: "Message ID (for read, headers, fetch_attachment, reply, move). For discard, the draft id that draft or reply returned, which is not a Message ID",
@@ -82,7 +84,7 @@ public struct EmailTool: ProbeTool {
             ActionHelp(name: "fetch_attachment", summary: "Retrieve an attachment file from a message",
                 example: "apple-tools email fetch_attachment --id <id> [--filename <name>]", required: ["id"]),
             ActionHelp(name: "mailboxes", summary: "List each account's mailboxes with message counts",
-                example: "apple-tools email mailboxes [--account <name>]"),
+                example: "apple-tools email mailboxes [--account <name>] [--include_disabled]"),
             ActionHelp(name: "move", summary: "Move a message to a mailbox (not Gmail; Mail must be running)",
                 example: "apple-tools email move --id <id> --mailbox <name> [--account <name>]", required: ["id", "mailbox"]),
         ]
@@ -161,7 +163,8 @@ public struct EmailTool: ProbeTool {
             let filename = params?["filename"]?.value as? String
             return fetchAttachment(id: id, filename: filename)
         case "mailboxes":
-            return listMailboxes(account: params?["account"]?.value as? String)
+            return listMailboxes(account: params?["account"]?.value as? String,
+                                 includeDisabled: params?["include_disabled"]?.value as? Bool ?? false)
         case "move":
             guard let id = params?["id"]?.value as? String, !id.isEmpty else {
                 return ("missing required parameter: id", true)
@@ -177,16 +180,20 @@ public struct EmailTool: ProbeTool {
 
     // MARK: - Mailboxes / move
 
-    private func listMailboxes(account: String?) -> (String, Bool) {
+    private func listMailboxes(account: String?, includeDisabled: Bool) -> (String, Bool) {
         let boxes: [EmailSearch.Mailbox]
         do { boxes = try EmailSearch.mailboxes() } catch { return ("\(error)", true) }
         var ids = Array(Set(boxes.map { $0.accountID })).sorted()
         if let a = account, !a.isEmpty {
             ids = ids.filter { accountMatches($0, a) }
             if ids.isEmpty { return ("no account matching '\(a)'. Accounts: \(accountNames(boxes))", true) }
+        } else if !includeDisabled {
+            // Naming an account shows it even when Mail is switched off for it.
+            ids = ids.filter { EmailSearch.accounts[$0]?.mailEnabled ?? true }
         }
         let accounts: [[String: Any]] = ids.map { id in
             var entry = accountFields(id)
+            if EmailSearch.accounts[id]?.mailEnabled == false { entry["disabled"] = true }
             entry["can_move"] = !EmailSearch.isGmail(accountID: id, in: boxes)
             entry["mailboxes"] = boxes.filter { $0.accountID == id }.map {
                 ["name": $0.name, "total": $0.total, "unread": $0.unread] as [String: Any]
