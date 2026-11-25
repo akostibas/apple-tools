@@ -16,6 +16,12 @@ public struct EmailTool: ProbeTool {
                     summary: "Account name/address for --mailbox", actions: ["search", "move", "mailboxes"]),
                 "include_disabled": PropertySchema(type_: "boolean", description: "Also list accounts whose Mail is switched off in System Settings, marked 'disabled': true. Default false (for mailboxes)",
                     summary: "Also list accounts with Mail switched off", actions: ["mailboxes"]),
+                "exclude_accounts": PropertySchema(
+                    type_: "array",
+                    description: "Accounts to leave out, by name as shown in results' 'account'; case-insensitive. Applied before 'limit'. A name that matches no account is ignored (for inbox and search)",
+                    items: ItemsSchema(type_: "string"),
+                    summary: "Account names to leave out", actions: ["inbox", "search"]
+                ),
                 "limit": PropertySchema(type_: "integer", description: "Max messages to return (for inbox and search, default 20, max 50)",
                     summary: "Max messages (default 20, max 50)", actions: ["inbox", "search"]),
                 "id": PropertySchema(type_: "string", description: "Message ID (for read, headers, fetch_attachment, reply, move). For discard, the draft id that draft or reply returned, which is not a Message ID",
@@ -117,7 +123,7 @@ public struct EmailTool: ProbeTool {
         switch action {
         case "inbox":
             let limit = clamp(intParam(params, key: "limit") ?? 20, min: 1, max: 50)
-            return inbox(limit: limit)
+            return inbox(limit: limit, excludedAccounts: excludedAccounts(params))
         case "search":
             return search(params: params)
         case "read":
@@ -325,9 +331,13 @@ public struct EmailTool: ProbeTool {
 
     // MARK: - Inbox
 
-    private func inbox(limit: Int) -> (String, Bool) {
+    private func excludedAccounts(_ params: [String: AnyCodable]?) -> [String] {
+        EmailSearch.accountIDs(named: (params?["exclude_accounts"]?.value as? [Any])?.compactMap { $0 as? String } ?? [])
+    }
+
+    private func inbox(limit: Int, excludedAccounts: [String]) -> (String, Bool) {
         let hits: [EmailSearch.Hit]
-        do { hits = try EmailSearch.inbox(limit: limit) } catch { return ("\(error)", true) }
+        do { hits = try EmailSearch.inbox(limit: limit, excludedAccounts: excludedAccounts) } catch { return ("\(error)", true) }
 
         let messages: [[String: Any]] = hits.map { h in
             var dict: [String: Any] = [
@@ -371,6 +381,7 @@ public struct EmailTool: ProbeTool {
             criteria.excludeBulk = true
         }
         criteria.hasAttachments = (params?["has_attachments"]?.value as? Bool) == true
+        criteria.excludedAccounts = excludedAccounts(params)
 
         if let s = params?["start"]?.value as? String, !s.isEmpty {
             guard let d = parseISODate(s) else {

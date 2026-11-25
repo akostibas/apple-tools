@@ -16,6 +16,7 @@ enum EmailSearch {
         var excludeBulk: Bool = false  // drop likely-automated/bulk senders
         var mailboxIDs: [Int64]?  // stored in, or (Gmail) labelled with, one of these
         var hasAttachments = false  // only messages with at least one attachment
+        var excludedAccounts: [String] = []  // account ids, as in `Mailbox.accountID`
     }
 
     struct Hit {
@@ -151,7 +152,11 @@ enum EmailSearch {
             """)
         }
 
-        // In SQL, not a post-filter, so it applies before the limit.
+        // These two are in SQL, not post-filters, so they apply before the limit.
+        for id in criteria.excludedAccounts {
+            wheres.append("mb.url NOT LIKE ?")
+            paramValues.append(id == "local" ? "local:%" : "%://\(id)/%")
+        }
         if criteria.hasAttachments {
             wheres.append("EXISTS (SELECT 1 FROM attachments at WHERE at.message = m.ROWID)")
         }
@@ -280,9 +285,10 @@ enum EmailSearch {
     }
 
     /// Newest messages across every account's INBOX, read from the index so Mail is never launched.
-    static func inbox(limit: Int, dbPath: String = defaultDatabasePath) throws -> [Hit] {
+    static func inbox(limit: Int, excludedAccounts: [String] = [], dbPath: String = defaultDatabasePath) throws -> [Hit] {
         var criteria = Criteria()
         criteria.limit = limit
+        criteria.excludedAccounts = excludedAccounts
         criteria.excludeSelf = false
         criteria.mailboxIDs = try mailboxes(dbPath: dbPath)
             .filter { $0.name.caseInsensitiveCompare("INBOX") == .orderedSame }.map { $0.rowID }
@@ -611,6 +617,13 @@ enum EmailSearch {
               """)
         else { return nil }
         return Set(pks.compactMap { Int64($0) })
+    }
+
+    /// Account ids for names. Never matched by address: two accounts can share
+    /// one, and excluding by it would hide the other's mail.
+    static func accountIDs(named names: [String], in accounts: [String: Account] = accounts) -> [String] {
+        let all = accounts.map { (id: $0.key, name: $0.value.name) } + [(id: "local", name: "On My Mac")]
+        return all.filter { a in names.contains { $0.caseInsensitiveCompare(a.name) == .orderedSame } }.map(\.id)
     }
 
     /// `account` / `account_email` result fields for a mailbox URL or bare account UUID.
