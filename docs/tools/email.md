@@ -52,6 +52,10 @@ Envelope Index; also used by the AppleScript fallback).
 message in All Mail, so for Gmail it matches on labels, and results carry a
 `labels` list (e.g. `INBOX`, `Mint`) alongside `mailbox`.
 
+`inbox` and `search` take `exclude_accounts`, a list of account names to leave
+out before the limit applies. Names only, because two accounts can share an
+address. A name that matches no account is ignored.
+
 `inbox` and `search` rows carry `attachment_count` when a message has
 attachments (omitted when it has none), so there's no need to `read` each one
 to find the message with the file.

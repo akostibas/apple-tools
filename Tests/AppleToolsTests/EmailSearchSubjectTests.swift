@@ -88,6 +88,38 @@ final class EmailSearchSubjectTests: XCTestCase {
         XCTAssertEqual(try EmailSearch.run(c, dbPath: dbPath).map(\.attachmentCount), [0, 2])
     }
 
+    func testExcludedAccountsAreLeftOutBeforeTheLimit() throws {
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbPath, &db), SQLITE_OK)
+        // Newer than everything in account A; "AB" must not be mistaken for "A".
+        let sql = """
+        INSERT INTO mailboxes (ROWID, url) VALUES (2, 'imap://B/INBOX'), (3, 'local://L/Saved'), (4, 'ews://AB/INBOX');
+        INSERT INTO message_global_data VALUES (3, '<b@x>', NULL), (4, '<local@x>', NULL), (5, '<ab@x>', NULL);
+        INSERT INTO messages (ROWID, subject, mailbox, sender, date_received, global_message_id) VALUES
+            (3, 1, 2, 1, 900, 3), (4, 1, 3, 1, 800, 4), (5, 1, 4, 1, 50, 5);
+        """
+        XCTAssertEqual(sqlite3_exec(db, sql, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
+
+        var c = EmailSearch.Criteria()
+        c.excludeSelf = false
+        c.after = Date(timeIntervalSince1970: 1)
+        c.limit = 1
+        c.excludedAccounts = ["B", "local"]
+        XCTAssertEqual(try EmailSearch.run(c, dbPath: dbPath).map(\.messageID), ["<reply@x>"])
+        c.limit = 10
+        c.excludedAccounts = ["A"]
+        XCTAssertEqual(try EmailSearch.run(c, dbPath: dbPath).map(\.messageID), ["<b@x>", "<local@x>", "<ab@x>"])
+        XCTAssertEqual(try EmailSearch.inbox(limit: 1, excludedAccounts: ["B"], dbPath: dbPath).map(\.messageID), ["<reply@x>"])
+    }
+
+    func testAccountsAreExcludedByNameNeverByAddress() {
+        let accounts = ["1": EmailSearch.Account(name: "Gmail", email: "a@x.com"), "2": EmailSearch.Account(name: "iCloud", email: "a@x.com")]
+        XCTAssertEqual(EmailSearch.accountIDs(named: ["gmail", "gone"], in: accounts), ["1"])
+        XCTAssertEqual(EmailSearch.accountIDs(named: ["a@x.com"], in: accounts), [])
+        XCTAssertEqual(EmailSearch.accountIDs(named: ["On My Mac"], in: accounts), ["local"])
+    }
+
     func testMoveRefusesDraftsAsSourceAndDestination() {
         for drafts in ["imap://A/Drafts", "imap://A/%5BGmail%5D/Drafts", "local://Local/Drafts", "ews://A/drafts"] {
             XCTAssertEqual(EmailTool.draftsMoveRefusal(from: drafts, to: "imap://A/Archive")?.contains("out of Drafts"), true, drafts)
